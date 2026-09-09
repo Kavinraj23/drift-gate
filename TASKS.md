@@ -9,16 +9,16 @@ accurate. If building something reveals the spec was wrong or incomplete, edit
 priority-ordered, not day-numbered, since time per day will vary.
 
 ## Phase 0 — Baseline data (nothing else is measurable without this)
-- [ ] `ExecutionSource` / `RemediationTarget` protocols defined (§9)
-- [ ] Real error strings collected from real sources — Terraform/K8s/cloud, multi-line
+- [x] `ExecutionSource` / `RemediationTarget` protocols defined (§9)
+- [x] Real error strings collected from real sources — Terraform/K8s/cloud, multi-line
       `Error:` blocks preserved exactly (§11 "Error text is not synthesized")
-- [ ] Synthetic population generator (~200 lines): 30 days, ~12 pipelines, ~80% success
+- [x] Synthetic population generator (~200 lines): 30 days, ~12 pipelines, ~80% success
       base rate, 60/25/15 user/platform/transient split among failures (§11)
-- [ ] Generator: 3–4 correlated bursts (shared connector/template, 20-min window)
-- [ ] Generator: 2 flaky pipelines (fail-then-pass on retry)
-- [ ] Generator: change timeline — real backdated git commits + events table with decoys
-- [ ] Every generated failure carries ground-truth label + correct remediation
-- [ ] `SyntheticSource`/`Target` implemented against the generator's population
+- [x] Generator: 3–4 correlated bursts (shared connector/template, 20-min window)
+- [x] Generator: 2 flaky pipelines (fail-then-pass on retry)
+- [x] Generator: change timeline — real backdated git commits + events table with decoys
+- [x] Every generated failure carries ground-truth label + correct remediation
+- [x] `SyntheticSource`/`Target` implemented against the generator's population
 
 ## Phase 1 — Deterministic classifier (measured before the agent layer, §13)
 - [ ] Status gate — step 1 of §8, governance/user-abort close immediately

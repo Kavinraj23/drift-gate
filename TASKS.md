@@ -21,14 +21,28 @@ priority-ordered, not day-numbered, since time per day will vary.
 - [x] `SyntheticSource`/`Target` implemented against the generator's population
 
 ## Phase 1 — Deterministic classifier (measured before the agent layer, §13)
-- [ ] Status gate — step 1 of §8, governance/user-abort close immediately
-- [ ] Structured classification — step 2, step-type × failure-type × message signatures
-- [ ] Fingerprinting scheme defined and applied
-- [ ] Fleet correlation — step 3, uses generator's correlated bursts
-- [ ] Flake check — step 4, uses generator's flaky pipelines
-- [ ] Output contract (§10) emitted for every classified execution
-- [ ] Evidence-source citation enforced in code (no claim without a backing tool result)
+- [x] Status gate — step 1 of §8, governance/user-abort close immediately
+      (`drift_gate/classifier.py:status_gate`; synthetic generator never emits
+      REJECTED/ABORTED today, so this path is untested against real data - noted in
+      the module docstring as a known gap, not hidden)
+- [x] Structured classification — step 2, step-type × failure-type × message signatures
+      (`classifier.py:match_signature` + `RULES`, authored independently of
+      `generator/faults.py` - see module docstring)
+- [x] Fingerprinting scheme defined and applied (`classifier.py:fingerprint`,
+      `template:step_type:fault_id`)
+- [x] Fleet correlation — step 3, uses generator's correlated bursts
+      (`classifier.py:fleet_correlate`)
+- [x] Flake check — step 4, uses generator's flaky pipelines
+      (`classifier.py:flake_check` - next-execution-in-window, not "any success nearby")
+- [x] Output contract (§10) emitted for every classified execution
+      (`classifier.py:to_report` for resolved cases; `agent/loop.py:run_agent` for
+      escalated ones - both produce the same `Report` type)
+- [x] Evidence-source citation enforced in code (no claim without a backing tool result)
+      (`agent/loop.py:run_agent` rejects any `submit_report` evidence item whose
+      `source` isn't a tool actually called this run)
 - [ ] **Baseline accuracy measured** on synthetic population, before any LLM involved
+      (only 4 hand-picked demo cases run so far, not the full 186-execution ground
+      truth set - still open)
 
 ## Phase 2 — Real GitHub Actions adapter (§11 "what is genuinely real")
 - [ ] `GitHubActionsSource`: `get_execution`, `get_failed_leaf_nodes`, `get_step_logs`
@@ -52,10 +66,15 @@ priority-ordered, not day-numbered, since time per day will vary.
 - [ ] Rate limiting: 2 attempts per fingerprint, then hard escalate (§5)
 
 ## Phase 4 — LLM reasoning loop (§8 step 8, §13)
-- [ ] Log extraction (step 5) wired into evidence bundle
-- [ ] Direct Anthropic SDK tool-use loop, custom orchestration — no framework
+- [x] Log extraction (step 5) wired into evidence bundle (`get_step_logs` tool, agent
+      calls it itself when it needs raw log text beyond the signature match)
+- [x] Direct Anthropic SDK tool-use loop, custom orchestration — no framework
+      (`drift_gate/agent/loop.py`, `drift_gate/agent/tools.py`)
 - [ ] Evidence bundle assembled from steps 1–7, LLM reasons on the residual only
-- [ ] Evidence-source citation enforced end to end (§10)
+      (steps 1-4 done and handed in; step 6 change correlation and step 7 historical
+      similarity are Phase 5 and not wired in yet, so the agent only reasons on 1-5)
+- [x] Evidence-source citation enforced end to end (§10) (rejected in-loop by
+      `run_agent`, not by prompting alone)
 
 ## CHECKPOINT — deterministic baseline vs. agent (§13, §12)
 - [ ] Deterministic-only accuracy measured standalone (from Phase 1)

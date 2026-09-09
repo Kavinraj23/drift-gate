@@ -3,13 +3,13 @@ name = "drift-gate"
 version = "0.1.0"
 description = "CI pipeline failure triage & remediation agent"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["anthropic>=0.109"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools]
-packages = ["drift_gate", "drift_gate.generator", "drift_gate.synthetic"]
+packages = ["drift_gate", "drift_gate.generator", "drift_gate.synthetic", "drift_gate.agent"]
 
 [build-system]
 requires = ["setuptools>=68"]

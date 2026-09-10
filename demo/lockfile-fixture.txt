@@ -1,0 +1,5 @@
+# Demo fixture for exercising Tier 3 (pull-request) remediation mechanics against a
+# real repo (TASKS.md Phase 2). Not a real Terraform lockfile - a harmless stand-in
+# so GitHubActionsTarget's real branch/commit/PR flow has something real to touch.
+#
+# provider registry.terraform.io/hashicorp/aws version = "5.42.0"

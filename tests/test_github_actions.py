@@ -174,3 +174,92 @@ def test_target_rejects_unsupported_action():
     )
     assert tgt.dry_run(remediation).would_succeed is False
     assert tgt.execute(remediation).succeeded is False
+
+
+class _Resp:
+    def __init__(self, body):
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+class FakePRClient:
+    """Fakes the Git Data API sequence execute() drives: ref -> commit -> blob ->
+    tree -> commit -> ref -> pull."""
+
+    def __init__(self):
+        self.posted: list[tuple[str, dict]] = []
+
+    def get(self, path, params=None):
+        if path == "/git/ref/heads/main":
+            return {"object": {"sha": "base-sha"}}
+        if path == "/git/commits/base-sha":
+            return {"tree": {"sha": "base-tree-sha"}}
+        if path == "/pulls":
+            assert params == {"head": "Kavinraj23:drift-gate/regenerate_lockfile-fp1",
+                               "state": "all"}
+            return [{"number": 42, "state": "open"}]
+        raise AssertionError(path)
+
+    def post(self, path, json_body=None):
+        self.posted.append((path, json_body))
+        if path == "/git/blobs":
+            return _Resp({"sha": "blob-sha"})
+        if path == "/git/trees":
+            assert json_body["base_tree"] == "base-tree-sha"
+            assert json_body["tree"][0]["sha"] == "blob-sha"
+            return _Resp({"sha": "new-tree-sha"})
+        if path == "/git/commits":
+            assert json_body["tree"] == "new-tree-sha"
+            assert json_body["parents"] == ["base-sha"]
+            return _Resp({"sha": "new-commit-sha"})
+        if path == "/git/refs":
+            assert json_body["ref"] == "refs/heads/drift-gate/regenerate_lockfile-fp1"
+            assert json_body["sha"] == "new-commit-sha"
+            return _Resp({})
+        if path == "/pulls":
+            assert json_body["head"] == "drift-gate/regenerate_lockfile-fp1"
+            assert json_body["base"] == "main"
+            return _Resp({"number": 42, "html_url": "https://github.com/x/y/pull/42"})
+        raise AssertionError(path)
+
+
+def _tier3_remediation() -> Remediation:
+    return Remediation(
+        tier=Tier.TIER_3, action="regenerate_lockfile",
+        rationale="provider version constraint changed", reversible=True,
+        gate=Gate.PULL_REQUEST,
+        context={
+            "fingerprint": "fp1",
+            "file_path": "demo/lockfile-fixture.txt",
+            "new_content": "version = \"5.60.0\"\n",
+        },
+    )
+
+
+def test_pr_dry_run_previews_without_mutating():
+    client = FakePRClient()
+    tgt = GitHubActionsTarget("Kavinraj23", "drift-gate", client=client)
+    dry = tgt.dry_run(_tier3_remediation())
+    assert dry.would_succeed is True
+    assert client.posted == []  # no mutating call from dry_run
+
+
+def test_pr_execute_opens_a_real_branch_commit_and_pr():
+    client = FakePRClient()
+    tgt = GitHubActionsTarget("Kavinraj23", "drift-gate", client=client)
+    result = tgt.execute(_tier3_remediation())
+    assert result.succeeded is True
+    assert "PR #42" in result.detail
+    posted_paths = [p for p, _ in client.posted]
+    assert posted_paths == ["/git/blobs", "/git/trees", "/git/commits",
+                             "/git/refs", "/pulls"]
+
+
+def test_pr_verify_never_reports_resolved_true():
+    client = FakePRClient()
+    tgt = GitHubActionsTarget("Kavinraj23", "drift-gate", client=client)
+    verification = tgt.verify(_tier3_remediation())
+    assert verification.resolved is False
+    assert "PR #42" in verification.detail

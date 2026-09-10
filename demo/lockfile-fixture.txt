@@ -2,4 +2,4 @@
 # real repo (TASKS.md Phase 2). Not a real Terraform lockfile - a harmless stand-in
 # so GitHubActionsTarget's real branch/commit/PR flow has something real to touch.
 #
-# provider registry.terraform.io/hashicorp/aws version = "5.42.0"
+# provider registry.terraform.io/hashicorp/aws version = "5.60.0"  # fixed by drift-gate demo

@@ -71,8 +71,17 @@ priority-ordered, not day-numbered, since time per day will vary.
       real loop end to end: dispatch a run that fails on attempt 1 -> real source
       pulls it -> deterministic classifier resolves it as Tier 0 -> real
       `rerun-failed-jobs` call -> real verify() confirms success)
-- [ ] `GitHubActionsTarget`: Tier 3 PR — real branch + diff + PR via API, evidence
-      bundle as PR description (§4)
+- [x] `GitHubActionsTarget`: Tier 3 PR — real branch + diff + PR via API, evidence
+      bundle as PR description (§4) (`drift_gate/github_actions/target.py`,
+      `_execute_pr`: Git Data API blob -> tree -> commit -> ref -> pull, no local
+      git needed. Unit-tested against a fake client; also run live - opened a real
+      PR (github.com/Kavinraj23/drift-gate/pull/1) fixing `demo/lockfile-fixture.txt`.
+      verify() deliberately never reports resolved=True for this tier - a human
+      merges it, that's the tier's actual safety property. **Integration gap**: the
+      agent has no tool yet to read a target repo's real files, so it can't itself
+      discover which file to fix - context must already carry
+      `file_path`/`new_content` from elsewhere. Wiring that is follow-up work, not
+      done tonight.)
 
 ## Phase 3 — Gates, verification, audit (§5, §6)
 - [ ] Tier 0 gate: confidence ≥ 0.9 AND signature match AND fail-then-pass history, max

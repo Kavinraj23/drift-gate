@@ -216,11 +216,17 @@ def classify(source: ExecutionSource, execution_id: str) -> DeterministicResult:
                                   "fleet correlation"))
 
     if is_flake:
+        flake_rule = SignatureRule(
+            fault_id=sig.fault_id if sig else "unmatched",
+            classification=Classification.TRANSIENT, tier=Tier.TIER_0,
+            action="retry_execution", gate=Gate.AUTO, reversible=True,
+            rationale="fingerprint has a recent fail-then-pass history",
+        )
         return DeterministicResult(
             execution_id=execution_id, fingerprint=fp,
             matched_fault_id=sig.fault_id if sig else None,
             classification=Classification.TRANSIENT, layer=sig.layer if sig else Layer.L1,
-            blast_radius=blast, is_flake=True, evidence=tuple(evidence), rule=None,
+            blast_radius=blast, is_flake=True, evidence=tuple(evidence), rule=flake_rule,
             resolved=True,
         )
 
@@ -235,10 +241,15 @@ def classify(source: ExecutionSource, execution_id: str) -> DeterministicResult:
     resolved = rule is not None and rule.tier == Tier.TIER_0
     if resolved:
         escalate_reason = None
-    elif rule is not None:
+    elif rule is not None and rule.tier is not None:
         escalate_reason = (
             f"deterministic layer identified candidate action '{rule.action}' "
             f"(tier {rule.tier.value}); agent must produce gate-ready evidence/content"
+        )
+    elif rule is not None:
+        escalate_reason = (
+            f"'{sig.fault_id}' classified as {rule.classification.value}: "
+            f"{rule.rationale} - no automated remediation applies"
         )
     elif sig is not None:
         escalate_reason = f"no confident automated remediation for signature '{sig.fault_id}'"

@@ -1,0 +1,26 @@
+name: demo-failure
+
+# Manually-triggered canary pipeline for exercising the real GitHubActionsSource/Target
+# adapter (Phase 2, TASKS.md) against a genuine GitHub Actions execution instead of the
+# synthetic generator. It is not part of the error corpus in drift_gate/errors.py and is
+# not scored as part of the synthetic population - it exists only to produce a real,
+# live run that actually fails on its first attempt and actually passes when GitHub
+# itself re-runs it, so Tier 0 retry can be demonstrated against a real execution rather
+# than a mock.
+on:
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: apply
+        run: |
+          if [ "${{ github.run_attempt }}" = "1" ]; then
+            echo "Error: error creating EC2 Instance: ThrottlingException: Rate exceeded" >&2
+            echo "	status code: 400, request id: 2b5e8f1a-0000-4c1d-9c2e-example" >&2
+            exit 1
+          fi
+          echo "apply succeeded on attempt ${{ github.run_attempt }}"

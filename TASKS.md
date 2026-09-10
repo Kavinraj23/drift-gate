@@ -40,9 +40,16 @@ priority-ordered, not day-numbered, since time per day will vary.
 - [x] Evidence-source citation enforced in code (no claim without a backing tool result)
       (`agent/loop.py:run_agent` rejects any `submit_report` evidence item whose
       `source` isn't a tool actually called this run)
-- [ ] **Baseline accuracy measured** on synthetic population, before any LLM involved
-      (only 4 hand-picked demo cases run so far, not the full 186-execution ground
-      truth set - still open)
+- [x] **Baseline accuracy measured** on synthetic population, before any LLM involved
+      (`scripts/measure_baseline.py`, run against full 186-execution ground truth ->
+      `data/synthetic/baseline_report.json`. Resolves 51/186 (27%) with zero LLM calls,
+      0 wrong actions among those 51 - i.e. 100% precision on what auto-executes.
+      Escalates the remaining 73%. Running this surfaced two real bugs in
+      `classifier.py`, both fixed: (1) `policy_denial`/governance cases crashed on
+      `rule.tier.value` since that rule has `tier=None`; (2) flake-resolved results
+      never attached a `rule`, so `to_report` emitted `remediation=None,
+      abstained=True` for cases that should auto-retry - flakes now carry a Tier 0
+      retry rule. Regression tests added in `tests/test_classifier.py`.)
 
 ## Phase 2 — Real GitHub Actions adapter (§11 "what is genuinely real")
 - [ ] `GitHubActionsSource`: `get_execution`, `get_failed_leaf_nodes`, `get_step_logs`

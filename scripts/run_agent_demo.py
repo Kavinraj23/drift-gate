@@ -15,6 +15,10 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from drift_gate.agent.loop import run_agent
 from drift_gate.classifier import classify, to_report
 from drift_gate.dataset_io import load_ground_truth

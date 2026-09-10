@@ -62,6 +62,23 @@ def test_flaky_pipeline_retry_resolves_as_transient(data_dir, source):
     assert result.is_flake is True
     assert result.resolved is True
     assert result.classification == Classification.TRANSIENT
+    # A flake resolving deterministically must still carry a Tier 0 retry rule -
+    # to_report() has no other way to attach a Remediation to the output contract.
+    assert result.rule is not None
+    assert result.rule.tier == Tier.TIER_0
+    report = to_report(result)
+    assert report.remediation is not None
+    assert report.remediation.action == "retry_execution"
+    assert report.abstained is False
+
+
+def test_policy_denial_escalates_without_crashing(data_dir, source):
+    exec_id = _exec_id_for_fault(data_dir, "policy_denial")
+    result = classify(source, exec_id)
+    assert result.matched_fault_id == "policy_denial"
+    assert result.classification == Classification.GOVERNANCE
+    assert result.resolved is False
+    assert result.escalate_reason is not None
 
 
 def test_fleet_correlation_flips_burst_execution_to_platform(data_dir, source):

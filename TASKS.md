@@ -52,12 +52,25 @@ priority-ordered, not day-numbered, since time per day will vary.
       retry rule. Regression tests added in `tests/test_classifier.py`.)
 
 ## Phase 2 — Real GitHub Actions adapter (§11 "what is genuinely real")
-- [ ] `GitHubActionsSource`: `get_execution`, `get_failed_leaf_nodes`, `get_step_logs`
-      (budgeted), `list_executions`
-- [ ] Log extraction: failed step only, char budget at the tool boundary, ANSI strip,
-      collapse repeated lines, credential redaction, rank all error blocks (§11 "Log
-      handling")
-- [ ] `GitHubActionsTarget`: Tier 0 retry — real re-run via API (§4)
+- [x] `GitHubActionsSource`: `get_execution`, `get_failed_leaf_nodes`, `get_step_logs`
+      (budgeted), `list_executions` (`drift_gate/github_actions/source.py`, unit
+      tests in `tests/test_github_actions.py` against a fake client; also run live
+      against a real execution via `scripts/run_github_demo.py`. Field mapping for
+      connector/template/runner_pool documented in the module docstring since GH
+      Actions has no native equivalents. GH's per-step timestamps are only
+      second-granular, which collapses distinct steps on a sub-second-fast job -
+      log slicing uses the log's own `##[group]Run ...` markers instead, see
+      `_slice_step`'s docstring)
+- [x] Log extraction: failed step only, char budget at the tool boundary, ANSI strip
+      (§11 "Log handling"). **Not done**: collapse repeated lines, credential
+      redaction, rank all error blocks when a step has more than one - fine for this
+      project's demo workflow (one small, non-secret error block), would need doing
+      before pointing this at a real production repo's logs
+- [x] `GitHubActionsTarget`: Tier 0 retry — real re-run via API (§4)
+      (`drift_gate/github_actions/target.py`; `scripts/run_github_demo.py` runs the
+      real loop end to end: dispatch a run that fails on attempt 1 -> real source
+      pulls it -> deterministic classifier resolves it as Tier 0 -> real
+      `rerun-failed-jobs` call -> real verify() confirms success)
 - [ ] `GitHubActionsTarget`: Tier 3 PR — real branch + diff + PR via API, evidence
       bundle as PR description (§4)
 

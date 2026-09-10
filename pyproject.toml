@@ -9,7 +9,10 @@ dependencies = ["anthropic>=0.109", "python-dotenv>=1.0", "requests>=2.31"]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools]
-packages = ["drift_gate", "drift_gate.generator", "drift_gate.synthetic", "drift_gate.agent"]
+packages = [
+    "drift_gate", "drift_gate.generator", "drift_gate.synthetic", "drift_gate.agent",
+    "drift_gate.github_actions",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

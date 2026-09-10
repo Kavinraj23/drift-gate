@@ -5,4 +5,6 @@ __pycache__/
 .venv/
 venv/
 data/synthetic/
+data/audit_log.jsonl
+config/kill_switch.json
 .env

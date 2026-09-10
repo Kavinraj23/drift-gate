@@ -4,8 +4,9 @@ REAL GitHub Actions execution, not the synthetic generator (TASKS.md "never cut"
 Triggers .github/workflows/demo-failure.yml (fails on attempt 1, succeeds on any
 rerun), waits for the real failure, pulls it through GitHubActionsSource, runs it
 through the same deterministic classifier used on the synthetic population, and - if
-it resolves to a Tier 0 action, as this signature does - actually executes the retry
-against the real GitHub API and verifies the real result.
+it resolves to a Tier 0 action, as this signature does - routes it through the Phase 3
+SafetyGate (drift_gate.gates), which is what actually calls the real target now, not
+this script directly. Every proposal - executed or not - lands in data/audit_log.jsonl.
 
 Usage: python -m scripts.run_github_demo
 Requires GITHUB_TOKEN in the environment (loaded from .env), scoped to Actions
@@ -23,6 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from drift_gate.classifier import classify, to_report
+from drift_gate.gates import SafetyGate
 from drift_gate.github_actions.client import GitHubClient
 from drift_gate.github_actions.source import GitHubActionsSource
 from drift_gate.github_actions.target import GitHubActionsTarget
@@ -57,6 +59,7 @@ def main() -> None:
     client = GitHubClient(OWNER, REPO)
     source = GitHubActionsSource(OWNER, REPO, client)
     target = GitHubActionsTarget(OWNER, REPO, client)
+    gate = SafetyGate(target)
 
     print(f"Dispatching {WORKFLOW_FILE} on {OWNER}/{REPO}...")
     client.post(f"/actions/workflows/{WORKFLOW_FILE}/dispatches", {"ref": "main"})
@@ -86,10 +89,13 @@ def main() -> None:
     report = to_report(det)
     print(json.dumps(_report_to_json(report), indent=2, default=str))
 
-    print("\n--- Executing the real Tier 0 remediation against the GitHub API ---")
-    dry = target.dry_run(report.remediation)
-    print("dry_run:", dry.preview)
-    result = target.execute(report.remediation)
+    print("\n--- Routing through the Phase 3 SafetyGate (rate limit, kill switch, "
+          "abort ceiling, audit trail) ---")
+    result = gate.propose_and_execute(report)
+    if result is None:
+        print("Gate rejected the remediation - see data/audit_log.jsonl for why. "
+              "Not executing; caller should hard-escalate per PRD SS5.")
+        sys.exit(0)
     print("execute:", result.detail)
 
     print("\n--- Verifying against the real re-run ---")

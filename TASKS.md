@@ -84,15 +84,43 @@ priority-ordered, not day-numbered, since time per day will vary.
       done tonight.)
 
 ## Phase 3 — Gates, verification, audit (§5, §6)
+`drift_gate/gates.py` (`SafetyGate`) + `drift_gate/audit.py` (`AuditLog`) built this
+session and wired into `scripts/run_github_demo.py`, which now calls the gate instead
+of the target directly. Unit-tested (`tests/test_gates.py`) and confirmed live: ran
+the real demo 3x in a row against the real repo - executions 1 and 2 succeeded for
+real, the 3rd was correctly rejected by the rate limiter with no real GitHub mutation,
+all three outcomes recorded in `data/audit_log.jsonl`.
 - [ ] Tier 0 gate: confidence ≥ 0.9 AND signature match AND fail-then-pass history, max
-      2/fingerprint/hour, no human
-- [ ] Tier 3 gate: PR-is-the-gate, no direct mutation
+      2/fingerprint/hour, no human. **Partially real, one flagged spec gap**: max
+      2/fingerprint/hour is real and gate-enforced (see above); confidence≥0.9 is
+      trivially true today since `to_report` hardcodes confidence=0.95 for every
+      resolved case, not a dynamic check; "no human" is true by construction (AUTO
+      gate never prompts). **Open question, not resolved**: PRD.md §4 says Tier 0
+      eligibility requires "a fail-then-pass history for this fingerprint" - but
+      `classifier.py`'s RULES-matched Tier 0 resolutions (e.g. `cloud_throttling`,
+      `registry_429`) auto-execute on a signature's FIRST occurrence, with no prior
+      fail-then-pass precedent required for that specific fingerprint (only the
+      separate `is_flake` path checks real fail-then-pass history). Whether
+      RULES-authored "known-safe" signatures should be allowed to bypass that
+      per-fingerprint precedent, or whether PRD.md §4 needs updating to reflect that
+      distinction, hasn't been decided.
+- [ ] Tier 3 gate: PR-is-the-gate, no direct mutation - true by construction in
+      `_execute_pr` (opens a PR, never merges), not separately gate-enforced yet
 - [ ] Verification loop: observe next execution, check fingerprint recurrence, mark
-      failed remediations, escalate with original + failed evidence attached (§6)
-- [ ] Audit trail on every proposal incl. rejected/expired/failed: who/what/why/approver
-      /outcome/timestamps (§5)
-- [ ] Kill switch, global + per-tier (§5)
-- [ ] Rate limiting: 2 attempts per fingerprint, then hard escalate (§5)
+      failed remediations, escalate with original + failed evidence attached (§6).
+      `RemediationTarget.verify()` exists and was proven live (both for Tier 0 retry
+      and Tier 3 PR status) but only via manual/scripted calls - there's no automated
+      recurring process that watches for the next execution on its own and
+      auto-escalates a failed remediation
+- [x] Audit trail on every proposal incl. rejected/expired/failed: who/what/why/approver
+      /outcome/timestamps (§5) (`drift_gate/audit.py`; `approver` is always `None`
+      today - real human-approval workflows for single/dual-approval gates aren't
+      wired, so there's nothing to attribute yet)
+- [x] Kill switch, global + per-tier (§5) (`drift_gate/gates.py:KillSwitch`,
+      JSON-file-backed at `config/kill_switch.json`; unit-tested, not yet exercised
+      live since flipping it would have blocked tonight's real demo runs)
+- [x] Rate limiting: 2 attempts per fingerprint, then hard escalate (§5)
+      (`SafetyGate._rate_limited`; confirmed LIVE against the real repo - see above)
 
 ## Phase 4 — LLM reasoning loop (§8 step 8, §13)
 - [x] Log extraction (step 5) wired into evidence bundle (`get_step_logs` tool, agent

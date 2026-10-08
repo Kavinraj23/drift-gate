@@ -62,9 +62,20 @@ Tiered by blast radius, with a different gate per tier.
 
 **Tier 0 — idempotent, auto-executable.** Retry the execution, re-run a single failed
 step, clear a stale cache.
-Gate: confidence ≥ 0.9 AND a deterministic signature match AND a fail-then-pass history
-for this fingerprint. Max 2 retries per fingerprint per hour. No human. Cost of a wrong
-action is a wasted build minute.
+Gate: confidence ≥ 0.9 AND a deterministic signature match AND eligibility via **either**
+path below. Max 2 retries per fingerprint per hour. No human. Cost of a wrong action is a
+wasted build minute.
+
+- *Precedent path:* the fingerprint has a fail-then-pass history (the flake check). Needs
+  no signature authored in advance.
+- *Known-transient path:* the signature matches a rule authored as Tier 0 (self-resolving
+  and idempotent on retry, e.g. rate limiting or throttling). No prior precedent is
+  required — a strict per-fingerprint precedent requirement would make a fingerprint's
+  first occurrence permanently ineligible, since the retry is what creates the history.
+  The 2/hour cap bounds the cost of a wrong first attempt, and a second failure
+  hard-escalates.
+
+Signatures with no Tier 0 rule and no precedent are never auto-retried; they escalate.
 
 **Tier 1 — bounded platform actions.** Recycle an unresponsive runner, refresh a
 connector token where the credential source is still valid, reschedule a stuck pod,

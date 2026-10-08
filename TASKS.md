@@ -95,15 +95,11 @@ all three outcomes recorded in `data/audit_log.jsonl`.
       2/fingerprint/hour is real and gate-enforced (see above); confidence≥0.9 is
       trivially true today since `to_report` hardcodes confidence=0.95 for every
       resolved case, not a dynamic check; "no human" is true by construction (AUTO
-      gate never prompts). **Open question, not resolved**: PRD.md §4 says Tier 0
-      eligibility requires "a fail-then-pass history for this fingerprint" - but
-      `classifier.py`'s RULES-matched Tier 0 resolutions (e.g. `cloud_throttling`,
-      `registry_429`) auto-execute on a signature's FIRST occurrence, with no prior
-      fail-then-pass precedent required for that specific fingerprint (only the
-      separate `is_flake` path checks real fail-then-pass history). Whether
-      RULES-authored "known-safe" signatures should be allowed to bypass that
-      per-fingerprint precedent, or whether PRD.md §4 needs updating to reflect that
-      distinction, hasn't been decided.
+      gate never prompts). **Precedent question decided (2026-10-07)**: PRD.md §4 now
+      defines two eligibility paths - precedent (`is_flake`) or known-transient
+      (RULES-authored Tier 0 signature, no precedent needed). Code already matched
+      this; the PRD was the thing that was wrong. Remaining on this box: make
+      confidence a real computed value instead of a hardcoded 0.95.
 - [ ] Tier 3 gate: PR-is-the-gate, no direct mutation - true by construction in
       `_execute_pr` (opens a PR, never merges), not separately gate-enforced yet
 - [ ] Verification loop: observe next execution, check fingerprint recurrence, mark

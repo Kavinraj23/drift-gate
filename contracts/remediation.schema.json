@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "remediation.schema.json",
+  "title": "Remediation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tier", "action", "rationale", "reversible", "gate", "gate_decision", "dry_run"],
+  "properties": {
+    "tier": {"enum": [0, 1, 2, 3]},
+    "action": {"type": "string"},
+    "rationale": {"type": "string"},
+    "reversible": {"type": "boolean"},
+    "gate": {"enum": ["auto", "single_approval", "dual_approval", "pull_request"]},
+    "gate_decision": {"enum": ["allowed", "downgraded", "refused"]},
+    "dry_run": {"type": "object"}
+  }
+}

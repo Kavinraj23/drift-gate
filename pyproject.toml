@@ -25,9 +25,13 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py311"
 src = ["src", "tests"]
+extend-exclude = ["docs", "playground"]
+
+[tool.ruff.format]
+docstring-code-format = false
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

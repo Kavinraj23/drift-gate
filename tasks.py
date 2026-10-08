@@ -14,7 +14,6 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
 NOT_IMPLEMENTED: dict[str, str] = {
-    "eval": "M9a",
     "record": "M5",
     "eval-live": "M9b",
     "e2e-live": "M8b",
@@ -23,7 +22,7 @@ NOT_IMPLEMENTED: dict[str, str] = {
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
-IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7"}
+IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M9a"}
 
 # Each MVP acceptance check: (name, milestone, command). Mirrors TASKS.md.
 CHECKS: list[tuple[str, str, list[str]]] = [
@@ -85,6 +84,18 @@ def e2e() -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def eval_() -> int:
+    """Agent vs. baseline metrics table, offline (scripted model or replay fixtures); writes data/eval/report.*."""
+    if not (ROOT / "data" / "executions.json").exists():
+        code = data()
+        if code:
+            return code
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.report", "--data", str(ROOT / "data"), "--out", str(ROOT / "data" / "eval")]
+    cmd += ["--mode", "auto", "--fixtures", str(ROOT / "fixtures" / "replay")]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
 def mvp_check() -> int:
     rows: list[tuple[str, str, str]] = []
     for name, milestone, cmd in CHECKS:
@@ -107,6 +118,7 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "data": data,
     "baseline": baseline,
     "e2e": e2e,
+    "eval": eval_,
     "mvp-check": mvp_check,
 }
 

@@ -25,7 +25,7 @@ NOT_IMPLEMENTED: dict[str, str] = {
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
-IMPLEMENTED_MILESTONES: set[str] = {"M0"}
+IMPLEMENTED_MILESTONES: set[str] = {"M0", "M2"}
 
 # Each MVP acceptance check: (name, milestone, command). Mirrors TASKS.md.
 CHECKS: list[tuple[str, str, list[str]]] = [

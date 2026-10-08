@@ -28,3 +28,5 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
   - `aws_expired_token`: check the exact AWS CLI/SDK expired-token message.
   - `tf_undeclared_variable`: check the diagnostic layout and wrap.
   - `tf_provider_constraints`: check the wrap point of the two-line body.
+- Label conflict (M3): generator labels flaky-test failures Tier 0 via flake precedent, but their only signature is the generic exit code, and invariant 3 requires a deterministic signature match. Decide: give the flaky fault a real, verbatim deterministic signature (needs a real sample), or relabel those cases escalate in the generator/eval.
+- Redaction is regex-only; harden with a corpus of real secret shapes before the first `record` run.

@@ -24,3 +24,11 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 - Carry-forward: callers (M3/M5) must compute `shared_resources`, set sizes and blast radius; `BlastRadius` default 0 is fail-open if unpopulated, so M5 must always populate it; one RateLimiter per process.
 - Reviewer questions for the human: (1) Is "PR plus reviewer" enough of a gate for Tier 3 when set-size facts are missing, or should every tier require them? (2) Should unknown blast radius be representable and fail closed, and should "only SafetyGate produces allowed" be structural (gate-issued token) rather than a settable field?
 - Needs human: choose N for "blast radius over N" (currently 10).
+
+## M1: synthetic generator (2026-10-08)
+- Built: seeded generator (`python tasks.py data`): ~1.5k executions over 12 pipelines and 30 days, 4 bursts, 2 flaky pipelines, decoy change timeline, per-failure synthetic repos with injected faults, ground truth under `ground_truth/` (read only by `eval/ground_truth.py`), simulator-internal `world/` (read only by SyntheticTarget), 33 scenarios of which 9 are held out. See docs/design/M1.md.
+- Verified: `data`, lint, full suite (205 after merge with M2/M4). Reviewer: round 1 fail (ground-truth metadata and label-correlated files agent-visible; catalog overclaimed "real"), round 2 fail (flaky pipelines named/shaped distinctively), round 3 pass.
+- Test edits with justification: `tests/test_tasks.py::test_not_implemented_target_exits_1` now uses `baseline`/M3 instead of `data`/M1 because `data` is implemented; assertion otherwise identical. Tests that read the manifest or catalog_use moved to the new `ground_truth/` paths; one ground-truth fault id renamed `transient_flaky_canary` -> `transient_flaky_test`.
+- Carry-forward: execution statuses are lowercase `success`/`failed`/`approval_rejected` (M3 to confirm); the 2 flaky pipelines legitimately show elevated retry chains; every error-catalog entry is `verified: false` (recalled, not captured).
+- Needs human: see BLOCKERS.md (real samples for unverified error strings; governance text).
+- Reviewer questions for the human: (1) Is the flaky pipelines' elevated failure rate and retry-chain density an acceptable signal? (2) Is "unexamined scenarios, not unseen families" what the PRD means by held-out?

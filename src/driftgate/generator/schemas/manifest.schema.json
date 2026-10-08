@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "seed",
+    "anchor",
+    "days",
+    "stats",
+    "pipelines",
+    "files"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "anchor": {
+      "type": "string"
+    },
+    "days": {
+      "type": "integer"
+    },
+    "stats": {
+      "type": "object"
+    },
+    "pipelines": {
+      "type": "array",
+      "minItems": 12,
+      "items": {
+        "type": "object"
+      }
+    },
+    "files": {
+      "type": "object"
+    }
+  }
+}

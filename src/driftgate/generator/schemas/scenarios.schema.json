@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scenarios.schema.json",
+  "type": "object",
+  "required": [
+    "scenarios",
+    "held_out_scenarios"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "scenario_id",
+          "execution_id",
+          "held_out"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "scenario_id": {
+            "type": "string"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "held_out": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "held_out_scenarios": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 10,
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

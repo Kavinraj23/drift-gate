@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "executions.schema.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "execution_id",
+      "pipeline",
+      "status",
+      "started_at",
+      "finished_at",
+      "root",
+      "refs"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "execution_id": {
+        "type": "string",
+        "pattern": "^ex-[0-9]{6}$"
+      },
+      "pipeline": {
+        "type": "string"
+      },
+      "status": {
+        "enum": [
+          "success",
+          "failed",
+          "approval_rejected"
+        ]
+      },
+      "started_at": {
+        "type": "string"
+      },
+      "finished_at": {
+        "type": "string"
+      },
+      "root": {
+        "$ref": "#/$defs/node"
+      },
+      "refs": {
+        "type": "object",
+        "required": [
+          "connector",
+          "template",
+          "runner_pool",
+          "infra_def",
+          "commit"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "connector": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string"
+          },
+          "runner_pool": {
+            "type": "string"
+          },
+          "infra_def": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "retry_of": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "name",
+        "status",
+        "parent_id",
+        "children",
+        "error_summary"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "success",
+            "failed",
+            "skipped",
+            "rejected"
+          ]
+        },
+        "parent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "error_summary": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

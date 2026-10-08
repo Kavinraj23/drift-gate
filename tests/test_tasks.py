@@ -13,8 +13,8 @@ SPEC.loader.exec_module(tasks)
 
 
 def test_not_implemented_target_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    assert tasks.main(["tasks.py", "baseline"]) == 1
-    assert "not implemented (M3)" in capsys.readouterr().out
+    assert tasks.main(["tasks.py", "e2e"]) == 1
+    assert "not implemented (M5)" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("target", sorted(tasks.HUMAN_ONLY))

@@ -119,6 +119,11 @@ class SafetyGate:
         self._rate = rate_limiter
         self._ceiling = abort_blast_ceiling
 
+    @property
+    def kill_switch(self) -> KillSwitch:
+        """Read-only access for callers that must honour the switch outside a gate decision (rollback)."""
+        return self._kill
+
     def decide(self, proposal: Remediation, facts: GateFacts) -> GateDecision:
         """Return the proposal with a gate decision. Only ever allowed, downgraded or refused."""
         incoming = proposal.gate_decision

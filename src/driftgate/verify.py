@@ -20,12 +20,13 @@ The agent decides; this module and the gate verify. Nothing here lets a model ra
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
-from typing import Any
+from dataclasses import dataclass, field, fields, replace
+from typing import Any, Protocol, runtime_checkable
 
 from driftgate.agents.investigator import Investigation
 from driftgate.audit import AuditLog
-from driftgate.domain import RemediationTarget, RunStats
+from driftgate.domain import ExecutionResult, Remediation, RemediationTarget
+from driftgate.gates import KillSwitch
 from driftgate.orchestrator import ESCALATED, EXECUTED, PR_PROPOSED, Orchestrator, Outcome
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
 from driftgate.tools.base import FailureAnalyzer, fingerprint
@@ -35,12 +36,24 @@ LOG_EXCERPT_CHARS = 4000  # how much of the next execution's log is kept on the 
 VERIFIED_BY_CI = "verified by CI"
 
 
+@runtime_checkable
+class RollbackCapable(Protocol):
+    """Optional capability of a `RemediationTarget` (the target protocol itself is a contract and unchanged).
+
+    A target that implements `rollback` can undo a reversible, executed action. A target that does not is not an
+    error: the verifier audits "rollback unavailable" explicitly and the failed attempt says it was not rolled back.
+    """
+
+    def rollback(self, action: Remediation) -> ExecutionResult: ...
+
+
 @dataclass(frozen=True)
 class Verification:
     verified: bool
     description: str
     recurred: bool | None  # did the failure fingerprint recur in the next execution (None: not observable)
     details: dict[str, Any]
+    rollback_blocked: str = field(default="")  # non-empty: a tripped kill switch stopped the rollback (reason)
 
     def as_record(self) -> dict[str, Any]:
         return {
@@ -53,8 +66,14 @@ class Verification:
 
 class Verifier:
     def __init__(
-        self, target: RemediationTarget, attempts: AttemptStore, audit: AuditLog, analyzer: FailureAnalyzer
+        self,
+        target: RemediationTarget,
+        attempts: AttemptStore,
+        audit: AuditLog,
+        analyzer: FailureAnalyzer,
+        kill_switch: KillSwitch | None = None,
     ) -> None:
+        self._kill = kill_switch
         self._target = target
         self._attempts = attempts
         self._audit = audit
@@ -94,9 +113,12 @@ class Verifier:
             self._attempts.update(attempt_id, outcome="verified", verification=record)
             self._audit.append("verification", fp, eid, stage="closed", attempt_id=attempt_id)
             return v
-        record["rolled_back"] = self._roll_back(out, attempt_id)
+        done, blocked = self._roll_back(out, attempt_id)
+        record["rolled_back"] = done
+        if blocked:
+            record["rollback_blocked"] = blocked
         self._attempts.update(attempt_id, outcome="failed", verification=record)
-        return v
+        return replace(v, rollback_blocked=blocked)
 
     # -- helpers -----------------------------------------------------------------------------
     def _recurred(self, eid: str, fp: str, details: dict[str, Any], tier: int) -> bool | None:
@@ -125,29 +147,41 @@ class Verifier:
         )
         return out.attempt_id
 
-    def _roll_back(self, out: Outcome, attempt_id: str) -> bool:
-        """Undo a reversible executed action. A Tier 3 PR was never merged, so it has nothing to undo.
+    def _roll_back(self, out: Outcome, attempt_id: str) -> tuple[bool, str]:
+        """Undo a reversible executed action. Returns (rolled back, kill-switch reason if that stopped it).
 
-        Rolling back is one subtractive step and nothing is added after it, so additive-before-subtractive
-        (invariant 13) holds trivially. It undoes an action the gate already allowed; it is not a new decision.
+        A Tier 3 PR was never merged, so it has nothing to undo. Rolling back is one subtractive step and nothing is
+        added after it, so additive-before-subtractive (invariant 13) holds trivially. It undoes an action the gate
+        already allowed, so it is not a new gate decision, but it still honours the kill switch (read-only check): a
+        tripped switch means no automated action at all, so the rollback is skipped, audited as skipped, and the
+        caller escalates to a human.
         """
         rem = out.report.remediation
         assert rem is not None
         fp, eid = out.report.fingerprint, out.execution_id
-        rollback = getattr(self._target, "rollback", None)
+        blocked = ""
         if rem.tier == 3:
             reason, done = "pull request is not merged: nothing to roll back", False
         elif not rem.reversible:
             reason, done = "action is irreversible: not rolled back", False
-        elif rollback is None:
-            reason, done = "target cannot roll back", False
+        elif not isinstance(self._target, RollbackCapable):
+            reason, done = "rollback unavailable: the target does not implement rollback", False
+        elif self._kill is not None and (blocked := self._kill.read().blocks(rem.tier) or ""):
+            reason, done = f"rollback skipped: {blocked}; a human must undo the action", False
         else:
-            res = rollback(rem)
+            res = self._target.rollback(rem)
             reason, done = res.description, bool(res.ok)
         self._audit.append(
-            "verification", fp, eid, stage="rollback", attempt_id=attempt_id, rolled_back=done, description=reason
+            "verification",
+            fp,
+            eid,
+            stage="rollback",
+            attempt_id=attempt_id,
+            rolled_back=done,
+            skipped_by_kill_switch=bool(blocked),
+            description=reason,
         )
-        return done
+        return done, blocked
 
 
 # ---------------------------------------------------------------------------------------------
@@ -193,6 +227,10 @@ class VerificationLoop:
         if v.verified:
             return
         out.first_attempt_failed = True
+        if v.rollback_blocked:
+            return self._hard_escalate(
+                out, f"kill switch stopped the rollback of a failed action ({v.rollback_blocked})"
+            )
         fp = out.report.fingerprint
         failed_attempt = self._attempts.get(out.attempt_id)
         assert failed_attempt is not None and out.investigation is not None
@@ -211,9 +249,10 @@ class VerificationLoop:
     def _reinvestigate(self, out: Outcome, failed: RemediationAttempt) -> None:
         first_hypothesis = out.report.hypothesis
         first_evidence = list(out.report.evidence)
-        first_run = out.report.run
         first_calls = out.model_calls
-        first_ids = [*out.earlier_tool_call_ids, *(out.investigation.tool_call_ids if out.investigation else [])]
+        first_results = [*out.earlier_tool_results, *(out.investigation.tool_results if out.investigation else [])]
+        first_ids = [r.source for r in first_results]
+        first_round = replace(out)  # shallow snapshot: round 1 stays reachable once `out` becomes the final outcome
         self._audit.append(
             "proposal",
             out.report.fingerprint,
@@ -236,15 +275,18 @@ class VerificationLoop:
         ctx = reinvestigation_context(out.report.fingerprint, failed, first_hypothesis)
         new = self._orch.reinvestigate(out, ctx, precheck)
 
-        # One report for both rounds: original evidence first, then the revised round's; run stats summed.
+        # One report for both rounds: original evidence first, then the revised round's. `report.run` is already the
+        # case total because both rounds drew on one shared budget (nothing is summed here, so nothing double counts).
         new.report.evidence = first_evidence + new.report.evidence
-        new.report.run = _sum_runs(first_run, new.report.run)
         new.report.prior_attempts = self._prior_attempts(new.report.fingerprint, [first_hypothesis])
         new.report.fingerprint = new.report.fingerprint or out.report.fingerprint
         new.first_attempt_failed = True
         new.rounds = 2
         new.earlier_model_calls = first_calls
         new.earlier_tool_call_ids = first_ids
+        new.earlier_tool_results = first_results
+        new.first_round = first_round
+        new.attempt_id = new.attempt_id or first_round.attempt_id  # keep the last real attempt id
         for f in fields(Outcome):
             setattr(out, f.name, getattr(new, f.name))
 
@@ -272,19 +314,15 @@ class VerificationLoop:
         return rows
 
 
-def _sum_runs(a: RunStats, b: RunStats) -> RunStats:
-    return RunStats(
-        tool_calls=a.tool_calls + b.tool_calls,
-        input_tokens=a.input_tokens + b.input_tokens,
-        output_tokens=a.output_tokens + b.output_tokens,
-        cost_usd=a.cost_usd + b.cost_usd,
-        latency_s=a.latency_s + b.latency_s,
-    )
-
-
 def install_verification(orchestrator: Orchestrator) -> VerificationLoop:
     """Wire the verifier and the loop into an orchestrator as its `after_execution` hook."""
-    verifier = Verifier(orchestrator.target, orchestrator.attempts, orchestrator.audit, orchestrator.analyzer)
+    verifier = Verifier(
+        orchestrator.target,
+        orchestrator.attempts,
+        orchestrator.audit,
+        orchestrator.analyzer,
+        orchestrator.kill_switch,
+    )
     loop = VerificationLoop(orchestrator, verifier)
     orchestrator.attach_after_execution(loop)
     return loop

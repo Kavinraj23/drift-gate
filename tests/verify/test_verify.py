@@ -16,10 +16,23 @@ from driftgate.audit import AuditLog
 from driftgate.domain import Remediation, Report
 from driftgate.eval.e2e import DRILLS, run_all, run_drill
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth
-from driftgate.eval.metrics import Rate, recovery_rate, remediation_success_rate
-from driftgate.eval.scripted_agent import two_round_factory
+from driftgate.eval.metrics import (
+    Rate,
+    recovery_breakdown,
+    recovery_or_correct_escalation_rate,
+    recovery_rate,
+    remediation_success_rate,
+)
+from driftgate.eval.scripted_agent import (
+    Plan,
+    _parse_results,
+    _report_input,
+    build_reinvestigation_script,
+    two_round_factory,
+)
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.fake import FakeModel
+from driftgate.llm.types import ModelRequest, ModelResponse, ToolCall, Usage
 from driftgate.orchestrator import (
     ESCALATED,
     EXECUTED,
@@ -323,21 +336,72 @@ def test_gate_never_raises_a_tier_on_reproposal(run) -> None:  # type: ignore[no
 
 
 # --- budget rollup, audit, schema -------------------------------------------------------------------------------
-def test_budget_rolls_up_across_both_rounds(run) -> None:  # type: ignore[no-untyped-def]
+def test_both_rounds_share_one_budget_and_the_run_rollup_matches_it(run) -> None:  # type: ignore[no-untyped-def]
     out, _, rig = run("sc-17", "wrong_paths", "right_paths")
-    a, b = (budget.run_fields() for budget in rig.budgets)
+    assert len(rig.budgets) == 2 and rig.budgets[0] is rig.budgets[1]  # one budget for the whole case
+    shared = rig.budgets[0]
+    assert shared.reinvestigations == 1
     run_ = out.report.run
-    assert run_.tool_calls == a["tool_calls"] + b["tool_calls"] > b["tool_calls"]
-    assert run_.input_tokens == a["input_tokens"] + b["input_tokens"]
-    assert run_.output_tokens == a["output_tokens"] + b["output_tokens"]
-    assert out.model_calls == len(rig.budgets[0].calls) + len(rig.budgets[1].calls)
+    assert (run_.tool_calls, run_.input_tokens, run_.output_tokens) == (
+        shared.tool_calls,
+        shared.run_fields()["input_tokens"],
+        shared.run_fields()["output_tokens"],
+    )
+    assert run_.tool_calls == len(out.earlier_tool_call_ids) + len(out.investigation.tool_call_ids)  # type: ignore[union-attr]
+    assert out.model_calls == len(shared.calls)
     assert out.tool_calls == run_.tool_calls and out.tokens == run_.input_tokens + run_.output_tokens
 
 
-def test_each_round_gets_its_own_tool_call_and_token_allowance(run) -> None:  # type: ignore[no-untyped-def]
-    _, _, rig = run("sc-17", "wrong_paths", "right_paths")
-    assert rig.budgets[0] is not rig.budgets[1]
-    assert all(b.tool_calls <= b.limits.max_tool_calls for b in rig.budgets)
+def test_a_two_round_case_never_exceeds_the_per_investigation_limits(table) -> None:  # type: ignore[no-untyped-def]
+    two_round = [r for r in table if r.outcome is not None and r.outcome.rounds == 2]
+    assert len(two_round) >= len(DRILLS)
+    for r in two_round:
+        o = r.outcome
+        budget = o.investigation.budget  # type: ignore[union-attr]
+        assert o.tool_calls <= budget.limits.max_tool_calls == 8, r.row.scenario_id
+        assert budget.tokens_used <= budget.limits.max_total_tokens == 40_000, r.row.scenario_id
+        assert budget.reinvestigations == 1
+
+
+def test_round_one_spending_all_tool_calls_truncates_round_two_and_escalates(  # type: ignore[no-untyped-def]
+    make_orch: MakeOrch, dataset_dir: Path, by_sid
+) -> None:
+    label, source = by_sid("sc-17"), SyntheticSource(dataset_dir)
+    eid = label.execution_id
+    wrong = {"tier": 3, "action": label.correct_action, "rationale": "docs", "reversible": True, "paths": ["README.md"]}
+    plan = Plan([], label.true_classification, label.true_layer, 0.7, wrong)
+    turns: list = [  # eight tool calls, one per turn, then the report
+        ModelResponse(
+            tool_calls=[
+                ToolCall(f"toolu_{eid}_{i}", "get_execution" if i else "classify_signature", {"execution_id": eid})
+            ],
+            usage=Usage(input_tokens=900, output_tokens=100),
+            stop_reason="tool_use",
+        )
+        for i in range(8)
+    ]
+
+    def final(request: ModelRequest) -> ModelResponse:
+        data = _report_input(plan, _parse_results(request), "correct")
+        return ModelResponse(tool_calls=[ToolCall("toolu_final", "submit_report", data)], usage=Usage(10, 10))
+
+    first = FakeModel([*turns, final])
+    models = iter([first, FakeModel(build_reinvestigation_script(label, source, "right_paths"))])
+    budgets: list[InvestigationBudget] = []
+
+    def factory(_eid: str, budget: InvestigationBudget) -> FakeModel:
+        budgets.append(budget)
+        return next(models)
+
+    orch = make_orch(label, model_factory=factory, verification=True, target=make_synthetic_target(dataset_dir))
+    out = orch.handle(eid)
+    assert budgets[0] is budgets[1] and budgets[0].tool_calls == 8
+    assert out.rounds == 2 and out.kind == ESCALATED
+    assert out.report.budget_truncated is True and out.report.abstained is True
+    assert out.report.run.tool_calls == 8  # round 2 got nothing: it never ran a tool
+    assert out.tool_calls <= 8
+    assert len(out.report.prior_attempts) >= 1  # the failed attempt travels with the escalation
+    assert out.first_round is not None and out.first_round.report.remediation is not None
 
 
 def test_audit_covers_verification_rollback_reinvestigation_and_escalation(run) -> None:  # type: ignore[no-untyped-def]
@@ -419,7 +483,11 @@ def test_every_drill_ends_correctly(table) -> None:  # type: ignore[no-untyped-d
 
 def test_headline_metrics_are_computed_from_the_cases(table) -> None:  # type: ignore[no-untyped-def]
     cases = [(r.label, r.outcome) for r in table if r.outcome is not None]
-    assert recovery_rate(cases) == Rate(3, 5)
+    b = recovery_breakdown(cases)
+    assert recovery_rate(cases) == b.fixed == Rate(1, 5)  # PRD: only a verified fix after a failed attempt
+    assert b.correct_escalation == Rate(2, 5) and b.not_recovered == Rate(2, 5)
+    assert recovery_or_correct_escalation_rate(cases) == Rate(3, 5)  # the earlier, looser figure
+    assert b.gate_blocked.numerator == 2  # sc-11 and sc-29: the real gate stopped the wrong first fix
     success = remediation_success_rate(cases)
     assert success.denominator > 10 and 0 < success.numerator < success.denominator
     assert recovery_rate([]).value is None and remediation_success_rate([]).value is None
@@ -428,3 +496,95 @@ def test_headline_metrics_are_computed_from_the_cases(table) -> None:  # type: i
 def test_every_table_report_validates(table, report_validator: Draft202012Validator) -> None:  # type: ignore[no-untyped-def]
     for r in table:
         report_validator.validate(json.loads(json.dumps(r.outcome.report.to_dict())))  # type: ignore[union-attr]
+
+
+# --- round 1 is kept, not overwritten --------------------------------------------------------------------------
+def test_round_one_data_survives_a_round_two_that_escalates_before_executing(run) -> None:  # type: ignore[no-untyped-def]
+    out, orch, rig = run("sc-06", "correct", "revise_escalate", verified=False)
+    (attempt,) = orch.attempts.all()
+    assert out.rounds == 2 and out.kind == ESCALATED and out.execution is None  # round 2 never executed anything
+    assert out.attempt_id == attempt.attempt_id  # the last real attempt id is not blanked
+    snap = out.first_round
+    assert snap is not None and snap.attempt_id == attempt.attempt_id and snap.rounds == 1
+    assert snap.report is not out.report and snap.report.hypothesis != out.report.hypothesis
+    assert snap.kind == EXECUTED and snap.execution is not None
+    # round-1 tool results and ids are held in the earlier_* fields, and match what round 1 ran
+    assert [r.source for r in out.earlier_tool_results] == out.earlier_tool_call_ids != []
+    assert set(out.earlier_tool_call_ids).isdisjoint(out.investigation.tool_call_ids)  # type: ignore[union-attr]
+    assert out.earlier_model_calls >= 1 and out.model_calls > out.earlier_model_calls
+
+
+# --- rollback: protocol, availability, kill switch ---------------------------------------------------------------
+class NoRollbackTarget:
+    """A RemediationTarget without the optional rollback capability (delegates the three protocol methods)."""
+
+    def __init__(self, inner: SyntheticTarget) -> None:
+        self._inner = inner
+
+    def dry_run(self, action: Remediation):  # type: ignore[no-untyped-def]
+        return self._inner.dry_run(action)
+
+    def execute(self, action: Remediation):  # type: ignore[no-untyped-def]
+        return self._inner.execute(action)
+
+    def verify(self, action: Remediation):  # type: ignore[no-untyped-def]
+        return self._inner.verify(action)
+
+
+def _verifier_case(dataset_dir: Path, tmp_path: Path, target: Any, kill: Any = None):  # type: ignore[no-untyped-def]
+    source = SyntheticSource(dataset_dir)
+    eid = next(e.execution_id for e in source.list_executions(None, {"status": "failed"}))
+    analysis = FailureAnalyzer(source).analyze(eid)
+    assert analysis is not None
+    attempts, audit = AttemptStore(), AuditLog(tmp_path / "a.jsonl", FakeClock())
+    rem = Remediation(0, "rerun_failed_job", "x", reversible=True, gate="auto")
+    report = Report(eid, analysis.fingerprint, "transient", "L4", 0.5, "h", remediation=rem)
+    out = Outcome(eid, EXECUTED, report, attempt_id="a1")
+    attempts.add(RemediationAttempt("a1", analysis.fingerprint, eid, 0, rem.action, "executed"))
+    verifier = Verifier(target, attempts, audit, FailureAnalyzer(source), kill)
+    return verifier, out, attempts, audit
+
+
+def test_target_without_rollback_is_audited_as_rollback_unavailable(dataset_dir: Path, tmp_path: Path) -> None:
+    target = NoRollbackTarget(SyntheticTarget(default=SimulatedOutcome(verified=False)))
+    verifier, out, attempts, audit = _verifier_case(dataset_dir, tmp_path, target)
+    v = verifier.verify(out)
+    assert not v.verified and v.rollback_blocked == ""
+    assert attempts.get("a1").verification["rolled_back"] is False  # type: ignore[union-attr]
+    (entry,) = [e for e in audit.read() if e.payload.get("stage") == "rollback"]
+    assert "rollback unavailable" in entry.payload["description"] and entry.payload["rolled_back"] is False
+
+
+def test_tripped_kill_switch_skips_the_rollback_and_says_so(dataset_dir: Path, tmp_path: Path) -> None:
+    from driftgate.gates import KillSwitch
+
+    kill = tmp_path / "kill.json"
+    kill.write_text(json.dumps({"global": False, "tiers": {"0": True}}), encoding="utf-8")
+    target = SyntheticTarget(default=SimulatedOutcome(verified=False))
+    verifier, out, attempts, audit = _verifier_case(dataset_dir, tmp_path, target, KillSwitch(kill))
+    v = verifier.verify(out)
+    assert "global kill switch" in v.rollback_blocked and target.rolled_back == []
+    assert attempts.get("a1").verification["rolled_back"] is False  # type: ignore[union-attr]
+    (entry,) = [e for e in audit.read() if e.payload.get("stage") == "rollback"]
+    assert entry.payload["skipped_by_kill_switch"] is True and "rollback skipped" in entry.payload["description"]
+
+
+def test_kill_switch_tripped_after_execution_escalates_without_reinvestigating(  # type: ignore[no-untyped-def]
+    make_orch: MakeOrch, dataset_dir: Path, by_sid, kill_file: Path
+) -> None:
+    label = by_sid("sc-06")
+    inner = SyntheticTarget(default=SimulatedOutcome(verified=False), data_dir=dataset_dir)
+
+    class TripOnVerify(NoRollbackTarget):
+        rollback = inner.rollback
+
+        def verify(self, action: Remediation):  # type: ignore[no-untyped-def]
+            kill_file.write_text(json.dumps({"global": False, "tiers": {}}), encoding="utf-8")
+            return inner.verify(action)
+
+    rig = Rig(dataset_dir, label, "correct", "revise_escalate")
+    orch = make_orch(label, model_factory=rig, verification=True, target=TripOnVerify(inner))
+    out = orch.handle(label.execution_id)
+    assert out.kind == ESCALATED and out.rounds == 1 and len(rig.models) == 1  # no second investigation
+    assert "kill switch" in out.reason and inner.rolled_back == []
+    assert any(e.payload.get("skipped_by_kill_switch") for e in orch.audit.read())

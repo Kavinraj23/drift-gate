@@ -24,7 +24,7 @@ from driftgate.adapters.synthetic import SyntheticSource
 from driftgate.audit import AuditEntry
 from driftgate.domain import RemediationTarget
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth, load_ground_truth
-from driftgate.eval.metrics import Case, recovery_rate, recovery_text, remediation_success_rate
+from driftgate.eval.metrics import Case, RecoveryBreakdown, recovery_breakdown, recovery_text, remediation_success_rate
 from driftgate.eval.scripted_agent import scripted_model, two_round_factory
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.config import GatewayConfig
@@ -340,12 +340,12 @@ def run_all(
     return results
 
 
-def loop_metrics(results: list[ScenarioResult]) -> tuple[str, str]:
+def loop_metrics(results: list[ScenarioResult]) -> tuple[str, RecoveryBreakdown]:
     cases: list[Case] = [(r.label, r.outcome) for r in results if r.label is not None and r.outcome is not None]
-    return str(remediation_success_rate(cases)), str(recovery_rate(cases))
+    return str(remediation_success_rate(cases)), recovery_breakdown(cases)
 
 
-def format_table(rows: list[Row], mode: str, metrics: tuple[str, str] | None = None) -> str:
+def format_table(rows: list[Row], mode: str, metrics: tuple[str, RecoveryBreakdown] | None = None) -> str:
     models = sorted({r.model for r in rows})
     header = f"End-to-end scenarios (mode={mode}; model source: {', '.join(models)})"
     if any(m.startswith("fake") for m in models):
@@ -394,7 +394,15 @@ def format_table(rows: list[Row], mode: str, metrics: tuple[str, str] | None = N
         f"tokens {sum(r.tokens for r in rows)}",
     ]
     if metrics is not None:
-        lines.append(f"remediation success {metrics[0]}; recovery after a failed first attempt {metrics[1]}")
+        success, b = metrics
+        lines += [
+            f"remediation success (verified / attempted): {success}",
+            "after a failed first attempt (re-investigation):",
+            f"  recovered by verified fix:           {b.fixed}   <- the recovery rate",
+            f"  correct escalation after attempt:    {b.correct_escalation}",
+            f"  not recovered:                       {b.not_recovered}",
+            f"wrong first fix stopped by the gate before it ran: {b.gate_blocked}",
+        ]
     notes = sorted({f"{r.status}: {r.note}" for r in rows if r.note and r.status != OK})
     lines += [f"note - {n}" for n in notes]
     return "\n".join(lines)

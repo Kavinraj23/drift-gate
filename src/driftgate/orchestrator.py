@@ -86,6 +86,8 @@ class Outcome:
     first_attempt_failed: bool = False
     earlier_model_calls: int = 0
     earlier_tool_call_ids: list[str] = field(default_factory=list)  # round-1 ids that round-1 evidence cites
+    earlier_tool_results: list[ToolResult] = field(default_factory=list)  # round-1 tool results, kept (not dropped)
+    first_round: Outcome | None = None  # snapshot of the round-1 outcome once a re-investigation replaced it
 
     @property
     def model_calls(self) -> int:
@@ -149,6 +151,10 @@ class Orchestrator:
         return self._target
 
     @property
+    def kill_switch(self) -> KillSwitch:
+        return self._gate.kill_switch
+
+    @property
     def analyzer(self) -> FailureAnalyzer:
         return self._ctx.analyzer
 
@@ -167,11 +173,16 @@ class Orchestrator:
 
     def reinvestigate(self, first: Outcome, context: str, precheck: Precheck | None = None) -> Outcome:
         """The single re-investigation round (M7): a fresh investigation of the same execution with `context` (the
-        failed attempt as new evidence) appended to the user message. The round gets its own tool-call and token
-        allowance, carries the reinvestigation count so no third round can start, and goes through the same gate,
-        shared rate limiter, kill switch and abort ceiling as the first. The caller merges the two outcomes."""
-        budget = InvestigationBudget(self._limits)
-        budget.reinvestigations = first.investigation.budget.reinvestigations if first.investigation else 1
+        failed attempt as new evidence) appended to the user message. The round shares round 1's budget object: the
+        whole case, both rounds together, is capped at the per-investigation tool-call and token limits, and round 2
+        gets only what round 1 left (the caller already counted the round with `begin_reinvestigation`). It goes
+        through the same gate, shared rate limiter, kill switch and abort ceiling as the first. The caller merges
+        the two outcomes."""
+        if first.investigation is not None:
+            budget = first.investigation.budget
+        else:  # no round-1 investigation to share with: a fresh budget that still cannot start a third round
+            budget = InvestigationBudget(self._limits)
+            budget.reinvestigations = 1
         return self._run_round(first.execution_id, budget, context, rounds=2, precheck=precheck)
 
     def _run_round(

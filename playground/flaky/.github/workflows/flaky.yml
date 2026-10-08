@@ -1,0 +1,19 @@
+# Scenario: flaky canary. Fails on attempt 1 and passes on re-run.
+# Expected: Tier 0 re-run via flake precedent, verified green.
+name: flaky-canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run canary
+        run: |
+          if [ "${{ github.run_attempt }}" = "1" ]; then
+            exit 1
+          fi

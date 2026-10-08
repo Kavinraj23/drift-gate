@@ -19,6 +19,7 @@ Extension points, deliberately empty in M5:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path, PurePosixPath
@@ -52,6 +53,7 @@ from driftgate.tier3 import (
     PullRequestTarget,
     build_pr_description,
     check_diff,
+    is_protected,
 )
 from driftgate.tools import ToolContext, ToolResult, dispatch
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
@@ -101,6 +103,9 @@ class Outcome:
     pull_request: PullRequest | None = None  # Tier 3 only, set when a PR was opened
     pr_record: PullRequestRecord | None = None
     revisions: int = 0  # Tier 3 revision rounds used (max 1)
+    #: True only when a pull request really exists on a provider (a non-simulated record). A simulated target, or no
+    #: PR-capable target, leaves this False and the outcome is a PR *proposal* (kind `pr_proposed`) only.
+    pr_opened: bool = False
 
     @property
     def model_calls(self) -> int:
@@ -113,6 +118,9 @@ class Outcome:
     @property
     def tokens(self) -> int:
         return self.report.run.input_tokens + self.report.run.output_tokens
+
+
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def branch_name(fingerprint: str, action: str) -> str:
@@ -140,6 +148,7 @@ class Orchestrator:
         model: str = "",
         tier3_review: Tier3Review | None = None,
         after_execution: AfterExecution | None = None,
+        allow_unreviewed_tier3: bool = False,
     ) -> None:
         self._source = source
         self._target = target
@@ -152,6 +161,9 @@ class Orchestrator:
         self._model = model
         self._tier3_review = tier3_review
         self._after_execution = after_execution
+        # Explicit opt-out used only by the offline sandbox/tests that exercise the M5 path. Production builders
+        # (`build_github_orchestrator`) never set it: with no independent reviewer, Tier 3 escalates.
+        self._allow_unreviewed_tier3 = allow_unreviewed_tier3
         self._distinct: dict[str, int] = {}
 
     # -- public ------------------------------------------------------------------------------
@@ -281,6 +293,7 @@ class Orchestrator:
         if rem.tier == 3:
             return self._propose_pr(out, proposal, rem, fingerprint)
 
+        rem.dry_run["execution_id"] = eid  # set by code, so a target never relies on a model-supplied id
         dry = self._target.dry_run(rem)
         out.dry_run = dry
         self._audit.append(
@@ -325,7 +338,11 @@ class Orchestrator:
         branch = branch_name(fingerprint, rem.action)
         assert branch.startswith(BRANCH_PREFIX)
         rem.dry_run.update({"state": "pr_proposed", "branch": branch, "paths": list(proposal.paths)})
-        if self._tier3_review is None or out.investigation is None:  # no reviewer wired: the M5 behaviour
+        if self._tier3_review is None and not self._allow_unreviewed_tier3:
+            # Fail closed: a Tier 3 change is never opened without the independent reviewer.
+            reason = "no independent Tier 3 reviewer is wired; refusing to open a PR"
+            return self._escalate(out, fingerprint, reason, "review")
+        if self._tier3_review is None or out.investigation is None:  # explicit sandbox opt-out: the M5 behaviour
             self._audit.append(
                 "execution",
                 fingerprint,
@@ -353,19 +370,20 @@ class Orchestrator:
             if not check.ok:
                 return self._escalate(out, fingerprint, f"diff check failed: {check.reason}", "diff_check")
             review = hook(out.investigation, rem)
+            if review is None:  # fail closed: no verdict is a rejection, never an approval
+                review = Review("reject", "the reviewer returned no verdict")
             out.report.run = RunStats(**out.investigation.budget.run_fields())  # reviewer usage is on the shared budget
             out.report.review = review
-            if review is not None:
-                self._audit.append(
-                    "proposal",
-                    fingerprint,
-                    eid,
-                    stage="tier3_review",
-                    round=out.revisions,
-                    verdict=review.verdict,
-                    comments=review.comments,
-                )
-            if review is None or review.verdict == "approve":
+            self._audit.append(
+                "proposal",
+                fingerprint,
+                eid,
+                stage="tier3_review",
+                round=out.revisions,
+                verdict=review.verdict,
+                comments=review.comments,
+            )
+            if review.verdict == "approve":
                 break
             if review.verdict == "revise" and out.revisions == 0:
                 out.revisions = 1  # the single revision round (PRD): a second `revise` escalates below
@@ -476,7 +494,22 @@ class Orchestrator:
             branch=branch,
         )
         title = f"DriftGate: {rem.action} ({fingerprint})"
-        pr = PullRequest(branch, PR_BASE_BRANCH, title, body, proposal.diff, proposal.paths)
+        ex = self._source.get_execution(eid)
+        commit = ex.refs.get("commit", "")
+        checked = tuple((p, c) for p, c in check.new_contents.items() if c is not None)
+        if not checked or len(checked) != len(check.new_contents):
+            return self._escalate(out, fingerprint, "no checked file contents to commit", "diff_check")
+        rem.dry_run["execution_id"] = eid
+        pr = PullRequest(
+            branch,
+            ex.refs.get("branch", PR_BASE_BRANCH),
+            title,
+            body,
+            proposal.diff,
+            proposal.paths,
+            files=checked,
+            base_sha=commit if _SHA.fullmatch(commit) else "",
+        )
         record: PullRequestRecord | None = None
         if isinstance(self._target, PullRequestTarget):
             try:
@@ -485,6 +518,7 @@ class Orchestrator:
                 self._audit.append("failed", fingerprint, eid, stage="pr_proposed", description=str(e))
                 return self._escalate(out, fingerprint, f"pull request refused: {e}", None)
         out.pull_request, out.pr_record = pr, record
+        out.pr_opened = record is not None and not record.simulated
         rem.dry_run["pull_request"] = {
             "number": record.number if record else None,
             "url": record.url if record else None,
@@ -500,11 +534,13 @@ class Orchestrator:
             paths=list(proposal.paths),
             merged=False,
             pr_number=record.number if record else None,
+            opened=out.pr_opened,
             reviewer_verdict=out.report.review.verdict if out.report.review else None,
             revisions=out.revisions,
         )
         out.kind = PR_PROPOSED
-        out.reason = f"pull request proposed on {branch}; a human reviews and merges"
+        verb = "opened" if out.pr_opened else "proposed"
+        out.reason = f"pull request {verb} on {branch}; a human reviews and merges"
         return self._after(out)
 
     def _after(self, out: Outcome) -> Outcome:
@@ -605,6 +641,8 @@ class Orchestrator:
             return f"action {rem.action!r} is not in the Tier {rem.tier} catalog"
         if rem.tier == 3 and any(_unsafe_path(p) for p in proposal.paths):
             return "proposed paths must be relative paths inside the repository"
+        if rem.tier == 3 and any(is_protected(p) for p in proposal.paths):
+            return "proposed paths include protected files (secrets, credentials or guard configuration)"
         return ""
 
     # -- audit -------------------------------------------------------------------------------
@@ -683,6 +721,7 @@ def build_synthetic_orchestrator(
     model: str = "",
     tier3_review: Tier3Review | None = None,
     after_execution: AfterExecution | None = None,
+    allow_unreviewed_tier3: bool = False,
     verification: bool = False,
 ) -> Orchestrator:
     """Wire the synthetic sandbox: SyntheticSource + SyntheticTarget, a fresh rate limiter, audit log and gate.
@@ -702,12 +741,42 @@ def build_synthetic_orchestrator(
         model=model,
         tier3_review=tier3_review,
         after_execution=after_execution,
+        allow_unreviewed_tier3=allow_unreviewed_tier3,
     )
     if verification and after_execution is None:
         from driftgate.verify import install_verification  # local import: verify depends on this module
 
         install_verification(orch)
     return orch
+
+
+def build_github_orchestrator(
+    source: ExecutionSource,
+    target: RemediationTarget,
+    model_factory: ModelFactory,
+    *,
+    audit_path: Path | str,
+    clock: Callable[[], float],
+    tier3_review: Tier3Review,
+    kill_switch_path: Path | str = DEFAULT_KILL_SWITCH_PATH,
+    abort_ceiling: int = FLEET_ABORT_CEILING,
+    limits: InvestigationLimits | None = None,
+    model: str = "",
+    after_execution: AfterExecution | None = None,
+) -> Orchestrator:
+    """Wire a real provider (the GitHub adapter). A reviewer is mandatory and the unreviewed opt-out is never set."""
+    gate = SafetyGate(KillSwitch(kill_switch_path), RateLimiter(clock), abort_ceiling)
+    return Orchestrator(
+        source,
+        target,
+        gate,
+        AuditLog(audit_path, clock),
+        model_factory,
+        limits=limits,
+        model=model,
+        tier3_review=tier3_review,
+        after_execution=after_execution,
+    )
 
 
 __all__ = [
@@ -721,6 +790,7 @@ __all__ = [
     "Orchestrator",
     "Outcome",
     "branch_name",
+    "build_github_orchestrator",
     "build_synthetic_orchestrator",
     "make_synthetic_target",
     "revision_context",

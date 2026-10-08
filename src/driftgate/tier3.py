@@ -233,6 +233,10 @@ class PullRequest:
     body: str
     diff_text: str
     paths: tuple[str, ...]
+    #: The CHECKED new file contents (path -> text, in the diff's additive-first order), produced by `check_diff`.
+    #: A real target commits exactly these; it never re-parses `diff_text`, which is the model's raw text.
+    files: tuple[tuple[str, str], ...] = ()
+    base_sha: str = ""  # the failing commit the branch is created from ("" = tip of `base`)
 
 
 @dataclass(frozen=True)
@@ -241,6 +245,7 @@ class PullRequestRecord:
     branch: str
     url: str
     merged: bool = False  # always False: nothing in DriftGate can merge
+    simulated: bool = True  # False only for a pull request that really exists on a provider
 
 
 @runtime_checkable
@@ -328,6 +333,8 @@ class ReviewerHook:
         diff_text = str(dry_run.get("diff_text", ""))
         files: dict[str, str] = {}
         for p in dry_run.get("paths", []):
+            if _unsafe_path(p) or is_protected(p):  # never read off-limits files into the reviewer prompt
+                continue
             try:
                 files[p] = self._source.read_file(repo, p, ref, MAX_BASE_BYTES).content
             except SourceError:

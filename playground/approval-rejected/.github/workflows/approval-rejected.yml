@@ -1,0 +1,18 @@
+# Scenario: governance. The job is gated on an environment whose required reviewer rejects the deployment.
+# Expected: the pre-filter closes it with no model call. The `needs-approval` environment and its required reviewer
+# are configured by a human in the playground repo settings (see playground/README.md); no secrets are involved.
+name: approval-rejected
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: needs-approval
+    steps:
+      - name: Deploy
+        run: echo deploying

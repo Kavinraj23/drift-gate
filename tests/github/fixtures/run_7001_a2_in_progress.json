@@ -1,0 +1,17 @@
+{
+  "id": 7001,
+  "name": "flaky-canary",
+  "head_branch": "scenario/flaky",
+  "head_sha": "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff",
+  "path": ".github/workflows/flaky.yml",
+  "run_number": 3,
+  "run_attempt": 2,
+  "event": "workflow_dispatch",
+  "status": "in_progress",
+  "conclusion": null,
+  "workflow_id": 555,
+  "html_url": "https://github.com/octo-org/drift-gate-playground/actions/runs/7001",
+  "created_at": "2026-10-01T10:05:00Z",
+  "run_started_at": "2026-10-01T10:05:00Z",
+  "updated_at": "2026-10-01T10:05:40Z"
+}

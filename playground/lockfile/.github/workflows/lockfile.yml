@@ -1,0 +1,18 @@
+# Scenario: lockfile mismatch. `tofu init` runs with a lock file that does not match the pinned provider.
+# Offline-friendly: the null provider, no cloud account. Expected: Tier 3 PR regenerating the lock file, PR CI green.
+name: lockfile-mismatch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      - name: Initialise
+        run: tofu init -input=false

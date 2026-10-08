@@ -5,7 +5,7 @@ Send these in order. Each step says whether you send a prompt or do something yo
 ## Step 0: Prep (you, no prompt)
 
 1. **Check Claude Code's billing.** Claude Code must be signed in with your Claude subscription, not with an API key. If it bills to your $4.98 API credits, the build itself would use up the budget within minutes. In Claude Code, run `/status` and confirm it shows your subscription account.
-2. **Archive and clear the repo:**
+2. **Archive and clear the repo** (DONE: tag `v0-deterministic` exists and `main` is a clean slate; skip this block):
    ```
    git add -A
    git commit -m "Snapshot of v0 deterministic-first build"
@@ -14,7 +14,7 @@ Send these in order. Each step says whether you send a prompt or do something yo
    git rm -r .
    git commit -m "Clean slate for agent-driven rebuild (v0 at tag v0-deterministic)"
    ```
-3. **Add the two source-of-truth files** and commit them on `main`:
+3. **Add the two source-of-truth files** and commit them on `main` (DONE: pushed in `a9d34d2`; `.env` is gitignored and was never in history, so no key rotation is needed):
    - `docs/PRD.md`
    - `CLAUDE.md`
    ```
@@ -44,7 +44,7 @@ Use what the docs say, not memory.
 Build:
 
 1. pyproject.toml: src layout, package `driftgate`. Runtime deps: anthropic, requests, python-dotenv, jsonschema. Dev deps: pytest, ruff. Python >=3.11.
-   .gitignore covering: .env*, .venv, data/, __pycache__, *.sqlite, .autonomous.
+   .gitignore already exists with `.env`; extend it, don't recreate it. It must cover: .env*, .venv, data/, __pycache__, *.sqlite, .autonomous.
    .env.example listing variable names only (ANTHROPIC_API_KEY, GITHUB_TOKEN, DRIFTGATE_PLAYGROUND_REPO, DRIFTGATE_INVESTIGATOR_MODEL, DRIFTGATE_REVIEWER_MODEL).
 
 2. Empty modules for every entry in CLAUDE.md "Module layout", each with a one-line docstring stating its responsibility from the PRD.
@@ -62,16 +62,16 @@ Build:
 
 6. llm/fake.py: a scripted fake model with the same call interface the gateway will expose, returning predefined responses including tool calls. Clearly marked as a test double. Include a smoke test.
 
-7. Guardrails:
+7. Guardrails. Do this item LAST among the code items (after contracts/ and the conftest are written), because the deny rules would block further edits to contracts/**. After M0, any contract change is a human edit. Write the conftest socket-blocking fixture (item 8) first so every later test runs with the network blocked.
    - .claude/settings.json:
      - Allow: python tasks.py lint/test/data/baseline/e2e/eval/mvp-check, pytest, ruff, and git add/commit/checkout/switch/branch/worktree/merge/tag/diff/log/status.
      - Ask: python tasks.py record/eval-live/e2e-live/playground-reset.
      - Deny: git push, gh pr merge, reading .env and .env.*, edits to docs/PRD.md, contracts/**, config/kill_switch.json.
-   - Hooks, written in Python (this is Windows) under .claude/hooks/:
+   - Hooks, written in Python (this is Windows) under .claude/hooks/. Use pathlib for every path, invoke them from settings.json as `python .claude/hooks/<name>.py`, and include tests that use Windows-style paths and backslashes in commands:
      - PreToolUse on Bash: exit 2 with a clear message for git push, PR merges, curl/requests to api.github.com or api.anthropic.com, reading .env, and any human-only target while .autonomous exists.
      - PostToolUse on Edit/Write: ruff format + ruff check on changed .py files.
      - Stop: only when .autonomous exists, run `python tasks.py mvp-check`. If it fails and BLOCKERS.md doesn't account for every failing check, block the stop with a message to continue. Honor the loop-prevention field, and allow the stop after 3 consecutive blocks with no new commits.
-   - tests/test_hooks.py feeds the PreToolUse hook a list of commands that must be blocked and a list that must be allowed, and tests the Stop hook's decision logic.
+   - tests/test_hooks.py feeds the PreToolUse hook a list of commands that must be blocked and a list that must be allowed, and tests the Stop hook's decision logic. Required Stop-hook cases: allows when `.autonomous` is absent (so M0's pending checks never trap an interactive session); allows when the loop-prevention field is set; allows after 3 consecutive blocks with no new commits; blocks otherwise.
 
 8. Architecture tests (pass trivially now, enforce later):
    - Only llm/gateway imports anthropic.

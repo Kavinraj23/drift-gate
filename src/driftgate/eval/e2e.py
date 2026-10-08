@@ -26,12 +26,13 @@ from driftgate.domain import RemediationTarget
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth, load_ground_truth
 from driftgate.eval.metrics import Case, RecoveryBreakdown, recovery_breakdown, recovery_text, remediation_success_rate
 from driftgate.eval.scripted_agent import scripted_model, two_round_factory
+from driftgate.eval.tier3_scripts import revising_model_factory, scripted_reviewer, scripted_reviewer_factory
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.config import GatewayConfig
 from driftgate.llm.errors import FixtureMissing
 from driftgate.llm.gateway import Gateway
 from driftgate.llm.replay import FixtureStore
-from driftgate.llm.types import ModelClient
+from driftgate.llm.types import ModelClient, ModelRequest, ModelResponse
 from driftgate.orchestrator import (
     AWAITING_APPROVAL,
     CLOSED,
@@ -43,6 +44,7 @@ from driftgate.orchestrator import (
     build_synthetic_orchestrator,
     make_synthetic_target,
 )
+from driftgate.tier3 import ReviewerHook
 from driftgate.verify import install_verification
 
 MODES = ("fake", "replay", "auto")
@@ -79,6 +81,7 @@ class Row:
     note: str = ""
     rounds: int = 1
     recovery: str = ""
+    pr: str = ""  # Tier 3 outcome: the PR that opened with the reviewer's verdict, or what stopped it
 
 
 @dataclass
@@ -103,6 +106,19 @@ def actual_text(outcome: Outcome) -> str:
     if outcome.kind == CLOSED:
         return "closed (prefilter)"
     return f"{outcome.kind} {what}" + (" (verified)" if outcome.verified else "")
+
+
+def pr_text(outcome: Outcome, scripted_reviewer: bool = False) -> str:
+    """Tier 3 column: `opened (approve)` / `opened (approve after revision)` or `stopped (<layer>: <verdict>)`."""
+    rem = outcome.report.remediation
+    if rem is None or rem.tier != 3:
+        return "-"
+    verdict = outcome.report.review.verdict if outcome.report.review else "no review"
+    verdict += ", scripted reviewer" if scripted_reviewer else ""
+    if outcome.kind == PR_PROPOSED:
+        after = " after revision" if outcome.revisions else ""
+        return f"opened ({verdict}{after})"
+    return f"stopped ({verdict}: {outcome.reason[:40]})"
 
 
 def judge(label: FailureLabel, outcome: Outcome) -> tuple[str, str]:
@@ -135,8 +151,45 @@ def judge(label: FailureLabel, outcome: Outcome) -> tuple[str, str]:
     return MISMATCH, f"expected {expected_text(label)}"
 
 
-def _config_model_factory(gateway: Gateway) -> Callable[[str, InvestigationBudget], ModelClient]:
-    return lambda _eid, budget: gateway.bind(budget)
+ModelFactory = Callable[[str, InvestigationBudget], ModelClient]
+REVISE_PREFIX = "revise:"  # `revise:<kind>`: the first diff is the seeded bad `kind`, the revision is correct
+
+
+def _config_model_factory(gateway: Gateway, role: str = "investigator") -> ModelFactory:
+    return lambda _eid, budget: gateway.bind(budget, role=role)
+
+
+class _ReplayOrScripted:
+    """Reviewer client for replay runs: recorded fixtures when they exist, the scripted reviewer otherwise.
+
+    Fixtures recorded before the reviewer existed (or for a case the human has not recorded a review of) have no
+    reviewer exchanges; those reviews are scripted and the Tier 3 column says so.
+    """
+
+    def __init__(self, replay: ModelClient, scripted: ModelClient, fallbacks: list[bool]) -> None:
+        self._replay, self._scripted, self._fallbacks = replay, scripted, fallbacks
+
+    def complete(self, request: ModelRequest) -> ModelResponse:
+        try:
+            return self._replay.complete(request)
+        except FixtureMissing:
+            self._fallbacks.append(True)
+            return self._scripted.complete(request)
+
+
+def _replay_reviewer_factory(
+    gateway: Gateway, label: FailureLabel, source: SyntheticSource, mode: str, fallbacks: list[bool]
+) -> ModelFactory:
+    return lambda eid, budget: _ReplayOrScripted(
+        gateway.bind(budget, role="reviewer"), scripted_reviewer(label, source, mode), fallbacks
+    )
+
+
+def _scripted_factory(label: FailureLabel, source: SyntheticSource, variant: str) -> ModelFactory:
+    if variant.startswith(REVISE_PREFIX):
+        first = "diff:" + variant.removeprefix(REVISE_PREFIX)
+        return revising_model_factory(lambda v: scripted_model(label, source, v), first)
+    return lambda _e, _b: scripted_model(label, source, variant)
 
 
 def run_scenario(
@@ -147,18 +200,42 @@ def run_scenario(
     mode: str = "fake",
     fixtures_dir: Path | None = None,
     variant: str = "correct",
+    reviewer: str = "strict",
 ) -> ScenarioResult:
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}")
     source = SyntheticSource(data_dir)
     if mode == "fake" and label.first_fix_fails and variant == "correct":
         # The tempting first fix (re-run the throttled job) and the revised second round.
-        return _run(data_dir, label, held_out, two_round_factory(label, source, "overconfident_tier0"), "fake")
+        return _run(
+            data_dir,
+            label,
+            held_out,
+            two_round_factory(label, source, "overconfident_tier0"),
+            "fake",
+            scripted_reviewer_factory(label, source, reviewer),
+        )
     if mode == "fake":
-        return _run(data_dir, label, held_out, lambda _e, _b: scripted_model(label, source, variant), "fake")
+        return _run(
+            data_dir,
+            label,
+            held_out,
+            _scripted_factory(label, source, variant),
+            "fake",
+            scripted_reviewer_factory(label, source, reviewer),
+        )
     gateway = Gateway(GatewayConfig(), mode="replay", fixtures=FixtureStore(fixtures_dir or DEFAULT_FIXTURES))
+    fallbacks: list[bool] = []
     try:
-        return _run(data_dir, label, held_out, _config_model_factory(gateway), "replay")
+        return _run(
+            data_dir,
+            label,
+            held_out,
+            _config_model_factory(gateway),
+            "replay",
+            _replay_reviewer_factory(gateway, label, source, reviewer, fallbacks),
+            fallbacks,
+        )
     except FixtureMissing:
         if mode == "replay":
             row = Row(
@@ -175,7 +252,14 @@ def run_scenario(
                 0,
             )
             return ScenarioResult(row, None)
-    return _run(data_dir, label, held_out, lambda _e, _b: scripted_model(label, source, variant), "fake (no fixture)")
+    return _run(
+        data_dir,
+        label,
+        held_out,
+        _scripted_factory(label, source, variant),
+        "fake (no fixture)",
+        scripted_reviewer_factory(label, source, reviewer),
+    )
 
 
 class NaiveClassifierOrchestrator(Orchestrator):
@@ -195,10 +279,17 @@ def _build_orchestrator(
     tmp: str,
     target: RemediationTarget | None,
     naive: bool,
+    reviewer_factory: ModelFactory,
+    source: SyntheticSource,
 ) -> Orchestrator:
     kill = Path(tmp) / "kill_switch.json"
     kill.write_text(json.dumps(_KILL_SWITCH_ON), encoding="utf-8")
-    common = {"audit_path": Path(tmp) / "audit.jsonl", "clock": StepClock(), "kill_switch_path": kill}
+    common = {
+        "audit_path": Path(tmp) / "audit.jsonl",
+        "clock": StepClock(),
+        "kill_switch_path": kill,
+        "tier3_review": ReviewerHook(source, reviewer_factory),
+    }
     if not naive:
         return build_synthetic_orchestrator(data_dir, model_factory, target=target, verification=True, **common)
     orch = build_synthetic_orchestrator(data_dir, model_factory, target=target, **common)
@@ -211,15 +302,19 @@ def _run(
     data_dir: Path,
     label: FailureLabel,
     held_out: bool,
-    model_factory: Callable[[str, InvestigationBudget], ModelClient],
+    model_factory: ModelFactory,
     model_name: str,
+    reviewer_factory: ModelFactory,
+    fallbacks: list[bool] | None = None,
     *,
     target: RemediationTarget | None = None,
     naive: bool = False,
     drill: Drill | None = None,
 ) -> ScenarioResult:
     with tempfile.TemporaryDirectory(prefix="driftgate-e2e-") as tmp:
-        orch = _build_orchestrator(data_dir, model_factory, tmp, target, naive)
+        orch = _build_orchestrator(
+            data_dir, model_factory, tmp, target, naive, reviewer_factory, SyntheticSource(data_dir)
+        )
         outcome = orch.handle(label.execution_id)
         audit = orch.audit.read()
     status, note = judge(label, outcome) if drill is None else drill.judge(label, outcome)
@@ -238,6 +333,7 @@ def _run(
         note,
         outcome.rounds,
         recovery_text(label, outcome),
+        pr_text(outcome, bool(fallbacks)),
     )
     return ScenarioResult(row, outcome, audit, label)
 
@@ -319,7 +415,17 @@ def run_drill(data_dir: Path, drill: Drill, truth: GroundTruth | None = None) ->
     source = SyntheticSource(data_dir)
     target = make_synthetic_target(data_dir, verified=not drill.verify_fails)
     factory = two_round_factory(label, source, drill.first, drill.second)
-    return _run(data_dir, label, False, factory, "fake", target=target, naive=drill.naive, drill=drill)
+    return _run(
+        data_dir,
+        label,
+        False,
+        factory,
+        "fake",
+        scripted_reviewer_factory(label, source, "lenient"),  # the drill is about CI, not the reviewer
+        target=target,
+        naive=drill.naive,
+        drill=drill,
+    )
 
 
 def run_all(
@@ -363,6 +469,7 @@ def format_table(rows: list[Row], mode: str, metrics: tuple[str, RecoveryBreakdo
         "tokens",
         "rounds",
         "recovery",
+        "tier 3 pr",
     )
     body = [
         (
@@ -378,6 +485,7 @@ def format_table(rows: list[Row], mode: str, metrics: tuple[str, RecoveryBreakdo
             str(r.tokens),
             str(r.rounds),
             r.recovery,
+            r.pr or "-",
         )
         for r in rows
     ]

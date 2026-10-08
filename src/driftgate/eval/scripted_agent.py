@@ -21,6 +21,7 @@ from typing import Any
 from driftgate.agents.investigator import SUBMIT_REPORT
 from driftgate.domain import ExecutionSource
 from driftgate.eval.ground_truth import FailureLabel
+from driftgate.eval.tier3_scripts import BAD_KINDS, SeededDiff, bad_diff
 from driftgate.llm.fake import FakeModel, Scripted
 from driftgate.llm.types import ModelRequest, ModelResponse, ToolCall, Usage
 
@@ -45,6 +46,9 @@ REINVESTIGATION_MODES = (
     "same_hypothesis",  # proposes without revising the hypothesis (code must refuse)
     "no_read",  # proposes without reading the failed attempt (code must refuse)
 )
+
+#: `diff:<kind>` makes a Tier 3 scenario propose a seeded bad diff (see `tier3_scripts.BAD_KINDS`).
+DIFF_VARIANT_PREFIX = "diff:"
 
 Call = tuple[str, dict[str, Any]]
 
@@ -145,12 +149,14 @@ def _plan(
         rem = {"tier": 0, "action": action, "rationale": f"re-run the failed job: {why}", "reversible": True}
         return Plan(calls, cls, layer, 0.9, rem)
     if tier == 3 and action and label.fix_paths and wrong_paths:
+        wrong = _wrong_file_change(label, source)
         rem = {
             "tier": 3,
             "action": action,
-            "rationale": "a reviewed change to the project docs fixes it",
+            "rationale": f"a reviewed change to {wrong.paths[0]} fixes it",
             "reversible": True,
-            "paths": ["README.md"],
+            "paths": list(wrong.paths),
+            "diff": wrong.text,
         }
         return Plan([base, [logs]], cls, layer, 0.7, rem)
     if tier == 3 and action and label.fix_paths:
@@ -162,6 +168,7 @@ def _plan(
             "rationale": f"the injected fault is in {path}; a reviewed change fixes it",
             "reversible": True,
             "paths": list(label.fix_paths),
+            "diff": label.fix_diff or "",
         }
         return Plan([base, [logs], [read]], cls, layer, 0.8, rem)
     if tier in (1, 2) and action:
@@ -174,6 +181,23 @@ def _plan(
         return Plan([base, [logs]], cls, layer, 0.7, rem)
     reason = "no deterministic cause and no safe action; a human should look"
     return Plan([base, [("flake_history", {"execution_id": eid})], [logs]], cls, layer, 0.6, None, reason)
+
+
+def _wrong_file_change(label: FailureLabel, source: ExecutionSource) -> SeededDiff:
+    """A well-formed diff to a file the action may change but that does not hold the fault (CI stays red)."""
+    seeded = bad_diff("wrong_file", label, source)
+    if seeded is None:
+        raise ValueError(f"no wrong-file change is defined for {label.execution_id}")
+    return seeded
+
+
+def _with_bad_diff(plan: Plan, kind: str, label: FailureLabel, source: ExecutionSource) -> Plan:
+    """Swap the Tier 3 proposal's diff and paths for a seeded bad one (unchanged when the kind does not apply)."""
+    seeded = bad_diff(kind, label, source)
+    if seeded is None or plan.remediation is None:
+        raise ValueError(f"bad diff kind {kind!r} does not apply to {label.execution_id}")
+    rem = {**plan.remediation, "diff": seeded.text, "paths": list(seeded.paths)}
+    return Plan(plan.batches, plan.classification, plan.layer, plan.confidence, rem, plan.escalation_reason)
 
 
 def _overconfident(label: FailureLabel) -> Plan:
@@ -219,7 +243,8 @@ def _call_id(execution_id: str, n: int) -> str:
 
 
 def build_script(label: FailureLabel, source: ExecutionSource, variant: str = "correct") -> list[Scripted]:
-    if variant not in VARIANTS:
+    bad_kind = variant.removeprefix(DIFF_VARIANT_PREFIX) if variant.startswith(DIFF_VARIANT_PREFIX) else None
+    if variant not in VARIANTS and bad_kind not in BAD_KINDS:
         raise ValueError(f"unknown variant {variant!r}")
     if label.disposition == "close":
         return []  # governance: the pre-filter closes it, so any model call fails the script
@@ -228,6 +253,8 @@ def build_script(label: FailureLabel, source: ExecutionSource, variant: str = "c
         plan = _overconfident(label)
     else:
         plan = _plan(label, source, ignore_fleet=variant == "ignore_fleet", wrong_paths=variant == "wrong_paths")
+        if bad_kind is not None:
+            plan = _with_bad_diff(plan, bad_kind, label, source)
 
     if variant == "budget_calls":
         calls: list[Call] = [("get_execution", {"execution_id": eid})] * 10
@@ -334,14 +361,17 @@ def build_reinvestigation_script(label: FailureLabel, source: ExecutionSource, m
             "rationale": f"the first change missed the fault in {label.fix_paths[0]}",
             "reversible": True,
             "paths": list(label.fix_paths),
+            "diff": label.fix_diff or "",
         }
     elif mode == "wrong_paths":
+        wrong = _wrong_file_change(label, source)
         remediation = {
             "tier": 3,
             "action": label.correct_action,
-            "rationale": "another documentation change",
+            "rationale": f"another change, to {wrong.paths[0]}",
             "reversible": True,
-            "paths": ["README.md"],
+            "paths": list(wrong.paths),
+            "diff": wrong.text,
         }
     elif mode in ("repeat_tier0", "same_hypothesis", "no_read"):
         remediation = {"tier": 0, "action": "rerun_failed_job", "rationale": "re-run once more", "reversible": True}

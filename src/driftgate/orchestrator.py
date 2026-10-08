@@ -36,6 +36,7 @@ from driftgate.domain import (
     RemediationTarget,
     Report,
     Review,
+    RunStats,
 )
 from driftgate.gates import DEFAULT_KILL_SWITCH_PATH, GateDecision, GateFacts, KillSwitch, RateLimiter, SafetyGate
 from driftgate.llm.budget import InvestigationBudget
@@ -43,6 +44,15 @@ from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
 from driftgate.prefilter import prefilter
 from driftgate.remediation_catalog import TIER1_DIMENSION, is_catalog_action
+from driftgate.tier3 import (
+    PR_BASE_BRANCH,
+    DiffCheck,
+    PullRequest,
+    PullRequestRecord,
+    PullRequestTarget,
+    build_pr_description,
+    check_diff,
+)
 from driftgate.tools import ToolContext, ToolResult, dispatch
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
 from driftgate.tools.base import FailureAnalyzer
@@ -88,6 +98,9 @@ class Outcome:
     earlier_tool_call_ids: list[str] = field(default_factory=list)  # round-1 ids that round-1 evidence cites
     earlier_tool_results: list[ToolResult] = field(default_factory=list)  # round-1 tool results, kept (not dropped)
     first_round: Outcome | None = None  # snapshot of the round-1 outcome once a re-investigation replaced it
+    pull_request: PullRequest | None = None  # Tier 3 only, set when a PR was opened
+    pr_record: PullRequestRecord | None = None
+    revisions: int = 0  # Tier 3 revision rounds used (max 1)
 
     @property
     def model_calls(self) -> int:
@@ -298,17 +311,190 @@ class Orchestrator:
         branch = branch_name(fingerprint, rem.action)
         assert branch.startswith(BRANCH_PREFIX)
         rem.dry_run.update({"state": "pr_proposed", "branch": branch, "paths": list(proposal.paths)})
-        if self._tier3_review is not None and out.investigation is not None:
-            review = self._tier3_review(out.investigation, rem)
+        if self._tier3_review is None or out.investigation is None:  # no reviewer wired: the M5 behaviour
+            self._audit.append(
+                "execution",
+                fingerprint,
+                eid,
+                stage="pr_proposed",
+                branch=branch,
+                paths=list(proposal.paths),
+                merged=False,
+            )
+            out.kind = PR_PROPOSED
+            out.reason = f"pull request proposed on {branch}; a human reviews and merges"
+            return self._after(out)
+        return self._tier3_flow(out, proposal, rem, fingerprint)
+
+    # -- Tier 3: deterministic diff checks, independent review, one revision round, then the PR ---------------
+    def _tier3_flow(self, out: Outcome, proposal: Proposal, rem: Remediation, fingerprint: str) -> Outcome:
+        eid = out.execution_id
+        hook = self._tier3_review
+        assert hook is not None and out.investigation is not None
+        reset = getattr(hook, "reset_round", None)
+        if callable(reset):
+            reset()
+        while True:
+            check = self._check_diff(out, proposal, rem, fingerprint)
+            if not check.ok:
+                return self._escalate(out, fingerprint, f"diff check failed: {check.reason}", "diff_check")
+            review = hook(out.investigation, rem)
+            self._add_reviewer_usage(out.report, hook)
             out.report.review = review
-            if review is not None and review.verdict != "approve":
-                return self._escalate(out, fingerprint, f"reviewer verdict {review.verdict}: {review.comments}", None)
+            if review is not None:
+                self._audit.append(
+                    "proposal",
+                    fingerprint,
+                    eid,
+                    stage="tier3_review",
+                    round=out.revisions,
+                    verdict=review.verdict,
+                    comments=review.comments,
+                )
+            if review is None or review.verdict == "approve":
+                break
+            if review.verdict == "revise" and out.revisions == 0:
+                out.revisions = 1  # the single revision round (PRD): a second `revise` escalates below
+                revised = self._revise(out, proposal, review, fingerprint)
+                if revised is None:
+                    return out
+                proposal, rem = revised
+                continue
+            capped = " (revision limit reached)" if review.verdict == "revise" else ""
+            return self._escalate(
+                out, fingerprint, f"reviewer verdict {review.verdict}{capped}: {review.comments}", "review"
+            )
+        return self._open_pr(out, proposal, rem, fingerprint, check)
+
+    def _check_diff(self, out: Outcome, proposal: Proposal, rem: Remediation, fingerprint: str) -> DiffCheck:
+        ex = self._source.get_execution(out.execution_id)
+        check = check_diff(
+            proposal.diff,
+            action=rem.action,
+            declared_paths=proposal.paths,
+            source=self._source,
+            repo=ex.pipeline,
+            ref=ex.refs.get("commit", "main"),
+        )
+        rem.dry_run["diff_text"] = proposal.diff
+        if check.diff is not None:
+            rem.dry_run["diff"] = check.diff.to_dict()
         self._audit.append(
-            "execution", fingerprint, eid, stage="pr_proposed", branch=branch, paths=list(proposal.paths), merged=False
+            "proposal",
+            fingerprint,
+            out.execution_id,
+            stage="tier3_diff",
+            ok=check.ok,
+            violations=[{"code": v.code, "message": v.message, "path": v.path} for v in check.violations],
+            files=list(check.diff.paths) if check.diff else [],
+            added=check.diff.added if check.diff else 0,
+            removed=check.diff.removed if check.diff else 0,
+        )
+        return check
+
+    def _revise(
+        self, out: Outcome, proposal: Proposal, review: Review, fingerprint: str
+    ) -> tuple[Proposal, Remediation] | None:
+        """Send the reviewer's feedback to the investigator once; re-validate and re-gate what comes back."""
+        eid = out.execution_id
+        self._audit.append("proposal", fingerprint, eid, stage="tier3_revision", feedback=review.comments)
+        budget = InvestigationBudget(self._limits)
+        investigator = Investigator(self._model_factory(eid, budget), self._ctx, budget, model=self._model)
+        inv = investigator.investigate(eid, revision_context(review.comments, proposal.diff))
+        report = inv.report
+        report.review = out.report.review
+        report.run = _sum_runs(out.report.run, report.run)
+        out.report, out.investigation = report, inv
+        gate_results, analysis, fleet, problem = self._deterministic_facts(eid)
+        if analysis is not None:
+            report.fingerprint = str(analysis["fingerprint"])
+        if fleet is not None:
+            report.blast_radius = BlastRadius(int(fleet["executions_affected"]), str(fleet["shared_dimension"]))
+        out.gate_tool_results = gate_results
+        self._audit_proposal(inv, fingerprint, None)
+        if inv.proposal is None or report.abstained:
+            reason = report.escalation_reason or "the revision proposed no remediation"
+            self._escalate(out, fingerprint, reason, "agent")
+            return None
+        if problem or analysis is None or fleet is None:
+            report.remediation = replace(inv.proposal.remediation, gate_decision="refused")
+            self._escalate(out, fingerprint, problem, "facts")
+            return None
+        new = inv.proposal
+        invalid = self._validate(new) or ("" if new.remediation.tier == 3 else "the revision is not a Tier 3 change")
+        if invalid:
+            report.remediation = replace(new.remediation, gate_decision="refused")
+            self._escalate(out, fingerprint, invalid, "validation")
+            return None
+        facts = self._gate_facts(eid, new, analysis, fleet, fingerprint, report, gate_results)
+        self._audit_proposal(inv, fingerprint, facts)
+        decision = self._gate.decide(new.remediation, facts)
+        out.gate = decision
+        record_decision(self._audit, decision, fingerprint, eid)
+        report.remediation = decision.remediation
+        if not decision.allowed:
+            self._escalate(out, fingerprint, decision.reason, "gate")
+            return None
+        rem = decision.remediation
+        branch = branch_name(fingerprint, rem.action)
+        rem.dry_run.update({"state": "pr_proposed", "branch": branch, "paths": list(new.paths)})
+        return new, rem
+
+    def _open_pr(
+        self, out: Outcome, proposal: Proposal, rem: Remediation, fingerprint: str, check: DiffCheck
+    ) -> Outcome:
+        assert check.diff is not None
+        eid = out.execution_id
+        branch = str(rem.dry_run["branch"])
+        body = build_pr_description(
+            execution_id=eid,
+            fingerprint=fingerprint,
+            action=rem.action,
+            hypothesis=out.report.hypothesis,
+            rationale=rem.rationale,
+            evidence=out.report.evidence,
+            diff=check.diff,
+            review=out.report.review,
+            revision_rounds=out.revisions,
+            branch=branch,
+        )
+        title = f"DriftGate: {rem.action} ({fingerprint})"
+        pr = PullRequest(branch, PR_BASE_BRANCH, title, body, proposal.diff, proposal.paths)
+        record: PullRequestRecord | None = None
+        if isinstance(self._target, PullRequestTarget):
+            try:
+                record = self._target.open_pull_request(pr)
+            except ValueError as e:
+                self._audit.append("failed", fingerprint, eid, stage="pr_proposed", description=str(e))
+                return self._escalate(out, fingerprint, f"pull request refused: {e}", None)
+        out.pull_request, out.pr_record = pr, record
+        rem.dry_run["pull_request"] = {
+            "number": record.number if record else None,
+            "url": record.url if record else None,
+            "merged": False,
+            "description": body,
+        }
+        self._audit.append(
+            "execution",
+            fingerprint,
+            eid,
+            stage="pr_proposed",
+            branch=branch,
+            paths=list(proposal.paths),
+            merged=False,
+            pr_number=record.number if record else None,
+            reviewer_verdict=out.report.review.verdict if out.report.review else None,
+            revisions=out.revisions,
         )
         out.kind = PR_PROPOSED
         out.reason = f"pull request proposed on {branch}; a human reviews and merges"
         return self._after(out)
+
+    @staticmethod
+    def _add_reviewer_usage(report: Report, hook: object) -> None:
+        take = getattr(hook, "take_run_stats", None)
+        if callable(take):
+            report.run = _sum_runs(report.run, take())
 
     def _after(self, out: Outcome) -> Outcome:
         if self._after_execution is not None:
@@ -444,6 +630,27 @@ class Orchestrator:
         )
 
 
+def revision_context(feedback: str, previous_diff: str) -> str:
+    """Appended to the investigator's first message when the reviewer asks for a revision."""
+    return (
+        "An independent reviewer asked for a revision of your previous Tier 3 diff.\n"
+        f"Reviewer comments: {feedback}\n"
+        f"Your previous diff:\n{previous_diff}\n"
+        "Investigate again if you need to, then submit a corrected report with a revised `diff`. "
+        "If no safe change exists, propose no remediation."
+    )
+
+
+def _sum_runs(a: RunStats, b: RunStats) -> RunStats:
+    return RunStats(
+        a.tool_calls + b.tool_calls,
+        a.input_tokens + b.input_tokens,
+        a.output_tokens + b.output_tokens,
+        a.cost_usd + b.cost_usd,
+        a.latency_s + b.latency_s,
+    )
+
+
 def _count_leaves(node: Any) -> int:
     if node is None:
         return 0
@@ -511,4 +718,5 @@ __all__ = [
     "branch_name",
     "build_synthetic_orchestrator",
     "make_synthetic_target",
+    "revision_context",
 ]

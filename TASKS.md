@@ -25,7 +25,7 @@ When a milestone lands, add it to `IMPLEMENTED_MILESTONES` in `tasks.py` so `mvp
 
 Every milestone also needs: `python tasks.py lint` and `python tasks.py test` green, reviewer subagent pass, `docs/design/Mx.md`, a PROGRESS.md entry.
 
-- [ ] **M0 Repo skeleton.** Deps: none. Accept: `python tasks.py test`; `python -m pytest -q tests/test_hooks.py`. Parallel: none. Human: none.
+- [x] **M0 Repo skeleton.** Deps: none. Accept: `python tasks.py test`; `python -m pytest -q tests/test_hooks.py`. Parallel: none. Human: none.
 - [ ] **M1 Synthetic generator + synthetic repos + ground truth.** Deps: M0. Accept: `python tasks.py data` (seeded dataset, schema validation passes). Parallel-safe with M2.
 - [ ] **M2 LLM gateway** (rate limits, budgets, daily and lifetime caps, retries, caching, record/replay). Deps: M0. Accept: `python -m pytest -q tests/gateway`. Parallel-safe with M1.
 - [ ] **M3 Deterministic tools + baseline + pre-filter + log extraction.** Deps: M1. Accept: `python tasks.py baseline` prints scores vs. ground truth. Parallel-safe with M4.

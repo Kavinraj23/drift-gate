@@ -24,6 +24,17 @@ stop = _load("stop_hook")
 
 BLOCKED = [
     "git push",
+    "(git push)",
+    "$(git push)",
+    "env git push",
+    "GIT_TRACE=1 git push",
+    "bash -c 'git push'",
+    "cmd /c git push",
+    "cmd /c type .env",
+    'powershell -c "gc .env"',
+    "sh -c 'cat .env'",
+    "tr a b < .env",
+    "gh -R x/y pr merge 1",
     "git push origin main",
     "git push --force origin mvp1/m0-skeleton",
     "git -C C:\\Users\\Kavin\\projects\\drift-gate push",

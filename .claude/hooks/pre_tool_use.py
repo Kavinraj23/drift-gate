@@ -19,6 +19,25 @@ NETWORK = {"curl", "wget", "invoke-webrequest", "iwr", "invoke-restmethod", "irm
 PYTHONS = {"python", "python3", "py", "pythonw"}
 HOSTS = ("api.github.com", "api.anthropic.com")
 SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n|&")
+WRAPPERS = {
+    "env",
+    "bash",
+    "sh",
+    "zsh",
+    "cmd",
+    "powershell",
+    "pwsh",
+    "start-process",
+    "nohup",
+    "timeout",
+    "xargs",
+    "command",
+    "call",
+    "start",
+    "invoke-expression",
+    "iex",
+}
+WRAPPER_FLAGS = {"-c", "/c", "/k", "-command", "-noprofile", "-noninteractive", "-lc", "-nop"}
 ENV_REASON = "Blocked: .env holds credentials and must never be read (invariant 11)."
 
 
@@ -49,24 +68,54 @@ def _git_subcommand(tokens: list[str]) -> str | None:
 
 def check_command(command: str, autonomous: bool) -> str | None:
     """Return a block reason, or None when the command is allowed."""
+    return _check(command, autonomous, 0)
+
+
+def _gh_args(tokens: list[str]) -> list[str]:
+    out, i = [], 1
+    while i < len(tokens):
+        if tokens[i] in ("-R", "--repo"):
+            i += 2
+        elif tokens[i].startswith("-"):
+            i += 1
+        else:
+            out.append(tokens[i].lower())
+            i += 1
+    return out
+
+
+def _check(command: str, autonomous: bool, depth: int) -> str | None:
     whole = command.lower().replace("\\", "/")
     if any(host in whole for host in HOSTS):
         exes = {_exe(t) for seg in SEGMENT_SPLIT.split(command) for t in _tokens(seg.strip())[:1]}
         if exes & (NETWORK | PYTHONS):
             return "Blocked: no direct calls to api.github.com or api.anthropic.com; use the adapters and the gateway."
-    for segment in SEGMENT_SPLIT.split(command):
+    if re.search(r"(^|[\s;&|(])(python3?|py|pythonw)(\.exe)?\s", whole) and re.search(
+        r"[\"'/]\.env(?!\.example)", whole
+    ):
+        return ENV_REASON
+    for segment in SEGMENT_SPLIT.split(command.replace("$(", ";").replace("(", ";").replace(")", ";")):
         tokens = _tokens(segment.strip())
+        while tokens and re.fullmatch(r"\w+=\S*", tokens[0]):
+            tokens = tokens[1:]
         if not tokens:
             continue
         exe = _exe(tokens[0])
+        if exe in WRAPPERS and depth < 4:
+            inner = " ".join(t for t in tokens[1:] if t.lower() not in WRAPPER_FLAGS)
+            reason = _check(inner, autonomous, depth + 1)
+            if reason:
+                return reason
+        if "<" in tokens and any(_is_env_file(t) for t in tokens):
+            return ENV_REASON
         lowered = segment.lower().replace("\\", "/")
         if exe == "git" and _git_subcommand(tokens) == "push":
             return "Blocked: git push is never run by the agent. Pushing is a human action."
-        if exe == "gh" and [t.lower() for t in tokens[1:3]] == ["pr", "merge"]:
+        if exe == "gh" and _gh_args(tokens)[:2] == ["pr", "merge"]:
             return "Blocked: agents never merge pull requests (invariant 4)."
         if any(host in lowered for host in HOSTS) and (exe in NETWORK or exe in PYTHONS):
             return "Blocked: no direct calls to api.github.com or api.anthropic.com; use the adapters and the gateway."
-        if exe == "gh" and len(tokens) > 1 and tokens[1].lower() == "api":
+        if exe == "gh" and len(tokens) > 1 and _gh_args(tokens)[:1] == ["api"]:
             return "Blocked: no direct GitHub API calls from the agent."
         if (exe in READERS or exe in PYTHONS) and any(_is_env_file(t) for t in tokens[1:]):
             return ENV_REASON

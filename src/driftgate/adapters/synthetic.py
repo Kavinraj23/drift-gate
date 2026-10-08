@@ -1,13 +1,25 @@
-"""SyntheticTarget: a RemediationTarget with injectable simulated outcomes and a simulated lock table.
-
-SyntheticSource (the simulated CI provider fed by the seeded generator) arrives with M1/M3.
-"""
+"""Synthetic adapters: SyntheticTarget (simulated RemediationTarget) and SyntheticSource (simulated ExecutionSource)."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
-from driftgate.domain import DryRunResult, ExecutionResult, Remediation, VerificationResult
+from driftgate.domain import (
+    DryRunResult,
+    Execution,
+    ExecutionResult,
+    ExecutionSummary,
+    FileContent,
+    LogChunk,
+    Node,
+    Remediation,
+    SourceError,
+    VerificationResult,
+)
 
 
 @dataclass
@@ -101,3 +113,153 @@ class SyntheticTarget:
             return VerificationResult(gone and self._outcome(action).verified, "lock table checked")
         out = self._outcome(action)
         return VerificationResult(out.verified, f"simulated verification of {action.action}")
+
+
+# ---------------------------------------------------------------------------------------------
+# SyntheticSource: the simulated CI provider over the generated dataset's agent-visible files.
+# ---------------------------------------------------------------------------------------------
+
+#: Top-level entries of the dataset directory that an agent-facing source may read. Anything else
+#: (labels, simulator state) is unreachable by construction: every read goes through `_resolve`.
+AGENT_VISIBLE_ENTRIES: frozenset[str] = frozenset({"executions.json", "changes.json", "logs", "repos"})
+
+#: Execution/node status strings used by the generator (confirmed by M3; domain does not constrain them).
+EXECUTION_STATUSES = ("success", "failed", "approval_rejected")
+NODE_STATUSES = ("success", "failed", "skipped", "rejected")
+
+
+def parse_time(value: str | datetime) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _node(raw: dict[str, Any]) -> Node:
+    return Node(
+        node_id=raw["node_id"],
+        name=raw["name"],
+        status=raw["status"],
+        parent_id=raw.get("parent_id"),
+        children=[_node(c) for c in raw.get("children", [])],
+        error_summary=raw.get("error_summary", ""),
+    )
+
+
+def _execution(raw: dict[str, Any]) -> Execution:
+    return Execution(
+        execution_id=raw["execution_id"],
+        pipeline=raw["pipeline"],
+        status=raw["status"],
+        started_at=raw["started_at"],
+        finished_at=raw.get("finished_at"),
+        root=_node(raw["root"]) if raw.get("root") else None,
+        refs=dict(raw.get("refs", {})),
+    )
+
+
+class SyntheticSource:
+    """ExecutionSource over `executions.json`, `logs/`, `repos/` and `changes.json` of a dataset directory.
+
+    It opens nothing else: the allowlist is enforced in `_resolve`, and tests spy on every file access.
+    """
+
+    def __init__(self, data_dir: Path | str) -> None:
+        self._root = Path(data_dir).resolve()
+        raw = json.loads(self._read_text("executions.json"))
+        self._exec_raw: dict[str, dict[str, Any]] = {e["execution_id"]: e for e in raw}
+        self._order = sorted(raw, key=lambda e: (e["started_at"], e["execution_id"]))
+        self._starts = {e["execution_id"]: parse_time(e["started_at"]) for e in raw}
+        self._changes: list[dict[str, Any]] | None = None
+
+    def _resolve(self, relative: str) -> Path:
+        rel = Path(relative)
+        if rel.is_absolute() or ".." in rel.parts or not rel.parts or rel.parts[0] not in AGENT_VISIBLE_ENTRIES:
+            raise SourceError(f"path not available: {relative}")
+        path = (self._root / rel).resolve()
+        # Re-apply the allowlist to the real path, so a symlink into any hidden directory is refused.
+        try:
+            real_parts = path.relative_to(self._root).parts
+        except ValueError:
+            raise SourceError(f"path not available: {relative}") from None
+        if not real_parts or real_parts[0] not in AGENT_VISIBLE_ENTRIES:
+            raise SourceError(f"path not available: {relative}")
+        return path
+
+    def _read_text(self, relative: str) -> str:
+        return self._resolve(relative).read_text(encoding="utf-8")
+
+    def _get(self, execution_id: str) -> dict[str, Any]:
+        try:
+            return self._exec_raw[execution_id]
+        except KeyError:
+            raise SourceError(f"unknown execution: {execution_id}") from None
+
+    def get_execution(self, execution_id: str) -> Execution:
+        return _execution(self._get(execution_id))
+
+    def get_failed_leaf_nodes(self, execution_id: str) -> list[Node]:
+        root = self.get_execution(execution_id).root
+        found: list[Node] = []
+
+        def walk(n: Node) -> None:
+            if not n.children and n.status == "failed":
+                found.append(n)
+            for c in n.children:
+                walk(c)
+
+        if root is not None:
+            walk(root)
+        return found
+
+    def get_step_logs(self, execution_id: str, node_id: str, budget: int) -> LogChunk:
+        self._get(execution_id)
+        if "/" in node_id or "\\" in node_id or ".." in node_id:
+            raise SourceError(f"bad node id: {node_id}")
+        try:
+            text = self._read_text(f"logs/{execution_id}/{node_id}.log")
+        except FileNotFoundError:
+            raise SourceError(f"no log for {execution_id}/{node_id}") from None
+        truncated = len(text) > budget
+        return LogChunk(execution_id, node_id, text[:budget], truncated)
+
+    def list_executions(self, window: Any, filter: Any) -> list[ExecutionSummary]:
+        """`window` is None or (start, end) (ISO strings or datetimes, inclusive); `filter` is None or a dict.
+
+        Filter keys: `status`, `pipeline`, or any `refs` key (connector, template, runner_pool, infra_def,
+        commit) compared for equality. Results are ordered by start time.
+        """
+        lo, hi = (parse_time(window[0]), parse_time(window[1])) if window else (None, None)
+        flt: dict[str, Any] = dict(filter or {})
+        out: list[ExecutionSummary] = []
+        for e in self._order:
+            t = self._starts[e["execution_id"]]
+            if (lo and t < lo) or (hi and t > hi):
+                continue
+            if any((e[k] if k in ("status", "pipeline") else e["refs"].get(k)) != v for k, v in flt.items()):
+                continue
+            out.append(
+                ExecutionSummary(e["execution_id"], e["pipeline"], e["status"], e["started_at"], dict(e["refs"]))
+            )
+        return out
+
+    def read_file(self, repo: str, path: str, ref: str, max_bytes: int) -> FileContent:
+        for part in (repo, ref):
+            if not part or "/" in part or "\\" in part or part in (".", ".."):
+                raise SourceError(f"bad repo or ref: {part!r}")
+        if Path(path).is_absolute() or ".." in Path(path).parts:
+            raise SourceError(f"bad path: {path}")
+        try:
+            data = self._resolve(f"repos/{repo}/{ref}/{path}").read_bytes()
+        except (FileNotFoundError, IsADirectoryError, PermissionError):
+            raise SourceError(f"no such file: {repo}@{ref}:{path}") from None
+        truncated = len(data) > max_bytes
+        return FileContent(repo, path, ref, data[:max_bytes].decode("utf-8", errors="replace"), truncated)
+
+    def list_changes(self, window: Any = None) -> list[dict[str, Any]]:
+        """Change timeline entries (commits, releases, config changes), optionally within (start, end)."""
+        if self._changes is None:
+            self._changes = json.loads(self._read_text("changes.json"))
+        if not window:
+            return list(self._changes)
+        lo, hi = parse_time(window[0]), parse_time(window[1])
+        return [c for c in self._changes if lo <= parse_time(c["at"]) <= hi]

@@ -14,7 +14,6 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
 NOT_IMPLEMENTED: dict[str, str] = {
-    "baseline": "M3",
     "e2e": "M5",
     "eval": "M9a",
     "record": "M5",
@@ -25,7 +24,7 @@ NOT_IMPLEMENTED: dict[str, str] = {
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
-IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M4"}
+IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M3", "M4"}
 
 # Each MVP acceptance check: (name, milestone, command). Mirrors TASKS.md.
 CHECKS: list[tuple[str, str, list[str]]] = [
@@ -64,6 +63,17 @@ def data() -> int:
     return subprocess.run([PY, "-m", "driftgate.generator", "--out", str(ROOT / "data")], cwd=ROOT, env=env).returncode
 
 
+def baseline() -> int:
+    """Score the deterministic baseline against ground truth; generates the dataset first if data/ is missing."""
+    if not (ROOT / "data" / "executions.json").exists():
+        code = data()
+        if code:
+            return code
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.baseline_score", "--data", str(ROOT / "data")]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
 def mvp_check() -> int:
     rows: list[tuple[str, str, str]] = []
     for name, milestone, cmd in CHECKS:
@@ -84,6 +94,7 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "lint": lint,
     "test": test,
     "data": data,
+    "baseline": baseline,
     "mvp-check": mvp_check,
 }
 

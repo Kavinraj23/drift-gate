@@ -1,0 +1,62 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python tasks.py lint)",
+      "Bash(python tasks.py test)",
+      "Bash(python tasks.py data)",
+      "Bash(python tasks.py baseline)",
+      "Bash(python tasks.py e2e)",
+      "Bash(python tasks.py eval)",
+      "Bash(python tasks.py mvp-check)",
+      "Bash(pytest *)",
+      "Bash(python -m pytest *)",
+      "Bash(ruff *)",
+      "Bash(python -m ruff *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git branch *)",
+      "Bash(git worktree *)",
+      "Bash(git merge *)",
+      "Bash(git tag *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git status *)"
+    ],
+    "ask": [
+      "Bash(python tasks.py record)",
+      "Bash(python tasks.py eval-live)",
+      "Bash(python tasks.py e2e-live)",
+      "Bash(python tasks.py playground-reset)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(gh pr merge *)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Edit(/docs/PRD.md)",
+      "Edit(/contracts/**)",
+      "Edit(/config/kill_switch.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "python .claude/hooks/pre_tool_use.py" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{ "type": "command", "command": "python .claude/hooks/post_tool_use.py" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "python .claude/hooks/stop_hook.py" }]
+      }
+    ]
+  }
+}

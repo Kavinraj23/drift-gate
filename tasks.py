@@ -8,7 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PY = sys.executable
+_VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
+PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
 NOT_IMPLEMENTED: dict[str, str] = {

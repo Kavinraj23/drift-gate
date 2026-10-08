@@ -12,3 +12,4 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.claude/stop_state.json

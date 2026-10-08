@@ -6,3 +6,5 @@ Anything that stopped work. The Stop hook treats a failing mvp-check item as acc
 
 ## Needs human
 
+
+- Confirm real claude-sonnet-5-5 prices and account rate limits in src/driftgate/llm/config.py before any live spend (M2).

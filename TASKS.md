@@ -30,7 +30,7 @@ Every milestone also needs: `python tasks.py lint` and `python tasks.py test` gr
 - [x] **M2 LLM gateway** (rate limits, budgets, daily and lifetime caps, retries, caching, record/replay). Deps: M0. Accept: `python -m pytest -q tests/gateway`. Parallel-safe with M1.
 - [x] **M3 Deterministic tools + baseline + pre-filter + log extraction.** Deps: M1. Accept: `python tasks.py baseline` prints scores vs. ground truth. Parallel-safe with M4.
 - [x] **M4 SafetyGate, audit log, SyntheticTarget.** Deps: M0 (M1 for synthetic data in tests). Accept: `python -m pytest -q tests/gates` (kill switch, abort ceiling, rate limit, Tier 0 eligibility paths, downgrade-only). Parallel-safe with M3.
-- [ ] **M5 Investigator agent loop + evidence integrity.** Deps: M2, M3, M4. Accept: `python tasks.py e2e` runs every scenario on fake/replay model. Parallel: none.
+- [x] **M5 Investigator agent loop + evidence integrity.** Deps: M2, M3, M4. Accept: `python tasks.py e2e` runs every scenario on fake/replay model. Parallel: none.
 - [ ] **M6 Tier 3 path + PR reviewer agent.** Deps: M5. Accept: `python -m pytest -q tests/tier3` (diffs produced; reviewer catches seeded bad diffs). Parallel-safe with M7.
 - [ ] **M7 Verification + re-investigation loop.** Deps: M5. Accept: `python -m pytest -q tests/verify` (wrong first fix recovers or escalates correctly). Parallel-safe with M6.
 - [ ] **M8a GitHub Actions adapter + playground workflow files.** Deps: M6, M7. Accept: `python -m pytest -q tests/github` against recorded/stubbed HTTP; scenario workflows present under `playground/`. Autonomous.

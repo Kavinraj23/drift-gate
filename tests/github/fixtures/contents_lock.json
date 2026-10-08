@@ -1,0 +1,9 @@
+{
+  "type": "file",
+  "encoding": "base64",
+  "size": 10,
+  "name": ".terraform.lock.hcl",
+  "path": ".terraform.lock.hcl",
+  "sha": "10c410c410c410c410c410c410c410c410c410c4",
+  "content": "IyBvbGQgbG9jawp4ID0gMQo=\n"
+}

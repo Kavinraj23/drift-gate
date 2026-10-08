@@ -1,0 +1,37 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 9002,
+      "run_id": 7001,
+      "run_attempt": 2,
+      "name": "canary",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run canary",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        }
+      ]
+    }
+  ]
+}

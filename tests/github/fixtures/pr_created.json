@@ -1,0 +1,12 @@
+{
+  "number": 12,
+  "state": "open",
+  "merged": false,
+  "html_url": "https://github.com/octo-org/drift-gate-playground/pull/12",
+  "head": {
+    "ref": "driftgate/abc-pin_provider_version"
+  },
+  "base": {
+    "ref": "scenario/flaky"
+  }
+}

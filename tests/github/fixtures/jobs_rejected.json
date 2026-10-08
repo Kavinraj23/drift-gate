@@ -1,0 +1,19 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 9100,
+      "run_id": 7100,
+      "run_attempt": 1,
+      "name": "deploy",
+      "status": "completed",
+      "conclusion": "failure",
+      "runner_id": null,
+      "runner_name": null,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": []
+    }
+  ]
+}

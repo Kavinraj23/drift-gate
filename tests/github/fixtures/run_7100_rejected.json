@@ -1,0 +1,17 @@
+{
+  "id": 7100,
+  "name": "approval-rejected",
+  "head_branch": "scenario/approval-rejected",
+  "head_sha": "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff",
+  "path": ".github/workflows/approval.yml",
+  "run_number": 3,
+  "run_attempt": 1,
+  "event": "workflow_dispatch",
+  "status": "completed",
+  "conclusion": "failure",
+  "workflow_id": 555,
+  "html_url": "https://github.com/octo-org/drift-gate-playground/actions/runs/7100",
+  "created_at": "2026-10-01T11:00:00Z",
+  "run_started_at": "2026-10-01T11:00:00Z",
+  "updated_at": "2026-10-01T11:00:40Z"
+}

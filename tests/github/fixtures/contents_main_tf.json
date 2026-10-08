@@ -1,0 +1,9 @@
+{
+  "type": "file",
+  "encoding": "base64",
+  "size": 118,
+  "name": "main.tf",
+  "path": "main.tf",
+  "sha": "b1obb1obb1obb1obb1obb1obb1obb1obb1obb1ob",
+  "content": "dGVycmFmb3JtIHsKICByZXF1aXJlZF9wcm92aWRlcnMgewogICAgbnVsbCA9IHsKICAgICAgc291\ncmNlICA9ICJoYXNoaWNvcnAvbnVsbCIKICAgICAgdmVyc2lvbiA9ICJ+PiA5LjAiCiAgICB9CiAg\nfQp9Cg==\n"
+}

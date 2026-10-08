@@ -1,0 +1,40 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 9001,
+      "run_id": 7001,
+      "run_attempt": 1,
+      "name": "canary",
+      "status": "completed",
+      "conclusion": "failure",
+      "runner_id": 1,
+      "runner_name": "GitHub Actions 1",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "started_at": "2026-10-01T10:00:05Z",
+      "completed_at": "2026-10-01T10:00:30Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run canary",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 2
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 3
+        }
+      ]
+    }
+  ]
+}

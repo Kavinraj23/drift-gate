@@ -12,7 +12,12 @@ tasks = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(tasks)
 
 
-def test_not_implemented_target_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+def test_not_implemented_target_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Only human-only targets are still unimplemented; use a root without `.autonomous` so the
+    # not-implemented path (not the human-only refusal) is what runs.
+    monkeypatch.setattr(tasks, "ROOT", tmp_path)
     assert tasks.main(["tasks.py", "eval-live"]) == 1
     assert "not implemented (M9b)" in capsys.readouterr().out
 
@@ -31,6 +36,8 @@ def test_mvp_check_reports_pending_and_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(tasks.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())
+    # Every milestone is implemented now, so pin a partial set to keep exercising the pending path.
+    monkeypatch.setattr(tasks, "IMPLEMENTED_MILESTONES", {"M0"})
     assert tasks.mvp_check() == 1
     out = capsys.readouterr().out
     assert "pass" in out and "pending" in out

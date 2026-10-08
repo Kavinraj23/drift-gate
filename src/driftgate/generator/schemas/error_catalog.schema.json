@@ -25,7 +25,9 @@
           "source",
           "box",
           "summary",
-          "lines"
+          "lines",
+          "verified",
+          "source_kind"
         ],
         "additionalProperties": false,
         "properties": {
@@ -52,6 +54,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "source_kind": {
+            "enum": [
+              "recalled-from-widely-posted-output",
+              "doc-quote",
+              "captured-verbatim"
+            ]
           }
         }
       }

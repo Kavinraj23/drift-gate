@@ -104,7 +104,7 @@ def test_change_timeline_has_decoys(ds: Dataset) -> None:
 
 def test_scenario_coverage_and_held_out(ds: Dataset) -> None:
     labels = _json(ds, "ground_truth/labels.json")
-    manifest = _json(ds, "manifest.json")
+    manifest = _json(ds, "ground_truth/scenarios.json")
     assert 8 <= len(manifest["held_out_scenarios"]) <= 10
     assert {sc["scenario_id"] for sc in manifest["scenarios"] if sc["held_out"]} == set(manifest["held_out_scenarios"])
     families = {labels["failures"][sc["execution_id"]]["fault_id"] for sc in manifest["scenarios"]}
@@ -158,12 +158,20 @@ def test_every_error_string_has_a_source() -> None:
     for entry in raw["entries"]:
         assert entry["tool"].strip() and len(entry["source"].strip()) >= 10, entry["id"]
         assert catalog[entry["id"]].source == entry["source"]
+        # Invariant 9: nothing here is a captured verbatim sample, and the catalog must say so honestly.
+        assert isinstance(entry["verified"], bool), entry["id"]
+        assert entry["source_kind"] in ("recalled-from-widely-posted-output", "doc-quote", "captured-verbatim"), entry[
+            "id"
+        ]
+        if entry["verified"]:
+            assert entry["source_kind"] == "captured-verbatim", entry["id"]
+    assert "copied from real" not in raw["note"] and "Nothing is invented" not in raw["note"]
 
 
 def test_logs_contain_only_catalog_text(ds: Dataset) -> None:
     """Invariant 9: every log line is the rendering of a catalogued entry, nothing hand-written."""
     catalog = load_catalog()
-    index = _json(ds, "logs/catalog_use.json")
+    index = _json(ds, "ground_truth/catalog_use.json")
     assert index
     for path, entries in index.items():
         expected: list[str] = []
@@ -195,13 +203,55 @@ def test_logs_exist_for_every_failed_step_except_governance(ds: Dataset) -> None
         assert labels["failures"][e["execution_id"]]["true_classification"] != "governance"
 
 
+AGENT_HIDDEN_DIRS = ("ground_truth/", "world/")
+FORBIDDEN_KEYS = (
+    "true_layer",
+    "true_classification",
+    "correct_tier",
+    "fix_diff",
+    "fault_id",
+    "causal_change",
+    "flaky",
+    "held_out",
+    "first_fix_fails",
+)
+
+
 def test_ground_truth_not_leaked_into_agent_visible_data(ds: Dataset) -> None:
-    forbidden = ("true_layer", "true_classification", "correct_tier", "fix_diff", "fault_id", "causal_change")
-    for rel, text in ds.files.items():
-        if rel.startswith("ground_truth/"):
-            continue
-        for key in forbidden:
+    catalog_ids = load_catalog().ids()
+    scenario_ids = [sc["scenario_id"] for sc in _json(ds, "ground_truth/scenarios.json")["scenarios"]]
+    assert scenario_ids and catalog_ids
+    visible = [rel for rel in ds.files if not rel.startswith(AGENT_HIDDEN_DIRS)]
+    assert "manifest.json" in visible and "executions.json" in visible
+    for rel in visible:
+        text = ds.files[rel]
+        for key in FORBIDDEN_KEYS:
             assert key not in text, f"{key} leaked into {rel}"
+        for token in (*scenario_ids, *catalog_ids):
+            assert token not in text, f"{token} leaked into {rel}"
+
+
+def test_followups_structure_is_uniform(ds: Dataset) -> None:
+    followups = _json(ds, "world/followups.json")
+    execs = {e["execution_id"] for e in _json(ds, "executions.json")}
+    assert set(followups) <= execs
+    for entry in followups.values():
+        assert set(entry) == {"rerun", "fix_applied"}
+        assert set(entry["rerun"]) == {"status", "log"}
+        assert set(entry["fix_applied"]) == {"status", "accepted_files"}
+
+
+def test_simulator_world_only_referenced_by_synthetic_adapter_generator_and_eval() -> None:
+    """followups.json is simulator behaviour; agents and tools must never see the `world` directory."""
+    offenders = []
+    for path in SRC.rglob("*.py"):
+        rel = path.relative_to(SRC).as_posix()
+        if rel.startswith(("generator/", "eval/", "adapters/synthetic")):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "followups" in text or re.search(r"""["'/]world[/"']""", text):
+            offenders.append(rel)
+    assert offenders == []
 
 
 def test_nothing_outside_eval_and_generator_touches_ground_truth() -> None:
@@ -229,7 +279,7 @@ def test_schema_validation_and_eval_reader_round_trip(ds: Dataset, tmp_path: Pat
     gt = load_ground_truth(tmp_path / "data")
     labels = _json(ds, "ground_truth/labels.json")
     assert set(gt.failures) == set(labels["failures"])
-    assert len(gt.scenarios(held_out=True)) == len(_json(ds, "manifest.json")["held_out_scenarios"])
+    assert len(gt.scenarios(held_out=True)) == len(_json(ds, "ground_truth/scenarios.json")["held_out_scenarios"])
     assert len(gt.scenarios(held_out=False)) + len(gt.scenarios(held_out=True)) == len(gt.scenarios())
     assert gt.flaky_pipelines and gt.bursts
 

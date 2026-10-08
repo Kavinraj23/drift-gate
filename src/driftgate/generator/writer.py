@@ -20,6 +20,7 @@ VALIDATED = (
     ("changes.json", "changes.schema.json"),
     ("world/followups.json", "followups.schema.json"),
     ("ground_truth/labels.json", "labels.schema.json"),
+    ("ground_truth/scenarios.json", "scenarios.schema.json"),
 )
 
 

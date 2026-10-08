@@ -9,7 +9,8 @@
       "rerun": {
         "type": "object",
         "required": [
-          "status"
+          "status",
+          "log"
         ],
         "additionalProperties": false,
         "properties": {
@@ -20,12 +21,18 @@
             ]
           },
           "log": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
       "fix_applied": {
-        "type": "object",
+        "type": [
+          "object",
+          "null"
+        ],
         "required": [
           "status",
           "accepted_files"
@@ -46,6 +53,10 @@
           }
         }
       }
-    }
+    },
+    "required": [
+      "rerun",
+      "fix_applied"
+    ]
   }
 }

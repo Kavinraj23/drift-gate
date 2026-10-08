@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Every string here is copied from real tool output. Placeholders {name} stand only for run-specific values (ids, paths, names). Literal braces are doubled. Nothing is invented: strings we could not vouch for verbatim are listed in BLOCKERS.md under Needs human.",
+  "note": "Strings are recalled from well-known real tool output (or quoted from tool documentation); none was captured byte-for-byte in this offline environment. Every entry is therefore marked verified=false and needs human verification against a real sample (see BLOCKERS.md, Needs human). Placeholders {name} stand only for run-specific values (ids, paths, names). Literal braces are doubled.",
   "entries": [
     {
       "id": "gha_group",
@@ -8,7 +8,14 @@
       "source": "GitHub Actions raw job log format: ##[group]Run <command>, the echoed command, the shell line, ##[endgroup]",
       "box": false,
       "summary": "##[group]Run {command}",
-      "lines": ["##[group]Run {command}", "{command}", "shell: /usr/bin/bash -e {{0}}", "##[endgroup]"]
+      "lines": [
+        "##[group]Run {command}",
+        "{command}",
+        "shell: /usr/bin/bash -e {{0}}",
+        "##[endgroup]"
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "gha_exit_code",
@@ -16,7 +23,11 @@
       "source": "GitHub Actions raw job log: ##[error]Process completed with exit code N. (shown as 'Error: Process completed with exit code N.' in the UI)",
       "box": false,
       "summary": "##[error]Process completed with exit code {code}.",
-      "lines": ["##[error]Process completed with exit code {code}."]
+      "lines": [
+        "##[error]Process completed with exit code {code}."
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "tf_state_lock",
@@ -42,7 +53,9 @@
         "by multiple users at the same time. Please resolve the issue above and try",
         "again. For most commands, you can disable locking with the \"-lock=false\"",
         "flag, but this is not recommended."
-      ]
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "tf_undeclared_variable",
@@ -57,7 +70,9 @@
         "  {line}: {source_line}",
         "",
         "An input variable with the name \"{var_name}\" has not been declared. This variable can be declared with a variable \"{var_name}\" {{}} block."
-      ]
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "tf_provider_constraints",
@@ -70,7 +85,9 @@
         "",
         "Could not retrieve the list of available versions for provider hashicorp/aws:",
         "no available releases match the given constraints {constraint}"
-      ]
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "npm_ci_lock_out_of_sync",
@@ -84,7 +101,9 @@
         "npm ERR! `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.",
         "npm ERR! ",
         "npm ERR! A complete log of this run can be found in: {npm_log_path}"
-      ]
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "pip_no_matching_distribution",
@@ -95,7 +114,9 @@
       "lines": [
         "ERROR: Could not find a version that satisfies the requirement {requirement} (from versions: none)",
         "ERROR: No matching distribution found for {requirement}"
-      ]
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "aws_throttling",
@@ -103,7 +124,11 @@
       "source": "AWS CLI client error format 'An error occurred (ThrottlingException) when calling the X operation (reached max retries: N): Rate exceeded'; https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-retries.html",
       "box": false,
       "summary": "An error occurred (ThrottlingException) when calling the {operation} operation (reached max retries: {retries}): Rate exceeded",
-      "lines": ["An error occurred (ThrottlingException) when calling the {operation} operation (reached max retries: {retries}): Rate exceeded"]
+      "lines": [
+        "An error occurred (ThrottlingException) when calling the {operation} operation (reached max retries: {retries}): Rate exceeded"
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "aws_expired_token",
@@ -111,7 +136,11 @@
       "source": "AWS CLI client error format for ExpiredToken from STS-backed credentials; https://docs.aws.amazon.com/STS/latest/APIReference/CommonErrors.html",
       "box": false,
       "summary": "An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired",
-      "lines": ["An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired"]
+      "lines": [
+        "An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired"
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "docker_pull_rate_limit",
@@ -119,7 +148,11 @@
       "source": "Docker Hub pull rate limit message; https://docs.docker.com/docker-hub/download-rate-limit/",
       "box": false,
       "summary": "toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading: https://www.docker.com/increase-rate-limit",
-      "lines": ["Error response from daemon: toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading: https://www.docker.com/increase-rate-limit"]
+      "lines": [
+        "Error response from daemon: toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading: https://www.docker.com/increase-rate-limit"
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "k8s_image_pull_backoff",
@@ -131,7 +164,9 @@
         "    State:          Waiting",
         "      Reason:       ImagePullBackOff",
         "Back-off pulling image \"{image}\""
-      ]
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     },
     {
       "id": "k8s_oom_killed",
@@ -143,7 +178,9 @@
         "    State:          Terminated",
         "      Reason:       OOMKilled",
         "      Exit Code:    137"
-      ]
+      ],
+      "verified": false,
+      "source_kind": "recalled-from-widely-posted-output"
     }
   ]
 }

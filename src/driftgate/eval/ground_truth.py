@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 LABELS_RELPATH = Path("ground_truth") / "labels.json"
-MANIFEST_RELPATH = Path("manifest.json")
+SCENARIOS_RELPATH = Path("ground_truth") / "scenarios.json"
 
 
 @dataclass(frozen=True)
@@ -83,10 +83,10 @@ def _label(raw: dict) -> FailureLabel:
 
 def load_ground_truth(data_dir: Path = Path("data")) -> GroundTruth:
     raw = json.loads((data_dir / LABELS_RELPATH).read_text(encoding="utf-8"))
-    manifest = json.loads((data_dir / MANIFEST_RELPATH).read_text(encoding="utf-8"))
+    scenarios = json.loads((data_dir / SCENARIOS_RELPATH).read_text(encoding="utf-8"))
     return GroundTruth(
         failures={k: _label(v) for k, v in raw["failures"].items()},
         flaky_pipelines=tuple(raw["flaky_pipelines"]),
         bursts=tuple(raw["bursts"]),
-        held_out_scenarios=frozenset(manifest["held_out_scenarios"]),
+        held_out_scenarios=frozenset(scenarios["held_out_scenarios"]),
     )

@@ -427,9 +427,10 @@ def generate(seed: int = DEFAULT_SEED, anchor: datetime = ANCHOR, days: int = DA
     for exec_id, info in failed_info.items():
         spec = info["spec"]
         rf = info["rf"]
-        entry: dict[str, Any] = {}
+        # Uniform structure: every failure has both keys, so presence/absence reveals nothing.
+        entry: dict[str, Any] = {"rerun": {"status": "failed", "log": None}, "fix_applied": None}
         if spec.classification == "transient":
-            entry["rerun"] = {"status": "success"}
+            entry["rerun"] = {"status": "success", "log": None}
         elif spec.fault_id == "platform_throttle_masks_lock":
             s = slot_by_id[exec_id]
             lock_log = render_failed_step(
@@ -441,22 +442,23 @@ def generate(seed: int = DEFAULT_SEED, anchor: datetime = ANCHOR, days: int = DA
                 _rng(seed, f"rerun:{exec_id}"),
                 catalog_ids=("tf_state_lock",),
             )
-            rerun_path = info["log_path"].replace(".log", ".rerun.log")
+            rerun_path = f"world/rerun_logs/{exec_id}.log"
             files[rerun_path] = lock_log.text
             log_index[rerun_path] = lock_log.entries
             entry["rerun"] = {"status": "failed", "log": rerun_path}
-        elif spec.fault_id != "governance_approval_rejected":
-            entry["rerun"] = {"status": "failed", "log": info["log_path"]}
-        if rf is not None:
-            entry["fix_applied"] = {
-                "status": "success",
-                "accepted_files": {
-                    path: hashlib.sha256(rf.fixed[path].encode()).hexdigest() for path in rf.fix_paths()
-                },
-            }
+        else:
+            entry["rerun"] = {"status": "failed", "log": info.get("log_path")}
+        entry["fix_applied"] = {
+            "status": "success",
+            "accepted_files": (
+                {path: hashlib.sha256(rf.fixed[path].encode()).hexdigest() for path in rf.fix_paths()}
+                if rf is not None
+                else {}
+            ),
+        }
         followups[exec_id] = entry
     files["world/followups.json"] = _dump(followups)
-    files["logs/catalog_use.json"] = _dump(log_index)
+    files["ground_truth/catalog_use.json"] = _dump(log_index)
     files["executions.json"] = _dump(executions)
     for p in PIPELINES:
         for path, text in bases[p.name].items():
@@ -467,6 +469,9 @@ def generate(seed: int = DEFAULT_SEED, anchor: datetime = ANCHOR, days: int = DA
     for sc in scenarios:
         labels["failures"][sc["execution_id"]]["scenario_id"] = sc["scenario_id"]
     files["ground_truth/labels.json"] = _dump(labels)
+    files["ground_truth/scenarios.json"] = _dump(
+        {"scenarios": scenarios, "held_out_scenarios": [sc["scenario_id"] for sc in scenarios if sc["held_out"]]}
+    )
 
     n_total = len(executions)
     n_fail = sum(1 for e in executions if e["status"] == "failed")
@@ -487,16 +492,12 @@ def generate(seed: int = DEFAULT_SEED, anchor: datetime = ANCHOR, days: int = DA
             "anchor": _iso(anchor),
             "days": days,
             "stats": stats,
-            "pipelines": [asdict(p) for p in PIPELINES],
-            "scenarios": scenarios,
-            "held_out_scenarios": [sc["scenario_id"] for sc in scenarios if sc["held_out"]],
+            "pipelines": [{k: v for k, v in asdict(p).items() if k != "flaky"} for p in PIPELINES],
             "files": {
                 "executions": "executions.json",
                 "changes": "changes.json",
-                "followups": "world/followups.json",
                 "logs": "logs/",
                 "repos": "repos/",
-                "labels": "ground_truth/labels.json",
             },
         }
     )

@@ -81,6 +81,7 @@ def make_orch(dataset_dir: Path, tmp_path: Path, kill_file: Path) -> Callable[..
         factory = model_factory or (lambda _e, _b: scripted_model(label, source, variant))
         kw.setdefault("kill_switch_path", kill_file)
         kw.setdefault("clock", StepClock())
+        kw.setdefault("allow_unreviewed_tier3", True)  # M5-era sandbox tests have no reviewer wired
         return build_synthetic_orchestrator(dataset_dir, factory, audit_path=tmp_path / "audit.jsonl", **kw)
 
     return _make

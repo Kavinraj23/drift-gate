@@ -8,7 +8,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class PipelineDef:
     name: str
-    eco: str  # node | python | tf | canary
+    eco: str  # node | python | tf
     connector: str
     runner_pool: str
     template: str  # template name without version
@@ -41,8 +41,8 @@ PIPELINES: tuple[PipelineDef, ...] = (
     PipelineDef("infra-iam", "tf", "aws-shared", "pool-large", TF_TEMPLATE, TF_GOOD_VERSION, "tf-iam", 3),
     PipelineDef("infra-eks", "tf", "aws-prod", "pool-large", TF_TEMPLATE, TF_GOOD_VERSION, "tf-eks", 3),
     PipelineDef("infra-observability", "tf", "aws-shared", "pool-large", TF_TEMPLATE, TF_GOOD_VERSION, "tf-obs", 3),
-    PipelineDef("canary-deploy-a", "canary", "gh-default", "pool-medium", "canary", "v1.0.0", "canary-a", 3, True),
-    PipelineDef("canary-deploy-b", "canary", "gh-default", "pool-medium", "canary", "v1.0.0", "canary-b", 3, True),
+    PipelineDef("billing-service", "node", "ghcr-conn", "pool-small", "node-build", "v1.4.0", "none", 5, True),
+    PipelineDef("auth-service", "node", "ghcr-conn", "pool-small", "node-build", "v1.4.0", "none", 5, True),
 )
 
 PIPELINE_BY_NAME: dict[str, PipelineDef] = {p.name: p for p in PIPELINES}
@@ -56,5 +56,4 @@ STAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
         ("Approval", ("Manual approval",)),
         ("Apply", ("Terraform Apply",)),
     ),
-    "canary": (("Canary", ("Checkout", "Canary check")),),
 }

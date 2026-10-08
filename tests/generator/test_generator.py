@@ -112,7 +112,7 @@ def test_scenario_coverage_and_held_out(ds: Dataset) -> None:
         "user_lockfile_mismatch",
         "user_provider_pin",
         "user_undefined_variable",
-        "transient_flaky_canary",
+        "transient_flaky_test",
         "transient_throttling",
         "governance_approval_rejected",
         "platform_throttle_masks_lock",
@@ -291,3 +291,83 @@ def test_schema_validation_rejects_bad_data(ds: Dataset) -> None:
     bad["executions.json"] = json.dumps(execs)
     with pytest.raises(DatasetValidationError):
         validate_files(bad)
+
+
+def test_simulator_world_isolation_is_ast_based() -> None:
+    """Stricter companion to the substring test: string literals, f-string parts and identifiers are inspected."""
+    offenders = []
+    for path in SRC.rglob("*.py"):
+        rel = path.relative_to(SRC).as_posix()
+        if rel.startswith(("generator/", "eval/", "adapters/synthetic")):
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            texts: list[str] = []
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                texts.append(node.value)
+            elif isinstance(node, ast.Name):
+                texts.append(node.id)
+            elif isinstance(node, ast.Attribute):
+                texts.append(node.attr)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                texts += [a.name for a in node.names] + [getattr(node, "module", None) or ""]
+            for t in texts:
+                if "followups" in t or re.search(r"(^|[/\\])world([/\\]|$)", t):
+                    offenders.append(f"{rel}: {t!r}")
+    assert offenders == []
+
+
+LEAK_TOKENS = ("canary", "flaky", "flake", "intermittent", "retry")
+
+
+def _pipeline_signature(ds: Dataset, pipeline: str) -> tuple[set[str], set[str], set[str]]:
+    """Names, step names and file paths a model could see for one pipeline (agent-visible data only)."""
+    execs = [e for e in _json(ds, "executions.json") if e["pipeline"] == pipeline]  # type: ignore[union-attr]
+    manifest = _json(ds, "manifest.json")
+    entry = next(p for p in manifest["pipelines"] if p["name"] == pipeline)  # type: ignore[index]
+    names = {pipeline, entry["ecosystem"] if "ecosystem" in entry else entry.get("eco", "")}
+    names |= {str(v) for v in entry.values() if isinstance(v, str)}
+
+    steps: set[str] = set()
+
+    def walk(n: dict) -> None:
+        steps.add(n["name"])
+        for c in n.get("children", []):
+            walk(c)
+
+    for e in execs:
+        for child in e["root"]["children"]:  # the root node is named after the pipeline itself
+            walk(child)
+    prefix_hits = {
+        rel for rel in ds.files if f"/{pipeline}/" in f"/{rel}" and not rel.startswith(("ground_truth/", "world/"))
+    }
+    paths = set()
+    for rel in prefix_hits:
+        parts = rel.split("/")
+        paths.add("/".join(parts[parts.index(pipeline) + 2 :]) if pipeline in parts else rel)
+    return names, steps, paths
+
+
+def test_flaky_pipelines_not_identifiable_from_names_steps_or_files(ds: Dataset) -> None:
+    labels = _json(ds, "ground_truth/labels.json")
+    flaky = set(labels["flaky_pipelines"])  # type: ignore[index]
+    pipelines = [p["name"] for p in _json(ds, "manifest.json")["pipelines"]]  # type: ignore[index]
+    ordinary = [p for p in pipelines if p not in flaky]
+    assert len(flaky) == 2 and ordinary
+
+    visible_text = {rel: t for rel, t in ds.files.items() if not rel.startswith(("ground_truth/", "world/"))}
+    for p in flaky:
+        names, steps, paths = _pipeline_signature(ds, p)
+        for item in names | steps | paths:
+            assert not any(tok in item.lower() for tok in LEAK_TOKENS), (p, item)
+        # Step names and file paths must be ones an ordinary pipeline also uses.
+        assert steps
+        assert any(steps <= _pipeline_signature(ds, o)[1] for o in ordinary), (p, steps)
+        assert any(paths <= _pipeline_signature(ds, o)[2] for o in ordinary), (p, paths)
+    # Repo trees and logs for flaky pipelines carry no flake vocabulary either.
+    for rel, text in visible_text.items():
+        if any(f"/{p}/" in f"/{rel}" for p in flaky):
+            assert not any(tok in text.lower() for tok in ("canary", "intermittent")), rel
+
+    # Ordinary pipelines also fail with ordinary faults, so recurring failure alone is not a tell.
+    failing = {e["pipeline"] for e in _json(ds, "executions.json") if e["status"] == "failed"}  # type: ignore[union-attr]
+    assert len(failing - flaky) >= len(ordinary) - 2

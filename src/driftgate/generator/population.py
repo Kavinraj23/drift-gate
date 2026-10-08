@@ -40,7 +40,7 @@ SCENARIO_QUOTA = {
     "transient_throttling": 3,
     "transient_registry_rate_limit": 2,
     "transient_image_pull": 3,
-    "transient_flaky_canary": 3,
+    "transient_flaky_test": 3,
     "platform_state_lock": 2,
     "platform_oom_killed": 1,
     "platform_expired_token": 1,
@@ -246,7 +246,7 @@ def generate(seed: int = DEFAULT_SEED, anchor: datetime = ANCHOR, days: int = DA
     flaky_fails: list[Slot] = []
     for s in list(slots):
         if s.pipeline.flaky and s.burst_id is None and fr.random() < FLAKY_FAIL_PROB:
-            s.status, s.fault_id = "failed", "transient_flaky_canary"
+            s.status, s.fault_id = "failed", "transient_flaky_test"
             flaky_fails.append(s)
             flaky_retries.append(Slot(s.pipeline, s.start + timedelta(seconds=fr.randint(180, 480)), retry_of=s))
     slots += flaky_retries
@@ -272,9 +272,7 @@ def generate(seed: int = DEFAULT_SEED, anchor: datetime = ANCHOR, days: int = DA
         if s.status == "failed" and s.fault_id:
             used[FAULTS[s.fault_id].classification] += 1
     bg_rng = _rng(seed, "background")
-    candidates = [
-        s for s in slots if s.status == "success" and s.retry_of is None and s.burst_id is None and not s.pipeline.flaky
-    ]
+    candidates = [s for s in slots if s.status == "success" and s.retry_of is None and s.burst_id is None]
     bg_rng.shuffle(candidates)
     pos = 0
     bg_failed: list[Slot] = []
@@ -398,7 +396,7 @@ def generate(seed: int = DEFAULT_SEED, anchor: datetime = ANCHOR, days: int = DA
         ("connector_change", "ghcr-conn", "Update connector description"),
         ("runner_pool_change", "pool-medium", "Add node label"),
         ("config_change", "aws-data", "Tag cleanup"),
-        ("template_release", "canary", "Release v1.0.1"),
+        ("template_release", "node-build", "Release v1.4.2"),
     ):
         changes.append(
             Change(anchor + timedelta(seconds=cr.randint(0, days * 86400 - 1)), kind, ref, "platform-bot", msg)

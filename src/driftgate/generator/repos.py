@@ -141,19 +141,8 @@ def _tf_files(p: PipelineDef) -> dict[str, str]:
     }
 
 
-def _canary_files(p: PipelineDef) -> dict[str, str]:
-    return {
-        ".github/workflows/canary.yml": (
-            "name: canary\non:\n  schedule:\n    - cron: '*/30 * * * *'\njobs:\n  canary:\n"
-            f"    runs-on: [self-hosted, {p.runner_pool}]\n    steps:\n"
-            "      - uses: actions/checkout@v4\n      - run: ./canary/check.sh\n"
-        ),
-        "canary/check.sh": '#!/usr/bin/env bash\nset -euo pipefail\ncurl -fsS --max-time 5 "${CANARY_URL}/healthz"\n',
-    }
-
-
 def base_files(p: PipelineDef) -> dict[str, str]:
-    return {"node": _node_files, "python": _python_files, "tf": _tf_files, "canary": _canary_files}[p.eco](p)
+    return {"node": _node_files, "python": _python_files, "tf": _tf_files}[p.eco](p)
 
 
 def _line_of(text: str, needle: str) -> tuple[int, str]:

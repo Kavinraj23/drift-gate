@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "labels.schema.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "flaky_pipelines",
+    "bursts",
+    "failures"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "flaky_pipelines": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "bursts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "burst_id",
+          "fault_id",
+          "shared_dimension",
+          "execution_ids"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "burst_id": {
+            "type": "string"
+          },
+          "fault_id": {
+            "type": "string"
+          },
+          "shared_dimension": {
+            "type": "string"
+          },
+          "execution_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "failures": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "execution_id",
+          "pipeline",
+          "fault_id",
+          "true_layer",
+          "true_classification",
+          "disposition",
+          "correct_tier",
+          "correct_action",
+          "tier0_path",
+          "precedent_exists",
+          "fleet_wide",
+          "burst_id",
+          "blast_radius",
+          "causal_change_ids",
+          "decoy_change_ids",
+          "fix_diff",
+          "fix_paths",
+          "first_fix_fails",
+          "error_catalog_ids",
+          "flaky_pipeline",
+          "scenario_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "execution_id": {
+            "type": "string"
+          },
+          "pipeline": {
+            "type": "string"
+          },
+          "fault_id": {
+            "type": "string"
+          },
+          "true_layer": {
+            "enum": [
+              "L0",
+              "L1",
+              "L2",
+              "L3",
+              "L4",
+              "L5",
+              "L6"
+            ]
+          },
+          "true_classification": {
+            "enum": [
+              "platform",
+              "user",
+              "transient",
+              "governance",
+              "unknown"
+            ]
+          },
+          "disposition": {
+            "enum": [
+              "remediate",
+              "escalate",
+              "close"
+            ]
+          },
+          "correct_tier": {
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              null
+            ]
+          },
+          "correct_action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tier0_path": {
+            "enum": [
+              "known_transient_rule",
+              "flake_precedent",
+              null
+            ]
+          },
+          "precedent_exists": {
+            "type": "boolean"
+          },
+          "fleet_wide": {
+            "type": "boolean"
+          },
+          "burst_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "blast_radius": {
+            "type": "object",
+            "required": [
+              "executions_affected",
+              "shared_dimension"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "executions_affected": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "shared_dimension": {
+                "type": "string"
+              }
+            }
+          },
+          "causal_change_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "decoy_change_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fix_diff": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fix_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "first_fix_fails": {
+            "type": "boolean"
+          },
+          "error_catalog_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "flaky_pipeline": {
+            "type": "boolean"
+          },
+          "scenario_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

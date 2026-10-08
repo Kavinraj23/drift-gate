@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "changes.schema.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "change_id",
+      "at",
+      "kind",
+      "ref",
+      "actor",
+      "message",
+      "files",
+      "sha"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "change_id": {
+        "type": "string"
+      },
+      "at": {
+        "type": "string"
+      },
+      "kind": {
+        "enum": [
+          "commit",
+          "template_release",
+          "connector_change",
+          "runner_pool_change",
+          "config_change"
+        ]
+      },
+      "ref": {
+        "type": "string"
+      },
+      "actor": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "sha": {
+        "type": "string"
+      }
+    }
+  }
+}

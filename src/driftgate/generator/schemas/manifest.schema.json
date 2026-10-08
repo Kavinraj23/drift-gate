@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "seed",
+    "anchor",
+    "days",
+    "stats",
+    "pipelines",
+    "scenarios",
+    "held_out_scenarios",
+    "files"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "anchor": {
+      "type": "string"
+    },
+    "days": {
+      "type": "integer"
+    },
+    "stats": {
+      "type": "object"
+    },
+    "pipelines": {
+      "type": "array",
+      "minItems": 12,
+      "items": {
+        "type": "object"
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "scenario_id",
+          "execution_id",
+          "held_out"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "scenario_id": {
+            "type": "string"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "held_out": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "held_out_scenarios": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 10,
+      "items": {
+        "type": "string"
+      }
+    },
+    "files": {
+      "type": "object"
+    }
+  }
+}

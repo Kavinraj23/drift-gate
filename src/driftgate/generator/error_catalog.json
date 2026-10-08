@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "note": "Every string here is copied from real tool output. Placeholders {name} stand only for run-specific values (ids, paths, names). Literal braces are doubled. Nothing is invented: strings we could not vouch for verbatim are listed in BLOCKERS.md under Needs human.",
+  "entries": [
+    {
+      "id": "gha_group",
+      "tool": "GitHub Actions runner",
+      "source": "GitHub Actions raw job log format: ##[group]Run <command>, the echoed command, the shell line, ##[endgroup]",
+      "box": false,
+      "summary": "##[group]Run {command}",
+      "lines": ["##[group]Run {command}", "{command}", "shell: /usr/bin/bash -e {{0}}", "##[endgroup]"]
+    },
+    {
+      "id": "gha_exit_code",
+      "tool": "GitHub Actions runner",
+      "source": "GitHub Actions raw job log: ##[error]Process completed with exit code N. (shown as 'Error: Process completed with exit code N.' in the UI)",
+      "box": false,
+      "summary": "##[error]Process completed with exit code {code}.",
+      "lines": ["##[error]Process completed with exit code {code}."]
+    },
+    {
+      "id": "tf_state_lock",
+      "tool": "Terraform (S3 backend with DynamoDB locking)",
+      "source": "Terraform CLI 1.x diagnostic 'Error acquiring the state lock' with its Lock Info block and closing paragraph; see https://developer.hashicorp.com/terraform/language/state/locking and the S3 backend docs",
+      "box": true,
+      "summary": "Error: Error acquiring the state lock",
+      "lines": [
+        "Error: Error acquiring the state lock",
+        "",
+        "Error message: ConditionalCheckFailedException: The conditional request failed",
+        "Lock Info:",
+        "  ID:        {lock_id}",
+        "  Path:      {state_path}",
+        "  Operation: OperationTypePlan",
+        "  Who:       {who}",
+        "  Version:   {tf_version}",
+        "  Created:   {created}",
+        "  Info:      ",
+        "",
+        "",
+        "Terraform acquires a state lock to protect the state from being written",
+        "by multiple users at the same time. Please resolve the issue above and try",
+        "again. For most commands, you can disable locking with the \"-lock=false\"",
+        "flag, but this is not recommended."
+      ]
+    },
+    {
+      "id": "tf_undeclared_variable",
+      "tool": "Terraform",
+      "source": "Terraform CLI 1.x diagnostic 'Reference to undeclared input variable' (https://developer.hashicorp.com/terraform/language/values/variables); layout 'on FILE line N, in CONTEXT:' plus source snippet",
+      "box": true,
+      "summary": "Error: Reference to undeclared input variable",
+      "lines": [
+        "Error: Reference to undeclared input variable",
+        "",
+        "  on {file} line {line}, in {context}:",
+        "  {line}: {source_line}",
+        "",
+        "An input variable with the name \"{var_name}\" has not been declared. This variable can be declared with a variable \"{var_name}\" {{}} block."
+      ]
+    },
+    {
+      "id": "tf_provider_constraints",
+      "tool": "Terraform (terraform init)",
+      "source": "Terraform CLI 1.x diagnostic 'Failed to query available provider packages' when no release matches the version constraint",
+      "box": true,
+      "summary": "Error: Failed to query available provider packages",
+      "lines": [
+        "Error: Failed to query available provider packages",
+        "",
+        "Could not retrieve the list of available versions for provider hashicorp/aws:",
+        "no available releases match the given constraints {constraint}"
+      ]
+    },
+    {
+      "id": "npm_ci_lock_out_of_sync",
+      "tool": "npm 8 (npm ci)",
+      "source": "npm ci EUSAGE error when package.json and package-lock.json are out of sync; https://docs.npmjs.com/cli/v8/commands/npm-ci",
+      "box": false,
+      "summary": "npm ERR! `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.",
+      "lines": [
+        "npm ERR! code EUSAGE",
+        "npm ERR! ",
+        "npm ERR! `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.",
+        "npm ERR! ",
+        "npm ERR! A complete log of this run can be found in: {npm_log_path}"
+      ]
+    },
+    {
+      "id": "pip_no_matching_distribution",
+      "tool": "pip (pip install -r requirements.txt)",
+      "source": "pip resolver errors when a pinned requirement does not exist on the index",
+      "box": false,
+      "summary": "ERROR: No matching distribution found for {requirement}",
+      "lines": [
+        "ERROR: Could not find a version that satisfies the requirement {requirement} (from versions: none)",
+        "ERROR: No matching distribution found for {requirement}"
+      ]
+    },
+    {
+      "id": "aws_throttling",
+      "tool": "AWS CLI",
+      "source": "AWS CLI client error format 'An error occurred (ThrottlingException) when calling the X operation (reached max retries: N): Rate exceeded'; https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-retries.html",
+      "box": false,
+      "summary": "An error occurred (ThrottlingException) when calling the {operation} operation (reached max retries: {retries}): Rate exceeded",
+      "lines": ["An error occurred (ThrottlingException) when calling the {operation} operation (reached max retries: {retries}): Rate exceeded"]
+    },
+    {
+      "id": "aws_expired_token",
+      "tool": "AWS CLI",
+      "source": "AWS CLI client error format for ExpiredToken from STS-backed credentials; https://docs.aws.amazon.com/STS/latest/APIReference/CommonErrors.html",
+      "box": false,
+      "summary": "An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired",
+      "lines": ["An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired"]
+    },
+    {
+      "id": "docker_pull_rate_limit",
+      "tool": "Docker Engine (docker pull / build)",
+      "source": "Docker Hub pull rate limit message; https://docs.docker.com/docker-hub/download-rate-limit/",
+      "box": false,
+      "summary": "toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading: https://www.docker.com/increase-rate-limit",
+      "lines": ["Error response from daemon: toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading: https://www.docker.com/increase-rate-limit"]
+    },
+    {
+      "id": "k8s_image_pull_backoff",
+      "tool": "kubectl describe pod / kubelet events",
+      "source": "Kubernetes container state Waiting with Reason ImagePullBackOff and kubelet event 'Back-off pulling image'; https://kubernetes.io/docs/concepts/containers/images/",
+      "box": false,
+      "summary": "Reason:       ImagePullBackOff",
+      "lines": [
+        "    State:          Waiting",
+        "      Reason:       ImagePullBackOff",
+        "Back-off pulling image \"{image}\""
+      ]
+    },
+    {
+      "id": "k8s_oom_killed",
+      "tool": "kubectl describe pod",
+      "source": "Kubernetes container state Terminated with Reason OOMKilled and Exit Code 137; https://kubernetes.io/docs/tasks/configure-pod-container/assign-memory-resource/",
+      "box": false,
+      "summary": "Reason:       OOMKilled",
+      "lines": [
+        "    State:          Terminated",
+        "      Reason:       OOMKilled",
+        "      Exit Code:    137"
+      ]
+    }
+  ]
+}

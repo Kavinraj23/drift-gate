@@ -61,7 +61,10 @@ match AND either a fail-then-pass history (flake_history) or a Tier 0 known-tran
 (classify_signature). If those are not both satisfied, do not propose Tier 0.
 - Tier 2 is only ever allowed when the lock holder is provably dead; you cannot prove that.
 - Tier 3 is a code change delivered as a pull request that a human merges. Name the files to change in `paths` \
-(relative paths inside the repository).
+(relative paths inside the repository) and put the change itself in `diff`: a unified diff (a/ and b/ paths, \
+hunks) against those files as read at the failing commit, minimal and limited to the named files. When it spans \
+several files, list additions before removals. Never delete files, and never put credentials in a diff. An \
+independent reviewer sees only the diff, the files and your hypothesis.
 - Your confidence is recorded. It is never sufficient for any tier. State it honestly.
 - If you cannot support an action, propose none and say why in escalation_reason: escalating is a good outcome.
 
@@ -109,6 +112,7 @@ def submit_report_definition() -> dict[str, Any]:
                         "rationale": {"type": "string"},
                         "reversible": {"type": "boolean"},
                         "paths": {"type": "array", "items": {"type": "string"}},
+                        "diff": {"type": "string", "description": "Tier 3 only: the unified diff of the change."},
                         "params": {"type": "object"},
                     },
                     "required": ["tier", "action", "rationale", "reversible"],
@@ -133,6 +137,7 @@ class Proposal:
     remediation: Remediation
     paths: tuple[str, ...] = ()
     params: dict[str, Any] = field(default_factory=dict)
+    diff: str = ""  # Tier 3: the unified diff text; parsed and checked by tier3.check_diff, not trusted here
 
 
 @dataclass
@@ -449,6 +454,8 @@ def _validate(data: dict[str, Any]) -> str:
             return "remediation.paths"
         if not isinstance(rem.get("params", {}), dict):
             return "remediation.params"
+        if not _is_str(rem.get("diff", "")):
+            return "remediation.diff"
     return ""
 
 
@@ -465,4 +472,4 @@ def _proposal(rem: dict[str, Any] | None) -> Proposal | None:
         gate=gate,
         gate_decision="allowed",  # the pre-gate default; only SafetyGate changes it
     )
-    return Proposal(remediation, tuple(rem.get("paths", [])), dict(rem.get("params", {})))
+    return Proposal(remediation, tuple(rem.get("paths", [])), dict(rem.get("params", {})), str(rem.get("diff", "")))

@@ -74,4 +74,5 @@ def record_decision(audit: AuditLog, decision: GateDecision, fingerprint: str, e
         action=decision.remediation.action,
         proposed_tier=decision.proposed_tier,
         agent_confidence=decision.agent_confidence,
+        abort_ceiling=decision.abort_ceiling,
     )

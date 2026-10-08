@@ -46,6 +46,7 @@ class GateDecision:
     remediation: Remediation  # same tier as proposed, with gate_decision applied
     proposed_tier: int
     agent_confidence: float | None = None
+    abort_ceiling: int | None = None  # the N in force for this decision, recorded in the audit log
 
     @property
     def allowed(self) -> bool:
@@ -137,7 +138,7 @@ class SafetyGate:
         if decision == "allowed":
             self._rate.record(facts.fingerprint)
         out = replace(proposal, gate_decision=decision)
-        return GateDecision(decision, reason, out, proposal.tier, facts.agent_confidence)
+        return GateDecision(decision, reason, out, proposal.tier, facts.agent_confidence, self._ceiling)
 
     def _evaluate(self, p: Remediation, f: GateFacts) -> tuple[str, str]:
         if p.tier not in TIER_GATE:

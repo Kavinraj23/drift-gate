@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from driftgate.adapters.synthetic import LockEntry, LockTable, SimulatedOutcome, SyntheticTarget
-from driftgate.audit import KINDS, AuditLog
+from driftgate.audit import KINDS, AuditLog, record_decision
 from driftgate.domain import Remediation, RemediationTarget
 
 
@@ -83,3 +83,53 @@ def test_force_unlock_missing_lock() -> None:
     t = SyntheticTarget()
     a = rem(2, "force_unlock", lock_id="nope")
     assert not t.dry_run(a).ok and not t.execute(a).ok
+
+
+@pytest.mark.parametrize("gate_decision", ["downgraded", "refused"])
+def test_target_refuses_actions_not_allowed_by_gate(gate_decision: str) -> None:
+    t = SyntheticTarget()
+    a = Remediation(0, "rerun", "r", True, "auto", gate_decision, {})
+    assert not t.dry_run(a).ok
+    assert not t.execute(a).ok
+    assert t.executed == []
+
+
+def test_force_unlock_not_allowed_leaves_lock() -> None:
+    table = LockTable({"s": LockEntry("r", alive=False)})
+    t = SyntheticTarget(lock_table=table)
+    a = Remediation(2, "force_unlock", "r", False, "dual_approval", "downgraded", {"lock_id": "s"})
+    assert not t.execute(a).ok and "s" in table.locks
+
+
+def test_record_decision_writes_audit_entry(tmp_path: Path) -> None:
+    from driftgate.gates import GateFacts, KillSwitch, RateLimiter, SafetyGate
+
+    sw = tmp_path / "ks.json"
+    sw.write_text('{"global": true, "tiers": {"0": true, "1": true, "2": true, "3": true}}')
+    gate = SafetyGate(KillSwitch(sw), RateLimiter(lambda: 1.0))
+    log = AuditLog(tmp_path / "a.jsonl", lambda: 5.0)
+    facts = GateFacts(
+        "fp",
+        signature_match=True,
+        flake_precedent=True,
+        proposed_set_size=1,
+        resource_set_total=3,
+        agent_confidence=0.4,
+    )
+    entry = record_decision(log, gate.decide(rem(0), facts), "fp", "ex1")
+    [read] = log.read("gate_decision")
+    assert read == entry and read.payload["decision"] == "allowed" and read.payload["agent_confidence"] == 0.4
+
+
+def test_audit_seq_counter_does_not_reread_file(tmp_path: Path) -> None:
+    log = AuditLog(tmp_path / "a.jsonl", lambda: 0.0)
+    assert [log.append("proposal", "f", "e").seq for _ in range(3)] == [0, 1, 2]
+    calls: list[int] = []
+    orig = log.read
+
+    def spy(kind: str | None = None):  # noqa: ANN202
+        calls.append(1)
+        return orig(kind)
+
+    log.read = spy  # type: ignore[method-assign]
+    assert log.append("failed", "f", "e").seq == 3 and calls == []

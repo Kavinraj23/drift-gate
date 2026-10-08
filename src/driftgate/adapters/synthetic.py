@@ -63,6 +63,8 @@ class SyntheticTarget:
 
     def dry_run(self, action: Remediation) -> DryRunResult:
         self.calls.append(("dry_run", action.action))
+        if action.gate_decision != "allowed":
+            return DryRunResult(False, f"refused: gate decision is {action.gate_decision!r}", {})
         lock_id = self._lock_id(action)
         if lock_id is not None:
             status = self.locks.holder_status(lock_id)
@@ -75,6 +77,8 @@ class SyntheticTarget:
 
     def execute(self, action: Remediation) -> ExecutionResult:
         self.calls.append(("execute", action.action))
+        if action.gate_decision != "allowed":
+            return ExecutionResult(False, f"refused: gate decision is {action.gate_decision!r}", {})
         lock_id = self._lock_id(action)
         if lock_id is not None:
             if self.locks.holder_status(lock_id) != "dead":

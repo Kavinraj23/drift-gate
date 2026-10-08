@@ -50,7 +50,9 @@ def prop(tier: int = 0, **kw: object) -> Remediation:
 
 
 def facts(**kw: object) -> GateFacts:
-    base: dict[str, object] = dict(fingerprint="fp1", signature_match=True, flake_precedent=True)
+    base: dict[str, object] = dict(
+        fingerprint="fp1", signature_match=True, flake_precedent=True, proposed_set_size=1, resource_set_total=5
+    )
     base.update(kw)
     return GateFacts(**base)  # type: ignore[arg-type]
 
@@ -166,7 +168,14 @@ def test_refused_decisions_do_not_consume_rate_limit(env) -> None:
 def test_tier2_requires_dead_holder_proof_and_dry_run(env) -> None:
     gate, _, _ = env
     p = prop(2, action="force_unlock", reversible=False)
-    ok = dict(lock_holder="dead", holder_death_proof=True, dry_run_ok=True, fingerprint="l")
+    ok = dict(
+        lock_holder="dead",
+        holder_death_proof=True,
+        dry_run_ok=True,
+        fingerprint="l",
+        proposed_set_size=1,
+        resource_set_total=5,
+    )
     assert gate.decide(p, GateFacts(**ok)).allowed  # type: ignore[arg-type]
     assert gate.decide(p, GateFacts(**{**ok, "lock_holder": "running"})).decision == "refused"  # type: ignore[arg-type]
     assert gate.decide(p, GateFacts(**{**ok, "lock_holder": "unknown"})).decision == "downgraded"  # type: ignore[arg-type]
@@ -184,6 +193,8 @@ def test_tier2_running_holder_refused_even_with_everything_else_true(env) -> Non
         holder_death_proof=True,
         dry_run_ok=True,
         lock_holder="running",
+        proposed_set_size=1,
+        resource_set_total=5,
         agent_confidence=0.99,
     )
     assert gate.decide(prop(2, action="force_unlock"), f).decision == "refused"
@@ -198,7 +209,8 @@ def test_downgrade_only_property(tmp_path: Path) -> None:
         clock = FakeClock()
         gate = SafetyGate(KillSwitch(sw), RateLimiter(clock))
         tier = rng.choice([0, 1, 2, 3])
-        p = prop(tier, gate=rng.choice([TIER_GATE[tier], "auto", "pull_request"]))
+        incoming = rng.choice(list(RANK))
+        p = prop(tier, gate=rng.choice([TIER_GATE[tier], "auto", "pull_request"]), gate_decision=incoming)
         total = rng.choice([None, 0, 1, 5])
         f = GateFacts(
             fingerprint=rng.choice(["a", "b"]),
@@ -222,11 +234,68 @@ def test_downgrade_only_property(tmp_path: Path) -> None:
             assert d.proposed_tier == p.tier
             assert d.effective_tier is None or d.effective_tier <= p.tier
             assert d.remediation.gate_decision == d.decision
+            assert RANK[d.decision] >= RANK[incoming]  # never weaker than the incoming decision
+            if incoming != "allowed":
+                assert not d.allowed and d.effective_tier is None
+            state = KillSwitch(sw).read()
+            if state.blocks(tier) or (tier != 3 and (f.proposed_set_size is None or f.resource_set_total is None)):
+                assert not d.allowed
+            if f.blast_radius.executions_affected > 10 or len(set(f.shared_resources)) > 1:
+                assert not d.allowed
             assert d.remediation.action == p.action and d.remediation.gate == p.gate
             if d.allowed and tier == 0:
                 assert f.signature_match and (f.flake_precedent or f.known_transient_rule)
             if d.allowed and tier == 2:
                 assert f.lock_holder == "dead" and f.holder_death_proof
+
+
+RANK = {"allowed": 0, "downgraded": 1, "refused": 2}
+
+
+@pytest.mark.parametrize("incoming", ["downgraded", "refused"])
+def test_incoming_non_allowed_decision_is_never_upgraded(env, incoming: str) -> None:
+    gate, _, _ = env
+    d = gate.decide(prop(0, gate_decision=incoming), facts())
+    assert d.decision == incoming and not d.allowed and d.effective_tier is None
+    # a stronger outcome may replace a weaker one
+    assert gate.decide(prop(0, gate_decision="downgraded"), facts(prior_tier0_failed=True)).decision == "refused"
+    # and a non-allowed proposal consumes no rate-limit budget
+    assert gate.decide(prop(0), facts()).allowed and gate.decide(prop(0), facts()).allowed
+
+
+def test_unknown_incoming_decision_fails_closed(env) -> None:
+    gate, _, _ = env
+    assert gate.decide(prop(0, gate_decision="bogus"), facts()).decision == "refused"
+
+
+@pytest.mark.parametrize("tier", [0, 1, 2])
+def test_missing_set_facts_fail_closed_for_tiers_0_to_2(env, tier: int) -> None:
+    gate, _, _ = env
+    base = dict(lock_holder="dead", holder_death_proof=True, dry_run_ok=True)
+    assert gate.decide(prop(tier), facts(proposed_set_size=None, **base)).decision == "downgraded"
+    assert gate.decide(prop(tier), facts(resource_set_total=None, **base)).decision == "downgraded"
+    assert gate.decide(prop(tier), facts(**base)).allowed
+
+
+def test_tier3_missing_set_facts_still_proceeds_to_pr(env) -> None:
+    gate, _, _ = env
+    assert gate.decide(prop(3), facts(proposed_set_size=None, resource_set_total=None)).allowed
+
+
+@pytest.mark.parametrize("tier", [0, 1, 2, 3])
+def test_rate_limit_two_per_hour_every_tier(env, tier: int) -> None:
+    gate, clock, _ = env
+    ok = dict(lock_holder="dead", holder_death_proof=True, dry_run_ok=True)
+    assert gate.decide(prop(tier), facts(**ok)).allowed
+    clock.now += 600
+    assert gate.decide(prop(tier), facts(**ok)).allowed
+    clock.now += 600
+    d = gate.decide(prop(tier), facts(**ok))
+    assert d.decision == "refused" and "rate limit" in d.reason
+    assert gate.decide(prop(tier), facts(fingerprint="other", **ok)).allowed
+    clock.now += 2400  # first attempt is now exactly one hour old
+    assert gate.decide(prop(tier), facts(**ok)).allowed
+    assert gate.decide(prop(tier), facts(**ok)).decision == "refused"  # new window already holds 2
 
 
 def test_additive_before_subtractive() -> None:

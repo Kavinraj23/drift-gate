@@ -17,6 +17,7 @@ RATE_LIMIT_WINDOW_S = 3600.0
 DEFAULT_ABORT_BLAST_CEILING = 10
 
 Clock = Callable[[], float]
+_RANK = {"allowed": 0, "downgraded": 1, "refused": 2}
 
 
 @dataclass
@@ -120,7 +121,14 @@ class SafetyGate:
 
     def decide(self, proposal: Remediation, facts: GateFacts) -> GateDecision:
         """Return the proposal with a gate decision. Only ever allowed, downgraded or refused."""
+        incoming = proposal.gate_decision
         decision, reason = self._evaluate(proposal, facts)
+        # Downgrade-only by construction: an outcome may only be replaced by a stronger one
+        # (allowed < downgraded < refused). An unknown incoming value fails closed.
+        in_rank = _RANK.get(incoming, _RANK["refused"])
+        if in_rank > _RANK[decision]:
+            decision = incoming if incoming in _RANK else "refused"
+            reason = f"incoming gate decision {incoming!r} is not allowed and is never upgraded"
         if decision == "allowed":
             self._rate.record(facts.fingerprint)
         out = replace(proposal, gate_decision=decision)
@@ -136,7 +144,9 @@ class SafetyGate:
         if p.gate != TIER_GATE[p.tier]:
             return "downgraded", f"gate {p.gate!r} does not match tier {p.tier} ({TIER_GATE[p.tier]!r})"
 
-        # Abort ceiling.
+        # Abort ceiling. Missing set facts fail closed for tiers 0-2; Tier 3's gate is the PR plus reviewer.
+        if p.tier != 3 and (f.proposed_set_size is None or f.resource_set_total is None):
+            return "downgraded", "proposed/total resource set size unknown: abort ceiling cannot be checked"
         if f.proposed_set_size is not None and f.proposed_set_size <= 0:
             return "refused", "empty proposed set"
         if f.proposed_set_size is not None and f.resource_set_total is not None:

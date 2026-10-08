@@ -91,7 +91,11 @@ Build:
     Split M8: M8a (GitHub adapter built and tested against recorded/stubbed HTTP responses, plus the playground scenario workflow files under playground/) and M8b (live: create repo, e2e-live; human-only). Split M9: M9a (eval harness, offline report, README, demo script; autonomous) and M9b (eval-live numbers; human-only).
     Also create PROGRESS.md, BLOCKERS.md (with a "Needs human" section) and IDEAS.md with headers, and a docs/design/ folder.
 
-Then run lint, test, the hook tests, and mvp-check (expected: M0 passes, the rest pending). Show me the output. Commit on mvp1/m0-skeleton, write docs/design/M0.md, and stop for my review.
+Commit once per numbered item above (11 commits on mvp1/m0-skeleton), each with a message naming the item. Do not push.
+
+Subagent models: set `model:` in each agent's frontmatter. reviewer: sonnet. eval: haiku. core, agents, adapters: sonnet.
+
+Then run lint, test, the hook tests, and mvp-check (expected: M0 passes, the rest pending). Show me the output. Write docs/design/M0.md, commit it, and stop for my review.
 ```
 
 ## Step 2: Review M0 (you, about 15 minutes)

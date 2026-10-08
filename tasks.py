@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -13,7 +14,6 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
 NOT_IMPLEMENTED: dict[str, str] = {
-    "data": "M1",
     "baseline": "M3",
     "e2e": "M5",
     "eval": "M9a",
@@ -25,7 +25,7 @@ NOT_IMPLEMENTED: dict[str, str] = {
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
-IMPLEMENTED_MILESTONES: set[str] = {"M0"}
+IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1"}
 
 # Each MVP acceptance check: (name, milestone, command). Mirrors TASKS.md.
 CHECKS: list[tuple[str, str, list[str]]] = [
@@ -59,6 +59,11 @@ def test() -> int:
     return run([PY, "-m", "pytest", "-q"])
 
 
+def data() -> int:
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    return subprocess.run([PY, "-m", "driftgate.generator", "--out", str(ROOT / "data")], cwd=ROOT, env=env).returncode
+
+
 def mvp_check() -> int:
     rows: list[tuple[str, str, str]] = []
     for name, milestone, cmd in CHECKS:
@@ -78,6 +83,7 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "install": install,
     "lint": lint,
     "test": test,
+    "data": data,
     "mvp-check": mvp_check,
 }
 

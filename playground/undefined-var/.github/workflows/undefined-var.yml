@@ -1,0 +1,22 @@
+# Scenario: undefined variable. The workflow expression names an input that the workflow does not declare.
+# Expected: Tier 3 PR fixing the expression (inputs.relase_tag -> inputs.release_tag), PR CI green.
+name: undefined-input
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Tag to check
+        default: v1.0.0
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.relase_tag }}
+    steps:
+      - name: Check release tag
+        run: test -n "$RELEASE_TAG"

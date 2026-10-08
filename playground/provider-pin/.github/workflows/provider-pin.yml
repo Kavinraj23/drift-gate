@@ -1,0 +1,18 @@
+# Scenario: broken provider pin. The version constraint in main.tf matches no release of the null provider.
+# Offline-friendly: the null provider, no cloud account. Expected: Tier 3 PR pinning a working version, PR CI green.
+name: provider-pin
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      - name: Initialise
+        run: tofu init -input=false

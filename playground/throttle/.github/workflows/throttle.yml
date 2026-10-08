@@ -1,0 +1,25 @@
+# Scenario: throttling. The first attempt fails with a throttling error line, the re-run passes.
+# Expected: Tier 0 re-run via the known-transient rule, verified green.
+#
+# UNVERIFIED ERROR TEXT: the PRD requires a throttling line copied verbatim from a real log. The line below is the
+# AWS CLI client-error shape recalled in src/driftgate/generator/error_catalog.json (entry aws_throttling,
+# verified=false), with the operation name and retry count filled in. It must be replaced with a captured real line
+# before M8b (BLOCKERS.md, Needs human).
+name: throttling-canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the API
+        run: |
+          if [ "${{ github.run_attempt }}" = "1" ]; then
+            echo "An error occurred (ThrottlingException) when calling the DescribeStacks operation (reached max retries: 2): Rate exceeded" >&2
+            exit 1
+          fi

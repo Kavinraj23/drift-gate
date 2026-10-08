@@ -157,6 +157,13 @@ class Report:
         return asdict(self)
 
 
+class SourceError(Exception):
+    """An ExecutionSource could not satisfy a request (unknown id, missing file, refused path).
+
+    Messages never contain file or log contents.
+    """
+
+
 class ExecutionSource(Protocol):
     def get_execution(self, execution_id: str) -> Execution: ...
 

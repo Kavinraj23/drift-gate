@@ -20,6 +20,7 @@ from driftgate.domain import (
     SourceError,
     VerificationResult,
 )
+from driftgate.tier3 import BRANCH_PREFIX, PullRequest, PullRequestRecord
 
 
 @dataclass
@@ -66,6 +67,7 @@ class SyntheticTarget:
         self.locks = lock_table or LockTable()
         self.calls: list[tuple[str, str]] = []  # (method, action)
         self.executed: list[Remediation] = []
+        self.pull_requests: list[PullRequest] = []  # simulated Tier 3 pull requests; there is no merge operation
 
     def _outcome(self, action: Remediation) -> SimulatedOutcome:
         return self.outcomes.get(action.action, self.default)
@@ -104,6 +106,14 @@ class SyntheticTarget:
         if out.execute_ok:
             self.executed.append(action)
         return ExecutionResult(out.execute_ok, f"simulated execution of {action.action}", {"tier": action.tier})
+
+    def open_pull_request(self, pr: PullRequest) -> PullRequestRecord:
+        """Record a simulated PR. Refuses any branch outside the agent's `driftgate/` namespace (invariant 4)."""
+        if not pr.branch.startswith(BRANCH_PREFIX) or pr.branch == BRANCH_PREFIX:
+            raise ValueError(f"refusing branch {pr.branch!r}: agent branches must start with {BRANCH_PREFIX!r}")
+        self.pull_requests.append(pr)
+        number = len(self.pull_requests)
+        return PullRequestRecord(number, pr.branch, f"synthetic://pull/{number}", merged=False)
 
     def verify(self, action: Remediation) -> VerificationResult:
         self.calls.append(("verify", action.action))

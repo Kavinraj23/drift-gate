@@ -20,6 +20,7 @@ from typing import Any
 from driftgate.agents.investigator import SUBMIT_REPORT
 from driftgate.domain import ExecutionSource
 from driftgate.eval.ground_truth import FailureLabel
+from driftgate.eval.tier3_scripts import BAD_KINDS, bad_diff
 from driftgate.llm.fake import FakeModel, Scripted
 from driftgate.llm.types import ModelRequest, ModelResponse, ToolCall, Usage
 
@@ -33,6 +34,9 @@ VARIANTS = (
     "overconfident_tier0",  # proposes Tier 0 at confidence 0.99 whatever the facts are
     "ignore_fleet",  # proposes the scenario's fix even though the failure is fleet-wide
 )
+
+#: `diff:<kind>` makes a Tier 3 scenario propose a seeded bad diff (see `tier3_scripts.BAD_KINDS`).
+DIFF_VARIANT_PREFIX = "diff:"
 
 Call = tuple[str, dict[str, Any]]
 
@@ -131,6 +135,7 @@ def _plan(label: FailureLabel, source: ExecutionSource, *, ignore_fleet: bool = 
             "rationale": f"the injected fault is in {path}; a reviewed change fixes it",
             "reversible": True,
             "paths": list(label.fix_paths),
+            "diff": label.fix_diff or "",
         }
         return Plan([base, [logs], [read]], cls, layer, 0.8, rem)
     if tier in (1, 2) and action:
@@ -143,6 +148,15 @@ def _plan(label: FailureLabel, source: ExecutionSource, *, ignore_fleet: bool = 
         return Plan([base, [logs]], cls, layer, 0.7, rem)
     reason = "no deterministic cause and no safe action; a human should look"
     return Plan([base, [("flake_history", {"execution_id": eid})], [logs]], cls, layer, 0.6, None, reason)
+
+
+def _with_bad_diff(plan: Plan, kind: str, label: FailureLabel, source: ExecutionSource) -> Plan:
+    """Swap the Tier 3 proposal's diff and paths for a seeded bad one (unchanged when the kind does not apply)."""
+    seeded = bad_diff(kind, label, source)
+    if seeded is None or plan.remediation is None:
+        raise ValueError(f"bad diff kind {kind!r} does not apply to {label.execution_id}")
+    rem = {**plan.remediation, "diff": seeded.text, "paths": list(seeded.paths)}
+    return Plan(plan.batches, plan.classification, plan.layer, plan.confidence, rem, plan.escalation_reason)
 
 
 def _overconfident(label: FailureLabel) -> Plan:
@@ -188,7 +202,8 @@ def _call_id(execution_id: str, n: int) -> str:
 
 
 def build_script(label: FailureLabel, source: ExecutionSource, variant: str = "correct") -> list[Scripted]:
-    if variant not in VARIANTS:
+    bad_kind = variant.removeprefix(DIFF_VARIANT_PREFIX) if variant.startswith(DIFF_VARIANT_PREFIX) else None
+    if variant not in VARIANTS and bad_kind not in BAD_KINDS:
         raise ValueError(f"unknown variant {variant!r}")
     if label.disposition == "close":
         return []  # governance: the pre-filter closes it, so any model call fails the script
@@ -197,6 +212,8 @@ def build_script(label: FailureLabel, source: ExecutionSource, variant: str = "c
         plan = _overconfident(label)
     else:
         plan = _plan(label, source, ignore_fleet=variant == "ignore_fleet")
+        if bad_kind is not None:
+            plan = _with_bad_diff(plan, bad_kind, label, source)
 
     if variant == "budget_calls":
         calls: list[Call] = [("get_execution", {"execution_id": eid})] * 10

@@ -81,3 +81,34 @@ class InvestigationBudget:
             "cost_usd": sum(c.cost_usd for c in self.calls),
             "latency_s": sum(c.latency_s for c in self.calls),
         }
+
+
+@dataclass
+class BudgetView(InvestigationBudget):
+    """A sub-agent's own small allowance drawn from a shared case budget (used by the Tier 3 reviewer).
+
+    Its own tool-call and token limits bound the sub-agent's loop; every tool call and model call it makes is also
+    charged to `parent`, so the case-wide totals (and the Report `run` rollup) include it and the parent's caps bind
+    it. Exhaustion of either the view or the parent counts as exhausted.
+    """
+
+    parent: InvestigationBudget = field(default_factory=InvestigationBudget)
+
+    @property
+    def tokens_exhausted(self) -> bool:
+        return super().tokens_exhausted or self.parent.tokens_exhausted
+
+    @property
+    def tool_calls_exhausted(self) -> bool:
+        return super().tool_calls_exhausted or self.parent.tool_calls_exhausted
+
+    def consume_tool_call(self) -> bool:
+        with self._lock:
+            if self.tool_calls >= self.limits.max_tool_calls or not self.parent.consume_tool_call():
+                return False
+            self.tool_calls += 1
+            return True
+
+    def add_call(self, record: CallRecord) -> None:
+        super().add_call(record)
+        self.parent.add_call(record)

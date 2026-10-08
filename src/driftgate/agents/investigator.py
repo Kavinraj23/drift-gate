@@ -264,6 +264,10 @@ class Investigator:
             messages.append({"role": "user", "content": blocks})
         return self._abstained(st, "no_report", "turn limit reached without a report")
 
+    def spent(self, execution_id: str, stop: str) -> Investigation:
+        """An already-truncated investigation for a case whose shared budget ran out before this round could start."""
+        return self._truncated(_Run(execution_id, []), stop)
+
     # -- model I/O ---------------------------------------------------------------------------
     def _call(self, messages: list[dict[str, Any]]) -> ModelResponse:
         request = ModelRequest(

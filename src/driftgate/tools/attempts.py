@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 
@@ -32,3 +32,14 @@ class AttemptStore:
 
     def get(self, attempt_id: str) -> RemediationAttempt | None:
         return next((a for a in self._attempts if a.attempt_id == attempt_id), None)
+
+    def update(self, attempt_id: str, **changes: Any) -> RemediationAttempt:
+        """Replace an attempt with a copy carrying `changes` (outcome, verification). The attempt must exist."""
+        for i, a in enumerate(self._attempts):
+            if a.attempt_id == attempt_id:
+                self._attempts[i] = replace(a, **changes)
+                return self._attempts[i]
+        raise KeyError(attempt_id)
+
+    def all(self) -> list[RemediationAttempt]:
+        return list(self._attempts)

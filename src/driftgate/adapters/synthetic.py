@@ -49,6 +49,14 @@ class SimulatedOutcome:
     verified: bool = True
 
 
+def _load_followups(data_dir: Path | str | None) -> dict[str, Any]:
+    """The simulator's world response (rerun results, accepted fix files); only this adapter reads it."""
+    if data_dir is None:
+        return {}
+    path = Path(data_dir) / "world" / "followups.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
 class SyntheticTarget:
     """Outcomes are keyed by action name; unlisted actions use `default`. Records every call.
 
@@ -61,8 +69,12 @@ class SyntheticTarget:
         outcomes: dict[str, SimulatedOutcome] | None = None,
         default: SimulatedOutcome | None = None,
         lock_table: LockTable | None = None,
+        data_dir: Path | str | None = None,
     ) -> None:
         self.outcomes = outcomes or {}
+        self._data_root = Path(data_dir).resolve() if data_dir is not None else None
+        self._followups = _load_followups(data_dir)
+        self.rolled_back: list[Remediation] = []
         self.default = default or SimulatedOutcome()
         self.locks = lock_table or LockTable()
         self.calls: list[tuple[str, str]] = []  # (method, action)
@@ -116,13 +128,45 @@ class SyntheticTarget:
         return PullRequestRecord(number, pr.branch, f"synthetic://pull/{number}", merged=False)
 
     def verify(self, action: Remediation) -> VerificationResult:
+        """Observe the simulated next execution. `action.dry_run["execution_id"]` names the failure it answers.
+
+        Without a dataset (or an execution id) the per-action `SimulatedOutcome.verified` decides, as before.
+        With one, the dataset's follow-up decides: a Tier 0 rerun yields the recorded status (and log text, which
+        is the new evidence for a failed attempt); a Tier 3 CI run on the PR branch is green only when the
+        proposed paths cover every file the correct fix touches. `SimulatedOutcome.verified=False` always wins.
+        """
         self.calls.append(("verify", action.action))
         lock_id = self._lock_id(action)
         if lock_id is not None:
             gone = lock_id not in self.locks.locks
             return VerificationResult(gone and self._outcome(action).verified, "lock table checked")
         out = self._outcome(action)
-        return VerificationResult(out.verified, f"simulated verification of {action.action}")
+        follow = self._followups.get(str(action.dry_run.get("execution_id", "")))
+        if follow is None:
+            return VerificationResult(out.verified, f"simulated verification of {action.action}")
+        if action.tier == 3:
+            accepted = set(follow["fix_applied"]["accepted_files"]) if follow.get("fix_applied") else set()
+            paths = {str(p) for p in action.dry_run.get("paths", [])}
+            green = out.verified and bool(accepted) and accepted <= paths
+            return VerificationResult(
+                green,
+                "CI run on the PR branch is green" if green else "CI run on the PR branch is red",
+                {"ci": "green" if green else "red", "branch": action.dry_run.get("branch")},
+            )
+        rerun = follow["rerun"]
+        passed = out.verified and rerun["status"] == "success"
+        details: dict[str, Any] = {"next_status": "success" if passed else "failed"}
+        if not passed and rerun.get("log") and self._data_root is not None:
+            details["next_log"] = (self._data_root / rerun["log"]).read_text(encoding="utf-8")
+        return VerificationResult(passed, "next execution passed" if passed else "next execution failed again", details)
+
+    def rollback(self, action: Remediation) -> ExecutionResult:
+        """Undo a reversible executed action (simulated; a re-run leaves nothing behind to undo)."""
+        self.calls.append(("rollback", action.action))
+        if not action.reversible:
+            return ExecutionResult(False, "refused: action is not reversible", {})
+        self.rolled_back.append(action)
+        return ExecutionResult(True, f"simulated rollback of {action.action}", {"tier": action.tier})
 
 
 # ---------------------------------------------------------------------------------------------

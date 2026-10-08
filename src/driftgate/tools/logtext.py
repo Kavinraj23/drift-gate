@@ -18,24 +18,39 @@ ERRORISH_RE = re.compile(
 )
 REDACTED = "[REDACTED]"
 
+# Key names whose value is a credential. The name must end with the keyword, so `secretsmanager:Get...` is safe.
+KEYWORDS = (
+    r"(?:password|passwd|pwd|secret|token|credentials?|api[_-]?key|access[_-]?key|"
+    r"(?:secret|private|signing|encryption)[_-]?key)"
+)
+_NOT_YET = r"(?!\[REDACTED\])"
+
 # Credential patterns. Specific shapes first, the generic key=value form last.
 REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), REDACTED),
+    # A bare 40-character AWS secret access key right after its access key id (before the id is redacted).
+    (
+        re.compile(r"(\b(?:AKIA|ASIA)[A-Z0-9]{16}\b[\s,:;'\"=]+)(?<![A-Za-z0-9/+])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+])"),
+        r"\1" + REDACTED,
+    ),
     (re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}\b"), REDACTED),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), REDACTED),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), REDACTED),
     (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b"), REDACTED),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"), REDACTED),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), REDACTED),
-    (re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}"), r"\1 " + REDACTED),
-    (re.compile(r"(?i)(://[^/\s:@]+:)[^/\s@]+(@)"), r"\1" + REDACTED + r"\2"),
     (
-        re.compile(
-            r"(?i)\b((?:aws_)?secret[_-]?access[_-]?key|aws_session_token|password|passwd|"
-            r"(?:api|auth|access|secret)[_-]?(?:key|token)|token|secret|client_secret)"
-            r"(\s*[:=]\s*)(?!\[REDACTED\])[^\s\"',;]+"
-        ),
-        r"\1\2" + REDACTED,
+        re.compile(r"(?i)(\bAuthorization\s*[:=]\s*(?:token|bearer|basic)\s+)" + _NOT_YET + r"[^\s\"',;]+"),
+        r"\1" + REDACTED,
+    ),
+    (re.compile(r"(?i)\b(Bearer|Basic)\s+" + _NOT_YET + r"[A-Za-z0-9._~+/=-]{12,}"), r"\1 " + REDACTED),
+    (re.compile(r"(?i)(://[^/\s:@]+:)[^/\s@]+(@)"), r"\1" + REDACTED + r"\2"),
+    # CLI flag form: --password hunter2, --token x
+    (re.compile(r"(?i)(\s--[\w-]*?" + KEYWORDS + r"\s+)(?!-)" + _NOT_YET + r"[^\s\"',;]+"), r"\1" + REDACTED),
+    # key=value, key: value, "key": "value", with any prefix on the key name (NPM_TOKEN, :_authToken).
+    (
+        re.compile(r"(?i)(\b[\w.-]*" + KEYWORDS + r"[\"']?\s*[:=]\s*[\"']?)" + _NOT_YET + r"[^\s\"',;}]+"),
+        r"\1" + REDACTED,
     ),
 )
 

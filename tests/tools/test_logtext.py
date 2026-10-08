@@ -133,3 +133,42 @@ def test_budget_is_enforced_and_marks_truncation() -> None:
 
 def test_no_error_blocks_for_clean_log() -> None:
     assert error_blocks("all good\nnothing wrong\n") == []
+
+
+def test_redacts_prefixed_quoted_flag_and_header_forms_keeping_key_names() -> None:
+    aws_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEX" + "AMPLEKEY"
+    cases = {
+        "NPM_TOKEN=abc123def456": ("NPM_TOKEN=", "abc123def456"),
+        "DB_PASSWORD=pw123": ("DB_PASSWORD=", "pw123"),
+        "//registry.npmjs.org/:_authToken=npm_abc123def456": ("_authToken=", "npm_abc123def456"),
+        '{"password": "hunter2"}': ('"password"', "hunter2"),
+        "{'api_key':'k3y-value-9'}": ("api_key", "k3y-value-9"),
+        "run deploy --password hunter2 --verbose": ("--password", "hunter2"),
+        "cli login --token x9y8z7": ("--token", "x9y8z7"),
+        "Authorization: token 0123456789abcdef0123456789abcdef01234567": ("Authorization: token", "0123456789abcdef"),
+        "Authorization: Bearer abcdefghijklmnop12345": ("Authorization: Bearer", "abcdefghijklmnop12345"),
+        f"AKIA{'IOSFODNN7EXAMPLE'} {aws_secret}": ("", aws_secret),
+        f"aws_secret_access_key={aws_secret}": ("aws_secret_access_key=", aws_secret),
+        f"secret: {aws_secret}": ("secret:", aws_secret),
+        "AWS_ACCESS_KEY_ID=ASIA" + "IOSFODNN7EXAMPLE": ("AWS_ACCESS_KEY_ID", "ASIAIOSFODNN7EXAMPLE"),
+        "token ghs_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3": ("token", "ghs_a1B2"),
+        "gho_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3": ("", "gho_a1B2"),
+        "ghu_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3": ("", "ghu_a1B2"),
+        "key sk-ant-" + "api03-abcdefghijklmnop1234": ("key", "sk-ant-api03"),
+        "jwt eyJhbGciOiJI.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4": ("jwt", "eyJhbGciOiJI"),
+    }
+    for line, (kept, leaked) in cases.items():
+        out = redact(line)
+        assert "[REDACTED]" in out, line
+        assert leaked not in out, line
+        assert kept in out, line
+
+
+def test_redaction_leaves_every_catalog_line_unchanged() -> None:
+    checked = 0
+    for entry_id in CATALOG.ids():
+        entry = CATALOG[entry_id]
+        for line in (*entry.lines, entry.summary):
+            assert redact(line) == line, (entry_id, line)
+            checked += 1
+    assert checked > 20

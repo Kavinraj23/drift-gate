@@ -1,5 +1,7 @@
 """Deterministic cheapest-first classifier used as the evaluation baseline, with no model calls.
 
+Invariant 3 applies: Tier 0 needs a deterministic signature match AND (flake precedent OR a Tier 0
+known-transient rule).
 Order: status gate (pre-filter) -> signature -> fleet correlation -> flake check. It can only ever
 propose Tier 0 (a re-run); it cannot write a diff, so it escalates every Tier 1-3 case. It reads the
 same tools as the agent, through the same dispatcher.
@@ -83,7 +85,7 @@ def run_baseline(ctx: ToolContext, execution_id: str) -> BaselineResult:
         hypothesis = f"{blast.executions_affected} executions with {d['signature']} share {blast.shared_dimension}"
         reason = f"fleet-wide blast radius ({blast.shared_dimension}); escalate"
         confidence = 0.85
-    elif d["tier0_rule_exists"]:
+    elif d["tier0_rule_exists"] and d["deterministic_match"]:
         remediation = _tier0(f"known-transient rule for {d['signature']}")
         classification = "transient"
         hypothesis = f"{d['signature']} matches a Tier 0 known-transient rule"
@@ -92,11 +94,18 @@ def run_baseline(ctx: ToolContext, execution_id: str) -> BaselineResult:
         flake = calls.call("flake_history")
         precedent = bool(flake.ok and flake.data["precedent"])
         evidence.append(Evidence(flake.source, f"fail-then-pass precedent for fingerprint: {precedent}", "transient"))
-        if precedent:
+        if precedent and d["deterministic_match"]:
             remediation = _tier0("flake precedent for this fingerprint")
             classification = "transient"
             hypothesis = f"{d['signature']} with fail-then-pass history for this fingerprint"
-            confidence = 0.8 if d["deterministic_match"] else 0.6
+            confidence = 0.8
+        elif precedent:
+            # Invariant 3: precedent alone never qualifies for acting; Tier 0 needs a deterministic match too.
+            # The classification still reads the history, only the action is withheld.
+            classification = "transient"
+            hypothesis = f"{d['signature']} has flake precedent but no deterministic signature match"
+            confidence = 0.5
+            reason = "no deterministic signature match; flake precedent alone does not qualify for Tier 0"
         else:
             if d["signature"] == GENERIC_SIGNATURE:
                 # A bare exit code with no precedent: the default reading is a defect in the pipeline's own work.

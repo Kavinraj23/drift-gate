@@ -176,7 +176,12 @@ class SyntheticSource:
         if rel.is_absolute() or ".." in rel.parts or not rel.parts or rel.parts[0] not in AGENT_VISIBLE_ENTRIES:
             raise SourceError(f"path not available: {relative}")
         path = (self._root / rel).resolve()
-        if self._root not in path.parents:
+        # Re-apply the allowlist to the real path, so a symlink into any hidden directory is refused.
+        try:
+            real_parts = path.relative_to(self._root).parts
+        except ValueError:
+            raise SourceError(f"path not available: {relative}") from None
+        if not real_parts or real_parts[0] not in AGENT_VISIBLE_ENTRIES:
             raise SourceError(f"path not available: {relative}")
         return path
 

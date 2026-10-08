@@ -134,3 +134,44 @@ def test_log_budget_truncates(dataset_dir: Path) -> None:
     chunk = src.get_step_logs(s.execution_id, leaf.node_id, 40)
     assert len(chunk.text) == 40 and chunk.truncated
     assert not src.get_step_logs(s.execution_id, leaf.node_id, 10**6).truncated
+
+
+def _visible_copy(dataset_dir: Path, tmp_path: Path) -> Path:
+    visible = tmp_path / "visible"
+    shutil.copytree(dataset_dir, visible, ignore=shutil.ignore_patterns("repos", "logs"))
+    shutil.copytree(dataset_dir / "logs", visible / "logs")
+    shutil.copytree(dataset_dir / "repos", visible / "repos")
+    return visible
+
+
+def test_symlink_to_hidden_dir_inside_allowed_dir_is_refused(dataset_dir: Path, tmp_path: Path) -> None:
+    visible = _visible_copy(dataset_dir, tmp_path)
+    (visible / "ground_truth").mkdir(exist_ok=True)
+    (visible / "ground_truth" / "secret.json").write_text("{}", encoding="utf-8")
+    link = visible / "logs" / "escape"
+    try:
+        link.symlink_to(visible / "ground_truth", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is not permitted for this account; the monkeypatched test covers the escape")
+    src = SyntheticSource(visible)
+    with pytest.raises(SourceError):
+        src._resolve("logs/escape/secret.json")
+
+
+def test_resolved_path_outside_the_allowlist_is_refused(
+    dataset_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simulates a symlink escape: the joined path resolves to a hidden top-level dir of the same root."""
+    visible = _visible_copy(dataset_dir, tmp_path)
+    src = SyntheticSource(visible)
+    hidden = src._root / "ground_truth" / "labels.json"
+    real_resolve = Path.resolve
+
+    def fake_resolve(self: Path, *a: object, **k: object) -> Path:
+        if self.name == "innocent.json":
+            return hidden
+        return real_resolve(self, *a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    with pytest.raises(SourceError):
+        src._resolve("logs/innocent.json")

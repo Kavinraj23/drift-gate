@@ -25,8 +25,8 @@ from typing import Protocol, runtime_checkable
 from driftgate.agents.investigator import Investigation
 from driftgate.agents.reviewer import Reviewer, ReviewRequest, ReviewResult
 from driftgate.diffs import DiffError, StructuredDiff, apply_diff, parse_diff
-from driftgate.domain import Evidence, ExecutionSource, Remediation, Review, RunStats, SourceError
-from driftgate.llm.budget import InvestigationBudget
+from driftgate.domain import Evidence, ExecutionSource, Remediation, Review, SourceError
+from driftgate.llm.budget import BudgetView, InvestigationBudget
 from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
 from driftgate.tools import ToolContext
@@ -293,6 +293,8 @@ def build_pr_description(
 
 
 # -- reviewer hook --------------------------------------------------------------------------------------------
+#: The reviewer's own loop limit; it also draws on the case's shared budget.
+REVIEW_MAX_TOOL_CALLS = 3
 ReviewerModelFactory = Callable[[str, InvestigationBudget], ModelClient]
 
 
@@ -313,11 +315,10 @@ class ReviewerHook:
     ) -> None:
         self._source = source
         self._factory = model_factory
-        self._limits = limits or InvestigationLimits()
+        self._limits = limits or InvestigationLimits(max_tool_calls=REVIEW_MAX_TOOL_CALLS)
         self._model = model
         self._round = 0
         self.results: list[ReviewResult] = []
-        self._pending = RunStats()
 
     def __call__(self, inv: Investigation, rem: Remediation) -> Review:
         report, dry_run = inv.report, rem.dry_run
@@ -331,26 +332,15 @@ class ReviewerHook:
                 files[p] = self._source.read_file(repo, p, ref, MAX_BASE_BYTES).content
             except SourceError:
                 continue
-        budget = InvestigationBudget(self._limits)
+        # The reviewer has its own small allowance, charged to the case's shared budget (investigator, revision,
+        # reviewer and any re-investigation together stay inside the per-investigation caps).
+        budget = BudgetView(self._limits, parent=inv.budget)
         reviewer = Reviewer(self._factory(eid, budget), ToolContext(self._source), budget, model=self._model)
-        result = reviewer.review(ReviewRequest(repo, ref, report.hypothesis, diff_text, files, self._round))
+        result = reviewer.review(ReviewRequest(repo, ref, report.hypothesis, diff_text, files, min(self._round, 1)))
         self._round += 1
         self.results.append(result)
-        stats = budget.run_fields()
-        self._pending = RunStats(
-            tool_calls=self._pending.tool_calls + stats["tool_calls"],
-            input_tokens=self._pending.input_tokens + stats["input_tokens"],
-            output_tokens=self._pending.output_tokens + stats["output_tokens"],
-            cost_usd=self._pending.cost_usd + stats["cost_usd"],
-            latency_s=self._pending.latency_s + stats["latency_s"],
-        )
         return result.review
 
     def reset_round(self) -> None:
-        """Called by the orchestrator at the start of each case so the round counter and usage start clean."""
+        """Called by the orchestrator at the start of a case's first Tier 3 review (no revision yet)."""
         self._round = 0
-        self._pending = RunStats()
-
-    def take_run_stats(self) -> RunStats:
-        stats, self._pending = self._pending, RunStats()
-        return stats

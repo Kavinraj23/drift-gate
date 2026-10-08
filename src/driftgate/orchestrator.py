@@ -196,7 +196,9 @@ class Orchestrator:
         else:  # no round-1 investigation to share with: a fresh budget that still cannot start a third round
             budget = InvestigationBudget(self._limits)
             budget.reinvestigations = 1
-        return self._run_round(first.execution_id, budget, context, rounds=2, precheck=precheck)
+        return self._run_round(
+            first.execution_id, budget, context, rounds=2, precheck=precheck, revisions=first.revisions
+        )
 
     def _run_round(
         self,
@@ -206,9 +208,13 @@ class Orchestrator:
         *,
         rounds: int = 1,
         precheck: Precheck | None = None,
+        revisions: int = 0,
     ) -> Outcome:
         investigator = Investigator(self._model_factory(execution_id, budget), self._ctx, budget, model=self._model)
-        inv = investigator.investigate(execution_id, context)
+        if rounds >= 2 and budget.exhausted:  # the case's allowance is spent: no model call is made, fail closed
+            inv = investigator.spent(execution_id, _spent_stop(budget))
+        else:
+            inv = investigator.investigate(execution_id, context)
         report = inv.report
 
         gate_results, analysis, fleet, problem = self._deterministic_facts(execution_id)
@@ -217,7 +223,15 @@ class Orchestrator:
         if fleet is not None:
             report.blast_radius = BlastRadius(int(fleet["executions_affected"]), str(fleet["shared_dimension"]))
         fingerprint = report.fingerprint or f"unclassified:{execution_id}"
-        out = Outcome(execution_id, ESCALATED, report, investigation=inv, gate_tool_results=gate_results, rounds=rounds)
+        out = Outcome(
+            execution_id,
+            ESCALATED,
+            report,
+            investigation=inv,
+            gate_tool_results=gate_results,
+            rounds=rounds,
+            revisions=revisions,
+        )
 
         self._audit_proposal(inv, fingerprint, None)
         if inv.report.budget_truncated:
@@ -332,14 +346,14 @@ class Orchestrator:
         hook = self._tier3_review
         assert hook is not None and out.investigation is not None
         reset = getattr(hook, "reset_round", None)
-        if callable(reset):
+        if callable(reset) and out.revisions == 0:  # a revision already used in round 1 is not forgotten in round 2
             reset()
         while True:
             check = self._check_diff(out, proposal, rem, fingerprint)
             if not check.ok:
                 return self._escalate(out, fingerprint, f"diff check failed: {check.reason}", "diff_check")
             review = hook(out.investigation, rem)
-            self._add_reviewer_usage(out.report, hook)
+            out.report.run = RunStats(**out.investigation.budget.run_fields())  # reviewer usage is on the shared budget
             out.report.review = review
             if review is not None:
                 self._audit.append(
@@ -398,12 +412,15 @@ class Orchestrator:
         """Send the reviewer's feedback to the investigator once; re-validate and re-gate what comes back."""
         eid = out.execution_id
         self._audit.append("proposal", fingerprint, eid, stage="tier3_revision", feedback=review.comments)
-        budget = InvestigationBudget(self._limits)
+        assert out.investigation is not None
+        budget = out.investigation.budget  # the one case budget: the revision draws on what round 1 left
         investigator = Investigator(self._model_factory(eid, budget), self._ctx, budget, model=self._model)
-        inv = investigator.investigate(eid, revision_context(review.comments, proposal.diff))
+        if budget.exhausted:  # nothing left for a revision: no model call is made, fail closed
+            inv = investigator.spent(eid, _spent_stop(budget))
+        else:
+            inv = investigator.investigate(eid, revision_context(review.comments, proposal.diff))
         report = inv.report
         report.review = out.report.review
-        report.run = _sum_runs(out.report.run, report.run)
         out.report, out.investigation = report, inv
         gate_results, analysis, fleet, problem = self._deterministic_facts(eid)
         if analysis is not None:
@@ -489,12 +506,6 @@ class Orchestrator:
         out.kind = PR_PROPOSED
         out.reason = f"pull request proposed on {branch}; a human reviews and merges"
         return self._after(out)
-
-    @staticmethod
-    def _add_reviewer_usage(report: Report, hook: object) -> None:
-        take = getattr(hook, "take_run_stats", None)
-        if callable(take):
-            report.run = _sum_runs(report.run, take())
 
     def _after(self, out: Outcome) -> Outcome:
         if self._after_execution is not None:
@@ -630,6 +641,10 @@ class Orchestrator:
         )
 
 
+def _spent_stop(budget: InvestigationBudget) -> str:
+    return "budget_tokens" if budget.tokens_exhausted else "budget_tool_calls"
+
+
 def revision_context(feedback: str, previous_diff: str) -> str:
     """Appended to the investigator's first message when the reviewer asks for a revision."""
     return (
@@ -638,16 +653,6 @@ def revision_context(feedback: str, previous_diff: str) -> str:
         f"Your previous diff:\n{previous_diff}\n"
         "Investigate again if you need to, then submit a corrected report with a revised `diff`. "
         "If no safe change exists, propose no remediation."
-    )
-
-
-def _sum_runs(a: RunStats, b: RunStats) -> RunStats:
-    return RunStats(
-        a.tool_calls + b.tool_calls,
-        a.input_tokens + b.input_tokens,
-        a.output_tokens + b.output_tokens,
-        a.cost_usd + b.cost_usd,
-        a.latency_s + b.latency_s,
     )
 
 

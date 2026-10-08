@@ -170,7 +170,7 @@ def _plan(
             "paths": list(label.fix_paths),
             "diff": label.fix_diff or "",
         }
-        return Plan([base, [logs], [read]], cls, layer, 0.8, rem)
+        return Plan([base, [read]], cls, layer, 0.8, rem)  # 3 calls: a revision plus two reviews stay in 8
     if tier in (1, 2) and action:
         rem = {
             "tier": tier,
@@ -332,10 +332,8 @@ def build_reinvestigation_script(label: FailureLabel, source: ExecutionSource, m
     def cid(n: int) -> str:
         return f"toolu_{eid}_r2_{n}"
 
-    base = [
-        ToolCall(cid(0), "get_execution", {"execution_id": eid}),
-        ToolCall(cid(1), "classify_signature", {"execution_id": eid}),
-    ]
+    # One base call (round 1 already read the execution): the whole case, both rounds and the reviewers, shares 8.
+    base = [ToolCall(cid(1), "classify_signature", {"execution_id": eid})]
     script: list[Scripted] = [ModelResponse(tool_calls=base, usage=_usage(0), stop_reason="tool_use")]
     turn = 1
     if mode != "no_read":

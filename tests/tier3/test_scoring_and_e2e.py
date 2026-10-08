@@ -133,7 +133,7 @@ def test_e2e_seeded_bad_diff_shows_as_a_stopped_pr_and_a_mismatch(
     label = pick("user_lockfile_mismatch")
     res = run_scenario(dataset_dir, label, False, variant="diff:wrong_file")
     assert res.row.status == MISMATCH and res.row.pr.startswith("stopped (reject: reviewer verdict reject")
-    assert res.row.model_calls == 4  # the investigator's turns; reviewer usage is rolled into tokens and tool calls
+    assert res.row.model_calls == 3  # the investigator's turns; reviewer usage is rolled into tokens and tool calls
 
 
 def test_e2e_revise_then_approve_recovers(dataset_dir: Path, pick: Callable[..., FailureLabel]) -> None:

@@ -133,14 +133,16 @@ def test_reviewer_usage_is_rolled_into_the_run_stats(run_t3: RunT3, t3_labels: l
     out = run.outcome
     inv = out.investigation
     assert inv is not None
-    reviewer_calls = sum(r.budget.tool_calls for r in run.hook.results)
-    assert reviewer_calls == 1 and out.report.run.tool_calls == inv.budget.tool_calls + reviewer_calls
-    inv_tokens = inv.budget.run_fields()
+    reviewer_calls = sum(r.budget.tool_calls for r in run.hook.results)  # each result's budget is the reviewer's view
+    assert reviewer_calls == 1
+    shared = inv.budget.run_fields()  # reviewer usage is charged to the one case budget, so it is already in here
+    assert out.report.run.tool_calls == shared["tool_calls"] == len(inv.tool_results) + reviewer_calls
     rev_tokens = sum(r.budget.tokens_used for r in run.hook.results)
+    assert rev_tokens > 0
     assert (
-        out.report.run.input_tokens + out.report.run.output_tokens
-        == inv_tokens["input_tokens"] + inv_tokens["output_tokens"] + rev_tokens
+        out.report.run.input_tokens + out.report.run.output_tokens == shared["input_tokens"] + shared["output_tokens"]
     )
+    assert out.report.run.input_tokens + out.report.run.output_tokens >= rev_tokens
 
 
 def test_without_a_reviewer_hook_the_m5_behaviour_is_unchanged(

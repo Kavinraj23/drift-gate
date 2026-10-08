@@ -13,6 +13,7 @@ loop, token exhaustion, and over-confident proposals that deterministic code mus
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -20,7 +21,7 @@ from typing import Any
 from driftgate.agents.investigator import SUBMIT_REPORT
 from driftgate.domain import ExecutionSource
 from driftgate.eval.ground_truth import FailureLabel
-from driftgate.eval.tier3_scripts import BAD_KINDS, bad_diff
+from driftgate.eval.tier3_scripts import BAD_KINDS, SeededDiff, bad_diff
 from driftgate.llm.fake import FakeModel, Scripted
 from driftgate.llm.types import ModelRequest, ModelResponse, ToolCall, Usage
 
@@ -33,6 +34,17 @@ VARIANTS = (
     "budget_tokens",  # a response whose usage exhausts the token budget
     "overconfident_tier0",  # proposes Tier 0 at confidence 0.99 whatever the facts are
     "ignore_fleet",  # proposes the scenario's fix even though the failure is fleet-wide
+    "wrong_paths",  # Tier 3 scenarios: proposes the right action on the wrong file (CI will be red)
+)
+
+#: Second-round behaviours of a re-investigation (see `build_reinvestigation_script`).
+REINVESTIGATION_MODES = (
+    "revise_escalate",  # reads the failed attempt, revises the hypothesis, then does what the label says is right
+    "right_paths",  # reads the failed attempt, then proposes the label's Tier 3 fix
+    "wrong_paths",  # reads the failed attempt, then proposes the wrong file again
+    "repeat_tier0",  # reads the failed attempt, revises, but proposes another Tier 0 re-run
+    "same_hypothesis",  # proposes without revising the hypothesis (code must refuse)
+    "no_read",  # proposes without reading the failed attempt (code must refuse)
 )
 
 #: `diff:<kind>` makes a Tier 3 scenario propose a seeded bad diff (see `tier3_scripts.BAD_KINDS`).
@@ -93,10 +105,20 @@ def _finding(tool: str, d: dict[str, Any]) -> str:
         return f"{d.get('error_block_count')} error blocks in step {d.get('step')!r}"
     if tool == "read_repo_file":
         return f"read {d.get('path')} at {d.get('ref')}"
+    if tool == "get_remediation_attempt":
+        rows = d.get("attempts", [])
+        last = rows[-1] if rows else {}
+        v = last.get("verification", {})
+        return (
+            f"{len(rows)} prior attempt(s); last: Tier {last.get('tier')} {last.get('action')}, outcome "
+            f"{last.get('outcome')}, verified={v.get('verified')}, recurred={v.get('recurred')}"
+        )
     return f"{tool} result"
 
 
-def _plan(label: FailureLabel, source: ExecutionSource, *, ignore_fleet: bool = False) -> Plan:
+def _plan(
+    label: FailureLabel, source: ExecutionSource, *, ignore_fleet: bool = False, wrong_paths: bool = False
+) -> Plan:
     ex = source.get_execution(label.execution_id)
     eid = label.execution_id
     base: list[Call] = [("get_execution", {"execution_id": eid}), ("classify_signature", {"execution_id": eid})]
@@ -126,6 +148,17 @@ def _plan(label: FailureLabel, source: ExecutionSource, *, ignore_fleet: bool = 
         )
         rem = {"tier": 0, "action": action, "rationale": f"re-run the failed job: {why}", "reversible": True}
         return Plan(calls, cls, layer, 0.9, rem)
+    if tier == 3 and action and label.fix_paths and wrong_paths:
+        wrong = _wrong_file_change(label, source)
+        rem = {
+            "tier": 3,
+            "action": action,
+            "rationale": f"a reviewed change to {wrong.paths[0]} fixes it",
+            "reversible": True,
+            "paths": list(wrong.paths),
+            "diff": wrong.text,
+        }
+        return Plan([base, [logs]], cls, layer, 0.7, rem)
     if tier == 3 and action and label.fix_paths:
         path = label.fix_paths[0]
         read: Call = ("read_repo_file", {"repo": ex.pipeline, "path": path, "ref": ex.refs.get("commit", "main")})
@@ -137,7 +170,7 @@ def _plan(label: FailureLabel, source: ExecutionSource, *, ignore_fleet: bool = 
             "paths": list(label.fix_paths),
             "diff": label.fix_diff or "",
         }
-        return Plan([base, [logs], [read]], cls, layer, 0.8, rem)
+        return Plan([base, [read]], cls, layer, 0.8, rem)  # 3 calls: a revision plus two reviews stay in 8
     if tier in (1, 2) and action:
         rem = {
             "tier": tier,
@@ -148,6 +181,14 @@ def _plan(label: FailureLabel, source: ExecutionSource, *, ignore_fleet: bool = 
         return Plan([base, [logs]], cls, layer, 0.7, rem)
     reason = "no deterministic cause and no safe action; a human should look"
     return Plan([base, [("flake_history", {"execution_id": eid})], [logs]], cls, layer, 0.6, None, reason)
+
+
+def _wrong_file_change(label: FailureLabel, source: ExecutionSource) -> SeededDiff:
+    """A well-formed diff to a file the action may change but that does not hold the fault (CI stays red)."""
+    seeded = bad_diff("wrong_file", label, source)
+    if seeded is None:
+        raise ValueError(f"no wrong-file change is defined for {label.execution_id}")
+    return seeded
 
 
 def _with_bad_diff(plan: Plan, kind: str, label: FailureLabel, source: ExecutionSource) -> Plan:
@@ -211,7 +252,7 @@ def build_script(label: FailureLabel, source: ExecutionSource, variant: str = "c
     if variant == "overconfident_tier0":
         plan = _overconfident(label)
     else:
-        plan = _plan(label, source, ignore_fleet=variant == "ignore_fleet")
+        plan = _plan(label, source, ignore_fleet=variant == "ignore_fleet", wrong_paths=variant == "wrong_paths")
         if bad_kind is not None:
             plan = _with_bad_diff(plan, bad_kind, label, source)
 
@@ -266,3 +307,119 @@ def scripted_model(label: FailureLabel, source: ExecutionSource, variant: str = 
 
 
 ScriptFactory = Callable[[FailureLabel, ExecutionSource, str], FakeModel]
+
+
+# ---------------------------------------------------------------------------------------------
+# Second round: the re-investigation script. The failed attempt is read through get_remediation_attempt, so the
+# revised hypothesis is built from what the tool returned, never from the label's description of the failure.
+# ---------------------------------------------------------------------------------------------
+
+_FP_IN_CONTEXT = re.compile(r"Failure fingerprint: (\w+)")
+
+
+def _fingerprint_from(request: ModelRequest) -> str:
+    first = request.messages[0]["content"]
+    m = _FP_IN_CONTEXT.search(first if isinstance(first, str) else "")
+    return m.group(1) if m else "unknown"
+
+
+def build_reinvestigation_script(label: FailureLabel, source: ExecutionSource, mode: str) -> list[Scripted]:
+    if mode not in REINVESTIGATION_MODES:
+        raise ValueError(f"unknown re-investigation mode {mode!r}")
+    eid = label.execution_id
+    ex = source.get_execution(eid)
+
+    def cid(n: int) -> str:
+        return f"toolu_{eid}_r2_{n}"
+
+    # One base call (round 1 already read the execution): the whole case, both rounds and the reviewers, shares 8.
+    base = [ToolCall(cid(1), "classify_signature", {"execution_id": eid})]
+    script: list[Scripted] = [ModelResponse(tool_calls=base, usage=_usage(0), stop_reason="tool_use")]
+    turn = 1
+    if mode != "no_read":
+
+        def read_attempt(request: ModelRequest) -> ModelResponse:
+            call = ToolCall(cid(2), "get_remediation_attempt", {"fingerprint": _fingerprint_from(request)})
+            return ModelResponse(tool_calls=[call], usage=_usage(1), stop_reason="tool_use")
+
+        script.append(read_attempt)
+        turn += 1
+    if mode == "right_paths":
+        ref = ex.refs.get("commit", "main")
+        read = ToolCall(cid(3), "read_repo_file", {"repo": ex.pipeline, "path": label.fix_paths[0], "ref": ref})
+        script.append(ModelResponse(tool_calls=[read], usage=_usage(turn), stop_reason="tool_use"))
+        turn += 1
+
+    remediation: dict[str, Any] | None
+    reason = ""
+    if mode == "right_paths":
+        remediation = {
+            "tier": 3,
+            "action": label.correct_action,
+            "rationale": f"the first change missed the fault in {label.fix_paths[0]}",
+            "reversible": True,
+            "paths": list(label.fix_paths),
+            "diff": label.fix_diff or "",
+        }
+    elif mode == "wrong_paths":
+        wrong = _wrong_file_change(label, source)
+        remediation = {
+            "tier": 3,
+            "action": label.correct_action,
+            "rationale": f"another change, to {wrong.paths[0]}",
+            "reversible": True,
+            "paths": list(wrong.paths),
+            "diff": wrong.text,
+        }
+    elif mode in ("repeat_tier0", "same_hypothesis", "no_read"):
+        remediation = {"tier": 0, "action": "rerun_failed_job", "rationale": "re-run once more", "reversible": True}
+    elif label.correct_tier in (1, 2) and label.correct_action:
+        remediation = {
+            "tier": label.correct_tier,
+            "action": label.correct_action,
+            "rationale": f"{label.correct_action} addresses the platform cause the re-run exposed",
+            "reversible": label.correct_tier == 1,
+        }
+    else:
+        remediation = None
+        reason = "the re-run did not clear the failure and no safe action is supported; a human should look"
+
+    def final(request: ModelRequest) -> ModelResponse:
+        results = _parse_results(request)
+        sig = next((r["data"] for r in results.values() if r["tool"] == "classify_signature"), {})
+        attempt = next((r["data"] for r in results.values() if r["tool"] == "get_remediation_attempt"), None)
+        plan = Plan([], label.true_classification, label.true_layer, 0.7, remediation, reason)
+        data = _report_input(plan, results, "correct")  # the first-round hypothesis formula, unrevised
+        if mode != "same_hypothesis" and attempt is not None:
+            last = (attempt.get("attempts") or [{}])[-1]
+            v = last.get("verification", {})
+            data["hypothesis"] = (
+                f"Revised: the first hypothesis was wrong because the {last.get('action')} attempt did not hold "
+                f"(verified={v.get('verified')}, recurred={v.get('recurred')}); the cause is "
+                f"{sig.get('signature')} in step {sig.get('step')!r}"
+            )
+        return ModelResponse(
+            text="Revised conclusion.",
+            tool_calls=[ToolCall(cid(99), SUBMIT_REPORT, data)],
+            usage=_usage(turn),
+            stop_reason="tool_use",
+        )
+
+    script.append(final)
+    return script
+
+
+def two_round_factory(
+    label: FailureLabel, source: ExecutionSource, first: str = "correct", second: str = "revise_escalate"
+) -> Callable[[str, Any], FakeModel]:
+    """A model factory for `Orchestrator`: the first call builds the first-round model, the second the
+    re-investigation's. Stateful by design (it counts rounds); use a fresh factory per orchestrator."""
+    rounds: list[int] = []
+
+    def factory(_execution_id: str, _budget: Any) -> FakeModel:
+        rounds.append(1)
+        if len(rounds) == 1:
+            return scripted_model(label, source, first)
+        return FakeModel(build_reinvestigation_script(label, source, second))
+
+    return factory

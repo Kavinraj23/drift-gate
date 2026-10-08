@@ -13,6 +13,7 @@ from test_flow import report_model, tier3
 from driftgate.adapters.synthetic import SyntheticSource, SyntheticTarget
 from driftgate.domain import FileContent, Remediation, Review, SourceError
 from driftgate.eval.ground_truth import FailureLabel
+from driftgate.llm.budget import InvestigationBudget
 from driftgate.orchestrator import ESCALATED, PR_PROPOSED
 from driftgate.tier3 import PullRequest, PullRequestRecord, ReviewerHook
 
@@ -103,6 +104,8 @@ def test_the_reviewer_hook_never_reads_protected_or_unsafe_paths(
         raise Stop
 
     class Inv:
+        budget = InvestigationBudget()  # the reviewer is charged to the case's shared budget (M7)
+
         class report:  # noqa: N801
             execution_id = label.execution_id
             hypothesis = "h"

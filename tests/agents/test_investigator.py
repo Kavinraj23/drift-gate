@@ -188,7 +188,7 @@ def test_gateway_failures_abstain_but_missing_fixtures_propagate(run, pick) -> N
 def test_consume_tool_call_is_called_once_per_tool_call(run, pick) -> None:
     label = pick("user_lockfile_mismatch")
     inv = run(label)
-    assert inv.budget.consumed == inv.budget.tool_calls == len(inv.tool_results) == 4
+    assert inv.budget.consumed == inv.budget.tool_calls == len(inv.tool_results) == 3
 
 
 def test_the_ninth_tool_call_is_refused_and_the_run_abstains_with_partial_evidence(run, pick, source) -> None:

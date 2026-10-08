@@ -102,3 +102,20 @@ behaviour. No assertion was changed, deleted or loosened; the new default is cov
    the playground workflows also trigger on `pull_request` (a change to the PRD's "dispatch only")?
 2. Is "refuse every repo string that is not byte-identical to the configured one" the right strictness, given GitHub
    treats owner/repo names case-insensitively?
+
+## Merge notes (mvp1/integration, M0-M7, into this branch)
+
+Conflicts and resolutions:
+
+- `src/driftgate/orchestrator.py`, Tier 3 review step: M8a's `_add_reviewer_usage` (separate reviewer budget) is dropped in favour of M7's shared budget (`out.report.run` is read from `out.investigation.budget`); M8a's fail-closed rule is kept (a reviewer returning `None` becomes `Review("reject", ...)`).
+- `build_synthetic_orchestrator` signature: both `allow_unreviewed_tier3` (default False) and `verification` are kept. The merge also left the `verification` / `install_verification` tail after `build_github_orchestrator`'s return; it was moved back to the end of `build_synthetic_orchestrator`. `build_github_orchestrator` still requires a reviewer and cannot set the unreviewed opt-out.
+- `tasks.py`: `IMPLEMENTED_MILESTONES` is M0..M7 plus M8a. PROGRESS.md and TASKS.md auto-merged (all entries kept; M8a not ticked).
+
+Interactions:
+
+- M7's `Verifier` treats `rollback` as an optional target protocol. `GitHubActionsTarget` has none (a PR cannot be undone and nothing merges), so a failed Tier 3 verification audits "rollback unavailable" and never merges.
+- The reviewer now draws on the case's shared budget, so M8a's `ReviewerHook` needs `inv.budget`.
+
+Test fixture change (no assertion changed): `tests/tier3/test_m8a_followups.py::test_the_reviewer_hook_never_reads_protected_or_unsafe_paths` uses a fake `Inv` that now carries `budget = InvestigationBudget()`, because M7's hook builds a `BudgetView` from it.
+
+Checks after the merge: lint clean; full suite 774 passed, 1 skipped; github+tier3+verify 391 passed; e2e 38 scenarios, 0 mismatch; mvp-check M0..M8a pass, M9a pending.

@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from driftgate.adapters.synthetic import SyntheticSource, SyntheticTarget
+from driftgate.adapters.synthetic import SimulatedOutcome, SyntheticSource, SyntheticTarget
 from driftgate.agents.investigator import Investigation, Investigator, Proposal
 from driftgate.audit import AuditLog, record_decision
 from driftgate.domain import (
@@ -45,6 +45,7 @@ from driftgate.prefilter import prefilter
 from driftgate.remediation_catalog import TIER1_DIMENSION, is_catalog_action
 from driftgate.tools import ToolContext, ToolResult, dispatch
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
+from driftgate.tools.base import FailureAnalyzer
 from driftgate.tools.fleet_correlate import FLEET_MIN_EXECUTIONS
 
 #: SafetyGate's abort ceiling is "blast radius over N executions". N is a human decision (BLOCKERS.md); the
@@ -63,6 +64,7 @@ ESCALATED = "escalated"
 ModelFactory = Callable[[str, InvestigationBudget], ModelClient]
 Tier3Review = Callable[[Investigation, Remediation], Review | None]
 AfterExecution = Callable[["Outcome"], None]
+Precheck = Callable[[Investigation], str]  # M7: a non-empty return refuses the re-investigation's proposal
 
 
 @dataclass
@@ -76,10 +78,18 @@ class Outcome:
     dry_run: DryRunResult | None = None
     execution: ExecutionResult | None = None
     gate_tool_results: list[ToolResult] = field(default_factory=list)
+    # M7 (verification and re-investigation). `rounds` is 2 once a re-investigation ran; `attempt_id` names the
+    # attempt recorded for this outcome; `first_attempt_failed` stays True on the final outcome of a two-round run.
+    attempt_id: str = ""
+    rounds: int = 1
+    verified: bool | None = None
+    first_attempt_failed: bool = False
+    earlier_model_calls: int = 0
+    earlier_tool_call_ids: list[str] = field(default_factory=list)  # round-1 ids that round-1 evidence cites
 
     @property
     def model_calls(self) -> int:
-        return self.investigation.model_calls if self.investigation else 0
+        return self.earlier_model_calls + (self.investigation.model_calls if self.investigation else 0)
 
     @property
     def tool_calls(self) -> int:
@@ -134,6 +144,14 @@ class Orchestrator:
     def audit(self) -> AuditLog:
         return self._audit
 
+    @property
+    def target(self) -> RemediationTarget:
+        return self._target
+
+    @property
+    def analyzer(self) -> FailureAnalyzer:
+        return self._ctx.analyzer
+
     def handle(self, execution_id: str) -> Outcome:
         ex = self._source.get_execution(execution_id)
         pre = prefilter(ex)
@@ -145,9 +163,28 @@ class Orchestrator:
         if ex.status != "failed":
             raise ValueError(f"{execution_id} has status {ex.status!r}; only failed executions are investigated")
 
+        return self._run_round(execution_id, InvestigationBudget(self._limits))
+
+    def reinvestigate(self, first: Outcome, context: str, precheck: Precheck | None = None) -> Outcome:
+        """The single re-investigation round (M7): a fresh investigation of the same execution with `context` (the
+        failed attempt as new evidence) appended to the user message. The round gets its own tool-call and token
+        allowance, carries the reinvestigation count so no third round can start, and goes through the same gate,
+        shared rate limiter, kill switch and abort ceiling as the first. The caller merges the two outcomes."""
         budget = InvestigationBudget(self._limits)
+        budget.reinvestigations = first.investigation.budget.reinvestigations if first.investigation else 1
+        return self._run_round(first.execution_id, budget, context, rounds=2, precheck=precheck)
+
+    def _run_round(
+        self,
+        execution_id: str,
+        budget: InvestigationBudget,
+        context: str = "",
+        *,
+        rounds: int = 1,
+        precheck: Precheck | None = None,
+    ) -> Outcome:
         investigator = Investigator(self._model_factory(execution_id, budget), self._ctx, budget, model=self._model)
-        inv = investigator.investigate(execution_id)
+        inv = investigator.investigate(execution_id, context)
         report = inv.report
 
         gate_results, analysis, fleet, problem = self._deterministic_facts(execution_id)
@@ -156,7 +193,7 @@ class Orchestrator:
         if fleet is not None:
             report.blast_radius = BlastRadius(int(fleet["executions_affected"]), str(fleet["shared_dimension"]))
         fingerprint = report.fingerprint or f"unclassified:{execution_id}"
-        out = Outcome(execution_id, ESCALATED, report, investigation=inv, gate_tool_results=gate_results)
+        out = Outcome(execution_id, ESCALATED, report, investigation=inv, gate_tool_results=gate_results, rounds=rounds)
 
         self._audit_proposal(inv, fingerprint, None)
         if inv.report.budget_truncated:
@@ -167,6 +204,9 @@ class Orchestrator:
                 stop_reason=inv.stop_reason,
                 tool_calls=report.run.tool_calls,
             )
+        if precheck is not None and (why := precheck(inv)):
+            report.remediation = replace(inv.proposal.remediation, gate_decision="refused") if inv.proposal else None
+            return self._escalate(out, fingerprint, why, "reinvestigation")
         if inv.proposal is None or report.abstained:
             return self._escalate(
                 out, fingerprint, report.escalation_reason or "the agent proposed no remediation", "agent"
@@ -191,6 +231,10 @@ class Orchestrator:
         if not decision.allowed:
             return self._escalate(out, fingerprint, decision.reason, "gate")
         return self._act(out, proposal, decision, fingerprint)
+
+    def attach_after_execution(self, hook: AfterExecution) -> None:
+        """Install the M7 hook after construction (it needs the orchestrator it re-enters)."""
+        self._after_execution = hook
 
     # -- steps -------------------------------------------------------------------------------
     def _act(self, out: Outcome, proposal: Proposal, decision: GateDecision, fingerprint: str) -> Outcome:
@@ -220,9 +264,10 @@ class Orchestrator:
             "execution", fingerprint, eid, stage="execute", ok=result.ok, description=result.description, tier=0
         )
         rem.dry_run["execution"] = {"ok": result.ok, "description": result.description}
+        out.attempt_id = f"{eid}:attempt-{len(self.attempts.by_fingerprint(fingerprint)) + 1}"
         self.attempts.add(
             RemediationAttempt(
-                attempt_id=f"{eid}:attempt-{len(self.attempts.by_fingerprint(fingerprint)) + 1}",
+                attempt_id=out.attempt_id,
                 fingerprint=fingerprint,
                 execution_id=eid,
                 tier=0,
@@ -396,6 +441,12 @@ def _count_leaves(node: Any) -> int:
     return sum(_count_leaves(c) for c in node.children)
 
 
+def make_synthetic_target(data_dir: Path | str, *, verified: bool = True) -> RemediationTarget:
+    """A synthetic target backed by the dataset's follow-ups. `verified=False` makes every verification fail, the
+    way a re-run that does not hold would. The one place outside `adapters/` that constructs the target."""
+    return SyntheticTarget(default=SimulatedOutcome(verified=verified), data_dir=data_dir)
+
+
 def build_synthetic_orchestrator(
     data_dir: Path | str,
     model_factory: ModelFactory,
@@ -409,12 +460,18 @@ def build_synthetic_orchestrator(
     model: str = "",
     tier3_review: Tier3Review | None = None,
     after_execution: AfterExecution | None = None,
+    verification: bool = False,
 ) -> Orchestrator:
-    """Wire the synthetic sandbox: SyntheticSource + SyntheticTarget, a fresh rate limiter, audit log and gate."""
+    """Wire the synthetic sandbox: SyntheticSource + SyntheticTarget, a fresh rate limiter, audit log and gate.
+
+    `verification=True` installs the M7 loop (verify the next execution, one re-investigation round) as the
+    `after_execution` hook and gives the default target the dataset's follow-ups. It is opt-in so callers that
+    count target calls (the M5 tests) keep their exact behaviour; `eval/e2e.py` turns it on.
+    """
     gate = SafetyGate(KillSwitch(kill_switch_path), RateLimiter(clock), abort_ceiling)
-    return Orchestrator(
+    orch = Orchestrator(
         SyntheticSource(data_dir),
-        target or SyntheticTarget(),
+        target or SyntheticTarget(data_dir=data_dir if verification else None),
         gate,
         AuditLog(audit_path, clock),
         model_factory,
@@ -423,6 +480,11 @@ def build_synthetic_orchestrator(
         tier3_review=tier3_review,
         after_execution=after_execution,
     )
+    if verification and after_execution is None:
+        from driftgate.verify import install_verification  # local import: verify depends on this module
+
+        install_verification(orch)
+    return orch
 
 
 __all__ = [
@@ -437,4 +499,5 @@ __all__ = [
     "Outcome",
     "branch_name",
     "build_synthetic_orchestrator",
+    "make_synthetic_target",
 ]

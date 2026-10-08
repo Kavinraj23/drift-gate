@@ -17,13 +17,15 @@ import argparse
 import json
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from driftgate.adapters.synthetic import SyntheticSource
 from driftgate.audit import AuditEntry
+from driftgate.domain import RemediationTarget
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth, load_ground_truth
-from driftgate.eval.scripted_agent import scripted_model
+from driftgate.eval.metrics import Case, recovery_rate, recovery_text, remediation_success_rate
+from driftgate.eval.scripted_agent import scripted_model, two_round_factory
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.config import GatewayConfig
 from driftgate.llm.errors import FixtureMissing
@@ -39,7 +41,9 @@ from driftgate.orchestrator import (
     Orchestrator,
     Outcome,
     build_synthetic_orchestrator,
+    make_synthetic_target,
 )
+from driftgate.verify import install_verification
 
 MODES = ("fake", "replay", "auto")
 OK, CONFLICT, MISMATCH, NO_FIXTURE = "ok", "known label conflict", "MISMATCH", "no fixture"
@@ -73,6 +77,8 @@ class Row:
     tool_calls: int
     tokens: int
     note: str = ""
+    rounds: int = 1
+    recovery: str = ""
 
 
 @dataclass
@@ -80,6 +86,7 @@ class ScenarioResult:
     row: Row
     outcome: Outcome | None
     audit: list[AuditEntry] = field(default_factory=list)
+    label: FailureLabel | None = None
 
 
 def expected_text(label: FailureLabel) -> str:
@@ -92,10 +99,10 @@ def actual_text(outcome: Outcome) -> str:
     rem = outcome.report.remediation
     what = f"T{rem.tier} {rem.action}" if rem else ""
     if outcome.kind == ESCALATED:
-        return f"escalated ({outcome.reason[:48]})"
+        return f"escalated ({outcome.reason[:48]})" + (f" after {outcome.rounds} rounds" if outcome.rounds > 1 else "")
     if outcome.kind == CLOSED:
         return "closed (prefilter)"
-    return f"{outcome.kind} {what}"
+    return f"{outcome.kind} {what}" + (" (verified)" if outcome.verified else "")
 
 
 def judge(label: FailureLabel, outcome: Outcome) -> tuple[str, str]:
@@ -144,6 +151,9 @@ def run_scenario(
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}")
     source = SyntheticSource(data_dir)
+    if mode == "fake" and label.first_fix_fails and variant == "correct":
+        # The tempting first fix (re-run the throttled job) and the revised second round.
+        return _run(data_dir, label, held_out, two_round_factory(label, source, "overconfident_tier0"), "fake")
     if mode == "fake":
         return _run(data_dir, label, held_out, lambda _e, _b: scripted_model(label, source, variant), "fake")
     gateway = Gateway(GatewayConfig(), mode="replay", fixtures=FixtureStore(fixtures_dir or DEFAULT_FIXTURES))
@@ -168,32 +178,57 @@ def run_scenario(
     return _run(data_dir, label, held_out, lambda _e, _b: scripted_model(label, source, variant), "fake (no fixture)")
 
 
+class NaiveClassifierOrchestrator(Orchestrator):
+    """TEST DOUBLE for the wrong-first-fix drills. The real gate (correctly) refuses a Tier 0 re-run of a masked
+    state lock: the primary signature, the lock, has no known-transient rule and there is no flake precedent.
+    This subclass pretends the deterministic classifier ranked the throttling first, as the baseline does, so the
+    first fix reaches the target and the verification loop has something to catch. Only the drills use it."""
+
+    def _gate_facts(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        facts = super()._gate_facts(*args, **kwargs)
+        return replace(facts, signature_match=True, known_transient_rule=True)
+
+
+def _build_orchestrator(
+    data_dir: Path,
+    model_factory: Callable[[str, InvestigationBudget], ModelClient],
+    tmp: str,
+    target: RemediationTarget | None,
+    naive: bool,
+) -> Orchestrator:
+    kill = Path(tmp) / "kill_switch.json"
+    kill.write_text(json.dumps(_KILL_SWITCH_ON), encoding="utf-8")
+    common = {"audit_path": Path(tmp) / "audit.jsonl", "clock": StepClock(), "kill_switch_path": kill}
+    if not naive:
+        return build_synthetic_orchestrator(data_dir, model_factory, target=target, verification=True, **common)
+    orch = build_synthetic_orchestrator(data_dir, model_factory, target=target, **common)
+    orch.__class__ = NaiveClassifierOrchestrator  # same wiring, one overridden fact source
+    install_verification(orch)
+    return orch
+
+
 def _run(
     data_dir: Path,
     label: FailureLabel,
     held_out: bool,
     model_factory: Callable[[str, InvestigationBudget], ModelClient],
     model_name: str,
+    *,
+    target: RemediationTarget | None = None,
+    naive: bool = False,
+    drill: Drill | None = None,
 ) -> ScenarioResult:
     with tempfile.TemporaryDirectory(prefix="driftgate-e2e-") as tmp:
-        kill = Path(tmp) / "kill_switch.json"
-        kill.write_text(json.dumps(_KILL_SWITCH_ON), encoding="utf-8")
-        orch: Orchestrator = build_synthetic_orchestrator(
-            data_dir,
-            model_factory,
-            audit_path=Path(tmp) / "audit.jsonl",
-            clock=StepClock(),
-            kill_switch_path=kill,
-        )
+        orch = _build_orchestrator(data_dir, model_factory, tmp, target, naive)
         outcome = orch.handle(label.execution_id)
         audit = orch.audit.read()
-    status, note = judge(label, outcome)
+    status, note = judge(label, outcome) if drill is None else drill.judge(label, outcome)
     row = Row(
-        label.scenario_id or "",
+        drill.drill_id if drill else label.scenario_id or "",
         held_out,
         label.execution_id,
         label.fault_id,
-        expected_text(label),
+        drill.expected if drill else expected_text(label),
         actual_text(outcome),
         status,
         "none" if outcome.kind == CLOSED else model_name,
@@ -201,27 +236,134 @@ def _run(
         outcome.tool_calls,
         outcome.tokens,
         note,
+        outcome.rounds,
+        recovery_text(label, outcome),
     )
-    return ScenarioResult(row, outcome, audit)
+    return ScenarioResult(row, outcome, audit, label)
+
+
+@dataclass(frozen=True)
+class Drill:
+    """A two-round scenario built on a labelled execution: a wrong first fix, then a scripted second round.
+
+    Drills exist because the real gate (correctly) stops most wrong first fixes before they run, which would leave
+    the verification loop untested end to end. Each drill states what a correct end state is."""
+
+    drill_id: str
+    scenario_id: str
+    first: str  # scripted first-round variant
+    second: str  # scripted re-investigation mode
+    expected: str
+    check: Callable[[Outcome], bool]
+    naive: bool = False  # use the naive-classifier gate-facts double
+    verify_fails: bool = False  # the simulated target reports every verification as not verified
+
+    def judge(self, label: FailureLabel, outcome: Outcome) -> tuple[str, str]:
+        return (OK, "") if self.check(outcome) else (MISMATCH, f"expected {self.expected}")
+
+
+def _escalated_after_two_attempts(o: Outcome) -> bool:
+    return o.kind == ESCALATED and o.rounds == 2 and len(o.report.prior_attempts) >= 1 and o.first_attempt_failed
+
+
+DRILLS: tuple[Drill, ...] = (
+    Drill(
+        "d1-wrong-rerun",
+        "sc-11",
+        "overconfident_tier0",
+        "revise_escalate",
+        "re-run fails with the lock error, revised, escalate",
+        _escalated_after_two_attempts,
+        naive=True,
+    ),
+    Drill(
+        "d2-rerun-twice",
+        "sc-29",
+        "overconfident_tier0",
+        "repeat_tier0",
+        "re-run fails, second re-run refused, hard escalate",
+        lambda o: _escalated_after_two_attempts(o) and o.gate is not None and o.gate.decision == "refused",
+        naive=True,
+    ),
+    Drill(
+        "d3-wrong-file",
+        "sc-17",
+        "wrong_paths",
+        "right_paths",
+        "CI red on the wrong file, revised PR green",
+        lambda o: o.kind == PR_PROPOSED and o.rounds == 2 and o.verified is True and len(o.report.prior_attempts) == 2,
+    ),
+    Drill(
+        "d4-wrong-file-twice",
+        "sc-23",
+        "wrong_paths",
+        "wrong_paths",
+        "CI red twice, hard escalate with both attempts",
+        lambda o: _escalated_after_two_attempts(o) and len(o.report.prior_attempts) == 2,
+    ),
+    Drill(
+        "d5-unverified-rerun",
+        "sc-08",
+        "correct",
+        "revise_escalate",
+        "re-run executed but not verified, revised, escalate",
+        _escalated_after_two_attempts,
+        verify_fails=True,
+    ),
+)
+
+
+def run_drill(data_dir: Path, drill: Drill, truth: GroundTruth | None = None) -> ScenarioResult:
+    truth = truth or load_ground_truth(data_dir)
+    label = next(s for s in truth.scenarios() if s.scenario_id == drill.scenario_id)
+    source = SyntheticSource(data_dir)
+    target = make_synthetic_target(data_dir, verified=not drill.verify_fails)
+    factory = two_round_factory(label, source, drill.first, drill.second)
+    return _run(data_dir, label, False, factory, "fake", target=target, naive=drill.naive, drill=drill)
 
 
 def run_all(
-    data_dir: Path, *, mode: str = "fake", fixtures_dir: Path | None = None, truth: GroundTruth | None = None
+    data_dir: Path,
+    *,
+    mode: str = "fake",
+    fixtures_dir: Path | None = None,
+    truth: GroundTruth | None = None,
+    drills: bool = False,
 ) -> list[ScenarioResult]:
     truth = truth or load_ground_truth(data_dir)
     results = []
     for held_out in (False, True):
         for label in truth.scenarios(held_out=held_out):
             results.append(run_scenario(data_dir, label, held_out, mode=mode, fixtures_dir=fixtures_dir))
+    if drills and mode != "replay":  # drills use the scripted fake model; they are not recorded
+        results += [run_drill(data_dir, d, truth) for d in DRILLS]
     return results
 
 
-def format_table(rows: list[Row], mode: str) -> str:
+def loop_metrics(results: list[ScenarioResult]) -> tuple[str, str]:
+    cases: list[Case] = [(r.label, r.outcome) for r in results if r.label is not None and r.outcome is not None]
+    return str(remediation_success_rate(cases)), str(recovery_rate(cases))
+
+
+def format_table(rows: list[Row], mode: str, metrics: tuple[str, str] | None = None) -> str:
     models = sorted({r.model for r in rows})
     header = f"End-to-end scenarios (mode={mode}; model source: {', '.join(models)})"
     if any(m.startswith("fake") for m in models):
         header += "\nThe scripted fake model is a test double: it shows the pipeline works, not how a real model does."
-    cols = ("scenario", "set", "fault", "expected", "actual", "status", "source", "model calls", "tool calls", "tokens")
+    cols = (
+        "scenario",
+        "set",
+        "fault",
+        "expected",
+        "actual",
+        "status",
+        "source",
+        "model calls",
+        "tool calls",
+        "tokens",
+        "rounds",
+        "recovery",
+    )
     body = [
         (
             r.scenario_id,
@@ -234,6 +376,8 @@ def format_table(rows: list[Row], mode: str) -> str:
             str(r.model_calls),
             str(r.tool_calls),
             str(r.tokens),
+            str(r.rounds),
+            r.recovery,
         )
         for r in rows
     ]
@@ -249,6 +393,8 @@ def format_table(rows: list[Row], mode: str) -> str:
         f"model calls {sum(r.model_calls for r in rows)}, tool calls {sum(r.tool_calls for r in rows)}, "
         f"tokens {sum(r.tokens for r in rows)}",
     ]
+    if metrics is not None:
+        lines.append(f"remediation success {metrics[0]}; recovery after a failed first attempt {metrics[1]}")
     notes = sorted({f"{r.status}: {r.note}" for r in rows if r.note and r.status != OK})
     lines += [f"note - {n}" for n in notes]
     return "\n".join(lines)
@@ -260,9 +406,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--mode", choices=MODES, default="fake")
     ap.add_argument("--fixtures", type=Path, default=DEFAULT_FIXTURES)
     args = ap.parse_args(argv)
-    results = run_all(args.data, mode=args.mode, fixtures_dir=args.fixtures)
+    results = run_all(args.data, mode=args.mode, fixtures_dir=args.fixtures, drills=True)
     rows = [r.row for r in results]
-    print(format_table(rows, args.mode))
+    print(format_table(rows, args.mode, loop_metrics(results)))
     return 0 if all(r.status in (OK, CONFLICT) for r in rows) else 1
 
 

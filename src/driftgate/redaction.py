@@ -153,7 +153,8 @@ def _placeholder_tag(text: str) -> str:
     return f"\x00dg{n}:"
 
 
-def redact(text: str) -> str:
+def redact(text: str, *, shield_arns: bool = True) -> str:
+    """Redact credentials. With `shield_arns=False` ARN-looking text gets no free pass (reject-only callers)."""
     shielded: list[str] = []
     tag = _placeholder_tag(text)
 
@@ -161,7 +162,8 @@ def redact(text: str) -> str:
         shielded.append(m.group(0))
         return f"{tag}{len(shielded) - 1}\x00"
 
-    text = ARN_RE.sub(shield, text)
+    if shield_arns:
+        text = ARN_RE.sub(shield, text)
     for pattern, repl in REDACTIONS:
         text = pattern.sub(repl, text)
     text = _LOOSE_KEY.sub(_loose, text)

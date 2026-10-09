@@ -443,3 +443,57 @@ def test_protected_and_pattern_helpers() -> None:
     assert not path_allowed_for("regenerate_lockfile", ".github/workflows/ci.yml")
     assert path_allowed_for("revert_template_bump", ".github/workflows/plan.yml")
     assert not path_allowed_for("not_an_action", "package-lock.json")
+
+
+# --- constructs the scan skips or rewrites before matching: a vendor secret glued to each must still be flagged ----
+_VENDOR_SECRETS = {
+    "slack": "xox" + "b-1234567890-abcdefghijkl",
+    "gitlab": "glp" + "at-" + "abcdefghijklmnopqrst12",
+    "stripe": "sk_" + "live_" + "abcdefghijklmnop1234",
+    "google": "AI" + "za" + "A" * 35,
+    "github_pat": "github_" + "pat_" + "abcdefghijklmnopqrst12",
+    "jwt": "ey" + "Jabcdefghij.abcdefghij.abcdefghij",
+    "npm": "npm_" + "a" * 36,
+    "pypi": "pypi-" + "a" * 55,
+    "github": "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789",
+}
+_GLUE = {
+    "arn_prefix": "arn:aws:s3:::x/{s}",
+    "arn_short": "arn:aws:x:::{s}",
+    "inside_expression": "run: ${{{{ {s} }}}}",
+    "after_expression": "token: ${{{{ secrets.A }}}}{s}",
+    "after_spaced_expression": "token: ${{{{ secrets.A }}}} {s}",
+    "after_shell_ref": "token: ${{X}}{s}",
+    "after_bearer_ref": "Authorization: Bearer ${{X}} {s}",
+    "after_placeholder_free_ref": "password = var.x; other = {s}",
+    "flag_value_dash": "tool --token -{s}",
+    "flag_value_angle": "tool --password <{s}>",
+    "path_like_key": "Pwd=/{s}",
+}
+
+
+@pytest.mark.parametrize("glue", sorted(_GLUE))
+@pytest.mark.parametrize("vendor", sorted(_VENDOR_SECRETS))
+def test_vendor_secret_glued_to_a_skipped_or_rewritten_construct_is_flagged(vendor: str, glue: str) -> None:
+    line = _GLUE[glue].format(s=_VENDOR_SECRETS[vendor])
+    assert find_secret_literals([line]), line
+
+
+def test_plain_arns_are_not_flagged_but_arn_shield_gives_no_free_pass() -> None:
+    assert find_secret_literals(['role_arn = "arn:aws:iam::123456789012:role/deploy"']) == []
+    assert find_secret_literals(["arn:aws:s3:::my-bucket/logs/*"]) == []
+    assert find_secret_literals(['arn = "arn:aws:s3:::x/' + _VENDOR_SECRETS["slack"] + '"'])
+
+
+def test_path_like_and_flag_values_the_log_redactor_ignores_are_flagged_here() -> None:
+    assert find_secret_literals(["DB_PWD=/hunter2hunter2"])
+    assert find_secret_literals(["tool --password -hunter2hunter2"])
+    assert find_secret_literals(["export PWD=/home/runner/work"]) == []
+    assert find_secret_literals(["tool --token --verbose"]) == []
+
+
+def test_log_redaction_still_shields_arns_by_default() -> None:
+    from driftgate.redaction import redact
+
+    arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-db-AbCdEf"
+    assert redact(f"see {arn}") == f"see {arn}"

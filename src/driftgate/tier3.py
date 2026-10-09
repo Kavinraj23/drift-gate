@@ -170,11 +170,24 @@ def _neutralize_whole_value_references(line: str) -> str:
 
     def sub(m: re.Match[str]) -> str:
         ref = m.group("ref")
-        if redact(ref) != ref:
+        if redact(ref, shield_arns=False) != ref:
             return m.group(0)
         return m.group("pre") + REDACTED + m.group("post")
 
     return _AUTH_REF.sub(sub, _URL_REF.sub(sub, _KV_REF.sub(sub, line)))
+
+
+#: Value classes the redaction detectors deliberately skip (they protect logs); a committed file gets no such pass.
+_KW = r"(?:password|passwd|passphrase|secret|token|credentials?|api[_-]?key|access[_-]?key|private[_-]?key)"
+GAP_PATTERNS: tuple[tuple[str, str], ...] = (
+    # `--token -abc`, `--password <abc>`: redaction ignores flag values that begin with `-` or `<`.
+    ("flag credential value", rf"(?i)(?:^|\s)--[\w-]*{_KW}[ =]+(?:-(?!-)|<)\S{{3,}}"),
+    # `DB_PWD=/abc`, `Pwd=~abc`: redaction ignores path-looking values (it protects the shell's own `PWD=/dir`).
+    (
+        "path-like password value",
+        r"(?:\b[\w.-]+_?(?:pwd|PWD)|\bPwd|\bpwd)\s*=\s*(?:[/~\\]|[A-Za-z]:[\\/])[^\s\"',;]{4,}",
+    ),
+)
 
 
 def find_secret_literals(added_lines: Iterable[str]) -> list[str]:
@@ -199,7 +212,10 @@ def find_secret_literals(added_lines: Iterable[str]) -> list[str]:
                 for i, (name, pattern) in enumerate(SECRET_PATTERNS)
                 if re.search(pattern, line if i < _VENDOR_FLOOR else checked)
             ]
-            if not matched and redact(checked) != checked:  # the broad detectors name a line the floor missed
+            matched += [name for name, pattern in GAP_PATTERNS if re.search(pattern, checked)]
+            if (
+                not matched and redact(checked, shield_arns=False) != checked
+            ):  # the broad detectors name a line the floor missed
                 matched = [BROAD_NAME]
         hits.extend(n for n in matched if n not in hits)
     return hits

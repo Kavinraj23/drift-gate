@@ -1,4 +1,6 @@
-"""Credential redaction for everything that can reach a model, a pull request or the audit log.
+"""Credential redaction. Applied at these boundaries: log text and repo file content returned by tools
+(`tools/logtext.py`, `tools/read_repo_file.py`), the Tier 3 pull request title and body (`orchestrator`), and every
+string in an audit entry payload (`AuditLog.append`).
 
 Hand-written patterns, no dependencies. Three layers, applied in order:
 
@@ -29,7 +31,7 @@ _VALUE = r"[^\s\"',;}&]+"  # an unquoted value stops at whitespace, quotes, sepa
 _SP = r"[ \t]*"
 _PFX = r"(?<![A-Za-z0-9])"  # token prefixes must not be glued to a preceding word
 
-ARN_RE = re.compile(r"\barn:aws[\w-]*:[\w-]+:[\w-]*:\d*:[^\s\"',;)\]}>]+")
+ARN_RE = re.compile(r"\barn:aws[\w-]*:[\w-]+:[\w-]*:\d*:[^\s\"',;)\]}>?&=]+")
 
 REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     # PEM / OpenSSH / PGP private key blocks, whole; and an unterminated block (truncated log) to the end.
@@ -142,18 +144,38 @@ def _loose(m: re.Match[str]) -> str:
     return m.group(1) + REDACTED if looks_random(m.group(2)) else m.group(0)
 
 
+def _placeholder_tag(text: str) -> str:
+    """A tag that does not occur in `text`, so a shield placeholder can never collide with input (even NULs)."""
+    n = 0
+    while f"\x00dg{n}:" in text:
+        n += 1
+    return f"\x00dg{n}:"
+
+
 def redact(text: str) -> str:
     shielded: list[str] = []
+    tag = _placeholder_tag(text)
 
     def shield(m: re.Match[str]) -> str:
         shielded.append(m.group(0))
-        return f"\x00{len(shielded) - 1}\x00"
+        return f"{tag}{len(shielded) - 1}\x00"
 
     text = ARN_RE.sub(shield, text)
     for pattern, repl in REDACTIONS:
         text = pattern.sub(repl, text)
     text = _LOOSE_KEY.sub(_loose, text)
-    return re.sub(r"\x00(\d+)\x00", lambda m: shielded[int(m.group(1))], text)
+    return re.sub(re.escape(tag) + r"(\d+)\x00", lambda m: shielded[int(m.group(1))], text)
+
+
+def redact_value(value: object) -> object:
+    """Redact every string inside a JSON-like structure (dict values, list items); other types pass through."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {k: redact_value(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [redact_value(v) for v in value]
+    return value
 
 
 _PEM_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY[A-Z ]*-----")

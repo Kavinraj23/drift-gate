@@ -38,7 +38,7 @@ def env(tmp_path: Path) -> tuple[SafetyGate, FakeClock, Path]:
     clock = FakeClock()
     sw = tmp_path / "kill_switch.json"
     write_switch(sw)
-    return SafetyGate(KillSwitch(sw), RateLimiter(clock)), clock, sw
+    return SafetyGate(KillSwitch(sw), RateLimiter(clock), 10), clock, sw
 
 
 def prop(tier: int = 0, **kw: object) -> Remediation:
@@ -207,7 +207,7 @@ def test_downgrade_only_property(tmp_path: Path) -> None:
     for _ in range(600):
         write_switch(sw, glob=rng.random() > 0.1, tiers={str(t): rng.random() > 0.1 for t in range(4)})
         clock = FakeClock()
-        gate = SafetyGate(KillSwitch(sw), RateLimiter(clock))
+        gate = SafetyGate(KillSwitch(sw), RateLimiter(clock), 10)
         tier = rng.choice([0, 1, 2, 3])
         incoming = rng.choice(list(RANK))
         p = prop(tier, gate=rng.choice([TIER_GATE[tier], "auto", "pull_request"]), gate_decision=incoming)

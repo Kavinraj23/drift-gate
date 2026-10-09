@@ -106,7 +106,7 @@ def test_record_decision_writes_audit_entry(tmp_path: Path) -> None:
 
     sw = tmp_path / "ks.json"
     sw.write_text('{"global": true, "tiers": {"0": true, "1": true, "2": true, "3": true}}')
-    gate = SafetyGate(KillSwitch(sw), RateLimiter(lambda: 1.0))
+    gate = SafetyGate(KillSwitch(sw), RateLimiter(lambda: 1.0), 10)
     log = AuditLog(tmp_path / "a.jsonl", lambda: 5.0)
     facts = GateFacts(
         "fp",

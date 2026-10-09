@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import PurePosixPath
 from typing import Protocol, runtime_checkable
@@ -30,6 +30,7 @@ from driftgate.llm.budget import BudgetView, InvestigationBudget
 from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
 from driftgate.tools import ToolContext
+from driftgate.tools.redaction import redact
 
 BRANCH_PREFIX = "driftgate/"
 PR_BASE_BRANCH = "main"
@@ -246,6 +247,21 @@ class PullRequestRecord:
     url: str
     merged: bool = False  # always False: nothing in DriftGate can merge
     simulated: bool = True  # False only for a pull request that really exists on a provider
+
+
+def redact_pull_request(pr: PullRequest) -> PullRequest:
+    """The single choke point for outgoing Tier 3 text: title, body, the model-authored diff and file contents.
+
+    Every pull request is passed through here before any target sees it. The commit message is derived from the
+    (validated) path by the target, so it carries no free text.
+    """
+    return replace(
+        pr,
+        title=redact(pr.title),
+        body=redact(pr.body),
+        diff_text=redact(pr.diff_text),
+        files=tuple((path, redact(content)) for path, content in pr.files),
+    )
 
 
 @runtime_checkable

@@ -14,7 +14,6 @@ TIER_GATE = {0: "auto", 1: "single_approval", 2: "dual_approval", 3: "pull_reque
 DEFAULT_KILL_SWITCH_PATH = Path(__file__).resolve().parents[2] / "config" / "kill_switch.json"
 RATE_LIMIT_MAX = 2
 RATE_LIMIT_WINDOW_S = 3600.0
-DEFAULT_ABORT_BLAST_CEILING = 10
 
 Clock = Callable[[], float]
 _RANK = {"allowed": 0, "downgraded": 1, "refused": 2}
@@ -114,7 +113,7 @@ class SafetyGate:
         self,
         kill_switch: KillSwitch,
         rate_limiter: RateLimiter,
-        abort_blast_ceiling: int = DEFAULT_ABORT_BLAST_CEILING,
+        abort_blast_ceiling: int,  # required: the caller must resolve policy (policy.load_policy fails closed)
     ) -> None:
         self._kill = kill_switch
         self._rate = rate_limiter

@@ -875,6 +875,28 @@
    "keep": [
     "SESSION_KEY="
    ]
+  },
+  {
+   "id": "arn_then_presigned_signature",
+   "template": "GET arn:aws:s3:::b/k?X-Amz-Signature={S0}&token={S1} 403",
+   "secrets": [
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "abc"
+   ],
+   "keep": [
+    "arn:aws:s3:::b/k?X-Amz-Signature=",
+    "&token="
+   ]
+  },
+  {
+   "id": "arn_then_secret_param",
+   "template": "see arn:aws:s3:::bucket/key?password={S0} for details",
+   "secrets": [
+    "hunter2hunter2"
+   ],
+   "keep": [
+    "arn:aws:s3:::bucket/key?password="
+   ]
   }
  ],
  "no_false_positives": [

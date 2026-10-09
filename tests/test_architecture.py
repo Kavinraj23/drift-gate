@@ -59,6 +59,72 @@ def test_agents_and_tools_do_not_import_remediation_targets(sub: str) -> None:
     assert offenders == []
 
 
+LIVE = "eval/live.py"
+ENV_READERS = {"llm/config.py", "adapters/github_client.py", LIVE}
+ENV_NAMES = {"load_dotenv", "dotenv_values", "getenv", "environ"}
+
+
+def _rel(p: Path) -> str:
+    return p.relative_to(SRC).as_posix()
+
+
+def _names(path: Path) -> set[str]:
+    """Every identifier or attribute name used in code (docstrings and comments excluded)."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Name):
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            found.add(node.attr)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            found |= {a.name.split(".")[-1] for a in node.names}
+            if isinstance(node, ast.ImportFrom) and node.module:
+                found.add(node.module.split(".")[0])
+    return found
+
+
+def test_only_live_builds_a_live_or_record_gateway() -> None:
+    """Every `Gateway(...)` outside the gateway module itself passes the literal mode "replay", except in live.py."""
+    offenders = []
+    for p in _py_files():
+        if _rel(p) in ("llm/gateway.py", LIVE):
+            continue
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if (isinstance(f, ast.Name) and f.id == "Gateway") or (
+                isinstance(f, ast.Attribute) and f.attr == "Gateway"
+            ):
+                modes = [k.value for k in node.keywords if k.arg == "mode"]
+                ok = len(modes) == 1 and isinstance(modes[0], ast.Constant) and modes[0].value == "replay"
+                if not ok:
+                    offenders.append((_rel(p), node.lineno))
+    assert offenders == []
+
+
+def test_only_tasks_py_references_eval_live() -> None:
+    offenders = []
+    for p in _py_files():
+        if _rel(p) == LIVE:
+            continue
+        text = p.read_text(encoding="utf-8")
+        if "eval.live" in text or "eval import live" in text or any(n.endswith("eval.live") for n in _imports(p)):
+            offenders.append(_rel(p))
+    assert offenders == []
+    tasks = SRC.parent.parent / "tasks.py"
+    assert "driftgate.eval.live" in tasks.read_text(encoding="utf-8")  # the one allowed caller really exists
+
+
+def test_credential_and_env_loading_is_confined() -> None:
+    env_offenders = [_rel(p) for p in _py_files() if _rel(p) not in ENV_READERS and _names(p) & ENV_NAMES]
+    assert env_offenders == []
+    config_offenders = [
+        _rel(p) for p in _py_files() if _rel(p) not in ("llm/config.py", LIVE) and "load_config" in _names(p)
+    ]
+    assert config_offenders == []
+
+
 def test_network_is_blocked_in_tests() -> None:
     with pytest.raises(RuntimeError, match="network access is blocked"):
         socket.create_connection(("127.0.0.1", 9))

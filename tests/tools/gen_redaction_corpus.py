@@ -434,6 +434,19 @@ add(
 add("tf_var_password", "TF_VAR_db_password={S0}", ["Fake_Tf_Passw0rd_01"], ["TF_VAR_db_password="])
 add("session_key_env", "SESSION_KEY={S0}", ["fakeSessionKeyValue0123"], ["SESSION_KEY="])
 
+add(
+    "arn_then_presigned_signature",
+    "GET arn:aws:s3:::b/k?X-Amz-Signature={S0}&token={S1} 403",
+    ["0123456789abcdef" * 4, "abc"],
+    ["arn:aws:s3:::b/k?X-Amz-Signature=", "&token="],
+)
+add(
+    "arn_then_secret_param",
+    "see arn:aws:s3:::bucket/key?password={S0} for details",
+    ["hunter2hunter2"],
+    ["arn:aws:s3:::bucket/key?password="],
+)
+
 nofp = [
     "commit 3a4f5b6c7d8e9f001122334455667788aabbccdd",
     "HEAD is now at 0123456789abcdef0123456789abcdef01234567 fix lockfile",

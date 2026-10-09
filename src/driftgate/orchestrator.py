@@ -55,6 +55,7 @@ from driftgate.tier3 import (
     build_pr_description,
     check_diff,
     is_protected,
+    redact_pull_request,
 )
 from driftgate.tools import ToolContext, ToolResult, dispatch
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
@@ -502,15 +503,17 @@ class Orchestrator:
         if not checked or len(checked) != len(check.new_contents):
             return self._escalate(out, fingerprint, "no checked file contents to commit", "diff_check")
         rem.dry_run["execution_id"] = eid
-        pr = PullRequest(
-            branch,
-            ex.refs.get("branch", PR_BASE_BRANCH),
-            title,
-            body,
-            proposal.diff,
-            proposal.paths,
-            files=checked,
-            base_sha=commit if _SHA.fullmatch(commit) else "",
+        pr = redact_pull_request(
+            PullRequest(
+                branch,
+                ex.refs.get("branch", PR_BASE_BRANCH),
+                title,
+                body,
+                proposal.diff,
+                proposal.paths,
+                files=checked,
+                base_sha=commit if _SHA.fullmatch(commit) else "",
+            )
         )
         record: PullRequestRecord | None = None
         if isinstance(self._target, PullRequestTarget):
@@ -525,7 +528,7 @@ class Orchestrator:
             "number": record.number if record else None,
             "url": record.url if record else None,
             "merged": False,
-            "description": body,
+            "description": pr.body,
         }
         self._audit.append(
             "execution",

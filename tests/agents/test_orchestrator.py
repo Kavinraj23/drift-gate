@@ -439,3 +439,32 @@ def test_the_model_is_only_offered_read_only_tools_and_the_report_tool() -> None
         "submit_report",
     }
     assert not any(any(w in n for w in ("execute", "rerun", "merge", "delete", "unlock")) for n in names)
+
+
+def test_tier3_pull_request_title_and_body_are_redacted(make_orch: MakeOrch, pick) -> None:
+    label = pick("user_lockfile_mismatch")
+    target = SyntheticTarget()
+    orch = make_orch(label, target=target, tier3_review=lambda inv, rem: Review("approve", "ok"))
+    secret = "ghp_" + "a1B2c3D4e5" * 4
+    original = orch._model_factory
+
+    def factory(eid: str, budget: object) -> FakeModel:  # type: ignore[no-untyped-def]
+        model = original(eid, budget)
+        real = model.complete
+
+        def complete(request):  # type: ignore[no-untyped-def]
+            resp = real(request)
+            for call in resp.tool_calls:
+                if call.name == SUBMIT_REPORT and "remediation" in call.input:
+                    call.input["remediation"]["rationale"] = f"use token {secret} to fix"
+            return resp
+
+        model.complete = complete  # type: ignore[method-assign]
+        return model
+
+    orch._model_factory = factory
+    out = orch.handle(label.execution_id)
+    assert out.kind == PR_PROPOSED
+    pr = out.pull_request
+    assert pr is not None
+    assert secret not in pr.body and secret not in pr.title and "[REDACTED]" in pr.body

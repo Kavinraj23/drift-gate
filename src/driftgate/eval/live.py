@@ -1,7 +1,9 @@
 """HUMAN-RUN live entry points: `python tasks.py record` and `python tasks.py eval-live`.
 
-This is the only module that builds a Gateway in live or record mode or calls `load_config()` (an architecture test
-enforces it, and that nothing but `tasks.py` references this module). Offline targets (`e2e`, `eval`, `mvp-check`),
+This is the only module that builds a Gateway in live or record mode, and the only one (besides `llm/config.py`
+itself) that calls `load_config()`; it also reads the two model names via `dotenv_values` for `--estimate`. The other
+env reader is `adapters/github_client.py`. An architecture test enforces all of this, and that nothing but
+`tasks.py` references this module. Offline targets (`e2e`, `eval`, `mvp-check`),
 the tests and every default never reach it. Nothing is read from the environment or `.env` at import time.
 
     python tasks.py record --estimate            # no network, no key: token and cost estimate, ledger status
@@ -11,9 +13,10 @@ the tests and every default never reach it. Nothing is read from the environment
     python tasks.py eval-live --yes-spend
 
 Safeguards: nothing calls the API without `--yes-spend`; `--estimate` builds no gateway and never touches the key
-(only the model names are taken from `.env`); `record` stops at a cumulative `--cap-usd`; the gateway itself fails fast
-past the $2.50 lifetime and $1.00 daily caps; `eval-live` keeps a reserve; errors are scrubbed of the key before
-printing.
+(only the model names are taken from `.env`); `record` stops at a cumulative `--cap-usd`, checked before each
+scenario (estimate) and before every model call inside a scenario (real cost so far), so one scenario cannot silently
+overshoot it by more than one call; the residual backstop is the gateway, which fails fast past the $2.50 lifetime
+and $1.00 daily caps; `eval-live` keeps a reserve; errors are scrubbed of the key before printing.
 """
 
 from __future__ import annotations
@@ -243,11 +246,13 @@ class _ErrorSpy:
     """Notes gateway failures that mean a run is unusable (spend cap, retries exhausted); per-investigation token
     exhaustion is normal and is not one of them."""
 
-    def __init__(self, inner: ModelClient, errors: list[GatewayError]) -> None:
-        self._inner, self._errors = inner, errors
+    def __init__(self, inner: ModelClient, errors: list[GatewayError], guard: Callable[[], None] | None = None) -> None:
+        self._inner, self._errors, self._guard = inner, errors, guard
 
     def complete(self, request: ModelRequest) -> ModelResponse:
         try:
+            if self._guard:
+                self._guard()  # mid-scenario cumulative spend check, before the next gateway call
             return self._inner.complete(request)
         except FATAL as exc:
             self._errors.append(exc)
@@ -271,13 +276,30 @@ def _model_label(config: GatewayConfig) -> str:
 
 
 def _run_one(
-    gateway: Gateway, data_dir: Path, label: FailureLabel, held_out: bool, config: GatewayConfig, state: RunState
+    gateway: Gateway,
+    data_dir: Path,
+    label: FailureLabel,
+    held_out: bool,
+    config: GatewayConfig,
+    state: RunState,
+    limit_usd: float | None = None,
 ) -> tuple[ScenarioResult | None, float, int]:
-    """Run one scenario through the gateway. Returns (result or None if unusable, real cost, model calls)."""
+    """Run one scenario through the gateway. Returns (result or None if unusable, real cost, model calls).
+
+    `limit_usd` is the run-wide spend limit: before every model call, spend so far (earlier scenarios plus this
+    scenario's recorded calls) at or past it raises BudgetExceeded, which the spy records as a gateway failure."""
     before = len(gateway.calls)
     errors: list[GatewayError] = []
+
+    def guard() -> None:
+        if limit_usd is None:
+            return
+        spent = state.cumulative_usd + sum(c.cost_usd for c in gateway.calls[before:])
+        if spent >= limit_usd:
+            raise BudgetExceeded("run cap", limit_usd, spent, 0.0)
+
     result = e2e.run_with_gateway(
-        data_dir, label, held_out, gateway, _model_label(config), wrap_client=lambda c: _ErrorSpy(c, errors)
+        data_dir, label, held_out, gateway, _model_label(config), wrap_client=lambda c: _ErrorSpy(c, errors, guard)
     )
     new = gateway.calls[before:]
     cost = sum(c.cost_usd for c in new)
@@ -347,7 +369,7 @@ def run_record(
             state.stopped = f"stopped before {sid}: {why}"
             break
         try:
-            result, cost, calls = _run_one(gateway, data_dir, label, held_out, config, state)
+            result, cost, calls = _run_one(gateway, data_dir, label, held_out, config, state, args.cap_usd)
         except Exception as exc:  # SDK or transport failure: report it (scrubbed) and stop
             state.stopped = f"error in {sid}: {type(exc).__name__}: {scrub(str(exc), config.api_key)}"
             break
@@ -420,7 +442,8 @@ def run_eval_live(
                 print(f"{sid}: not run ({why})", file=out)
                 continue
         try:
-            result, cost, calls = _run_one(gateway, args.data, label, held_out, config, state)
+            limit = min(cap, status.lifetime_remaining - args.reserve_usd, status.daily_remaining)
+            result, cost, calls = _run_one(gateway, args.data, label, held_out, config, state, limit)
         except Exception as exc:
             print(f"{sid}: error {type(exc).__name__}: {scrub(str(exc), config.api_key)}", file=out)
             state.skipped.append(sid)

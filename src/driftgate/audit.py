@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from driftgate.tools.redaction import redact_value
+
 if TYPE_CHECKING:
     from driftgate.gates import GateDecision
 
@@ -44,7 +46,8 @@ class AuditLog:
     def append(self, kind: str, fingerprint: str, execution_id: str, **payload: Any) -> AuditEntry:
         if kind not in KINDS:
             raise ValueError(f"unknown audit kind {kind!r}")
-        entry = AuditEntry(self._seq, self._clock(), kind, fingerprint, execution_id, payload)
+        safe = {k: redact_value(v) for k, v in payload.items()}  # free text never lands in the log with a credential
+        entry = AuditEntry(self._seq, self._clock(), kind, fingerprint, execution_id, safe)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(asdict(entry), default=str, sort_keys=True)
         with self.path.open("a", encoding="utf-8") as fh:

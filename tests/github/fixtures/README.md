@@ -1,5 +1,11 @@
 # GitHub REST fixtures: hand-written stubs
 
+**Real captures:** `real_rejected_run.json` (trimmed: actor and repository URL blocks removed) and
+`real_rejected_jobs.json` (verbatim) were fetched from the public playground, run 37990687614, on 2026-10-09. They
+show how GitHub reports a rejected environment deployment: job `conclusion: failure`, `steps: []`, `runner_id: 0`,
+`runner_name: ""`. The annotation text was read from the run page: "The deployment was rejected or didn't satisfy
+other protection rules." Everything else below is still a hand-written stub.
+
 Every file here was **written by hand** to match the documented shapes of the GitHub REST API (workflow runs, run
 attempts, jobs and steps, contents, git refs, pull requests, issue comments, rate-limit errors). None was recorded
 from the live API. They exist so `tests/github` can run offline.

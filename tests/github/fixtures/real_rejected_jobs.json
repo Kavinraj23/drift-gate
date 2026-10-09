@@ -1,0 +1,32 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 114023792533,
+      "run_id": 37990687614,
+      "workflow_name": "approval-rejected",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/Kavinraj23/drift-gate-playground/actions/runs/37990687614",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOVC-nY88AAAAajFj_lQ",
+      "head_sha": "bffa535e6dbc9812ccf791835973d15335bf276c",
+      "url": "https://api.github.com/repos/Kavinraj23/drift-gate-playground/actions/jobs/114023792533",
+      "html_url": "https://github.com/Kavinraj23/drift-gate-playground/actions/runs/37990687614/job/114023792533",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-10-09T21:00:07Z",
+      "started_at": "2026-10-09T21:00:07Z",
+      "completed_at": "2026-10-09T21:00:21Z",
+      "name": "deploy",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/Kavinraj23/drift-gate-playground/check-runs/114023792533",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 0,
+      "runner_name": "",
+      "runner_group_id": 0,
+      "runner_group_name": ""
+    }
+  ]
+}

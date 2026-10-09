@@ -145,7 +145,7 @@ class GitHubActionsSource:
 
     @staticmethod
     def _rejected_before_start(jobs: list[dict[str, Any]]) -> bool:
-        """UNVERIFIED heuristic: every job failed without ever getting a runner or running a step."""
+        """Fits one real rejected run (tests/github/fixtures/real_rejected_*.json): no runner, no steps, failure."""
         return bool(jobs) and all(
             j.get("conclusion") == "failure" and not j.get("steps") and not j.get("runner_id") for j in jobs
         )

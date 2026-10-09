@@ -1,0 +1,33 @@
+{
+  "id": 37990687614,
+  "name": "approval-rejected",
+  "head_branch": "main",
+  "head_sha": "bffa535e6dbc9812ccf791835973d15335bf276c",
+  "path": ".github/workflows/approval-rejected.yml",
+  "display_title": "approval-rejected",
+  "run_number": 1,
+  "event": "workflow_dispatch",
+  "status": "completed",
+  "conclusion": "failure",
+  "workflow_id": 380027678,
+  "check_suite_id": 102939275921,
+  "url": "https://api.github.com/repos/Kavinraj23/drift-gate-playground/actions/runs/37990687614",
+  "html_url": "https://github.com/Kavinraj23/drift-gate-playground/actions/runs/37990687614",
+  "pull_requests": [],
+  "created_at": "2026-10-09T21:00:02Z",
+  "updated_at": "2026-10-09T21:00:30Z",
+  "run_attempt": 1,
+  "referenced_workflows": [],
+  "run_started_at": "2026-10-09T21:00:02Z",
+  "jobs_url": "https://api.github.com/repos/Kavinraj23/drift-gate-playground/actions/runs/37990687614/jobs",
+  "logs_url": "https://api.github.com/repos/Kavinraj23/drift-gate-playground/actions/runs/37990687614/logs",
+  "rerun_url": "https://api.github.com/repos/Kavinraj23/drift-gate-playground/actions/runs/37990687614/rerun",
+  "previous_attempt_url": null,
+  "workflow_url": "https://api.github.com/repos/Kavinraj23/drift-gate-playground/actions/workflows/380027678",
+  "head_commit": {
+    "id": "bffa535e6dbc9812ccf791835973d15335bf276c",
+    "tree_id": "2aa79f08bce07ed94d639d00aaacf1bd9397beb1",
+    "message": "playground: workflows on main so Actions lists them",
+    "timestamp": "2026-10-09T20:57:48Z"
+  }
+}

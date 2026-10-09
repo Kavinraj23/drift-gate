@@ -6,13 +6,13 @@ import json
 from pathlib import Path
 
 import pytest
+from tests.gates.test_gates import FakeClock, facts, prop, write_switch
 
 from driftgate.audit import AuditLog, record_decision
 from driftgate.domain import BlastRadius
 from driftgate.gates import KillSwitch, RateLimiter, SafetyGate
 from driftgate.orchestrator import FLEET_ABORT_CEILING, build_synthetic_orchestrator
 from driftgate.policy import DEFAULT_POLICY_PATH, STRICTEST_ABORT_CEILING, load_policy
-from tests.gates.test_gates import FakeClock, facts, prop, write_switch
 
 
 def write_policy(path: Path, value: object) -> Path:
@@ -81,7 +81,12 @@ def test_ceiling_is_recorded_in_the_audit_decision_record(tmp_path: Path) -> Non
 def test_orchestrator_sources_n_from_policy_file(dataset_dir: Path, tmp_path: Path, kill_file: Path) -> None:
     def build(**kw: object):  # type: ignore[no-untyped-def]
         return build_synthetic_orchestrator(
-            dataset_dir, lambda _e, _b: None, audit_path=tmp_path / "a.jsonl", clock=FakeClock(), kill_switch_path=kill_file, **kw  # type: ignore[arg-type,return-value]
+            dataset_dir,
+            lambda _e, _b: None,
+            audit_path=tmp_path / "a.jsonl",
+            clock=FakeClock(),
+            kill_switch_path=kill_file,
+            **kw,  # type: ignore[arg-type,return-value]
         )
 
     assert build()._gate._ceiling == 2

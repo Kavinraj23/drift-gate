@@ -43,6 +43,7 @@ from driftgate.gates import DEFAULT_KILL_SWITCH_PATH, GateDecision, GateFacts, K
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
+from driftgate.policy import DEFAULT_POLICY_PATH, load_policy
 from driftgate.prefilter import prefilter
 from driftgate.remediation_catalog import TIER1_DIMENSION, is_catalog_action
 from driftgate.tier3 import (
@@ -55,7 +56,6 @@ from driftgate.tier3 import (
     check_diff,
     is_protected,
 )
-from driftgate.policy import DEFAULT_POLICY_PATH, load_policy
 from driftgate.tools import ToolContext, ToolResult, dispatch
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
 from driftgate.tools.base import FailureAnalyzer

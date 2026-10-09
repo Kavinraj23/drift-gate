@@ -1,0 +1,905 @@
+{
+ "_comment": "Every secret below is FAKE: built from repeated patterns in the correct real-world format so detectors fire. None is, or was ever, a real credential. Placeholders {S0},{S1} in a template are replaced by the matching entry in secrets.",
+ "cases": [
+  {
+   "id": "aws_akid_env",
+   "template": "Run terraform apply\nAWS_ACCESS_KEY_ID={S0}\nAWS_REGION=us-east-1",
+   "secrets": [
+    "AKIAABCDABCDABCDABCD"
+   ],
+   "keep": [
+    "AWS_ACCESS_KEY_ID=",
+    "AWS_REGION=us-east-1"
+   ]
+  },
+  {
+   "id": "aws_secret_env",
+   "template": "export AWS_SECRET_ACCESS_KEY={S0}\nterraform init",
+   "secrets": [
+    "aBcDeFgHiJaBcDeFgHiJaBcDeFgHiJaBcDeFgHiJ"
+   ],
+   "keep": [
+    "export AWS_SECRET_ACCESS_KEY=",
+    "terraform init"
+   ]
+  },
+  {
+   "id": "aws_credentials_file",
+   "template": "[default]\naws_access_key_id = {S0}\naws_secret_access_key = {S1}",
+   "secrets": [
+    "AKIAABCDABCDABCDABCD",
+    "aBcDeFgHiJaBcDeFgHiJaBcDeFgHiJaBcDeFgHiJ"
+   ],
+   "keep": [
+    "[default]",
+    "aws_access_key_id =",
+    "aws_secret_access_key ="
+   ]
+  },
+  {
+   "id": "aws_json_creds",
+   "template": "Credentials: {\"AccessKeyId\": \"{S0}\", \"SecretAccessKey\": \"{S1}\", \"Expiration\": \"2026-09-08T04:08:44Z\"}",
+   "secrets": [
+    "AKIAABCDABCDABCDABCD",
+    "aBcDeFgHiJaBcDeFgHiJaBcDeFgHiJaBcDeFgHiJ"
+   ],
+   "keep": [
+    "\"AccessKeyId\"",
+    "\"SecretAccessKey\"",
+    "\"Expiration\": \"2026-09-08T04:08:44Z\""
+   ]
+  },
+  {
+   "id": "aws_bare_secret_after_id",
+   "template": "using static credentials {S0} {S1} for sts",
+   "secrets": [
+    "AKIAABCDABCDABCDABCD",
+    "aBcDeFgHiJaBcDeFgHiJaBcDeFgHiJaBcDeFgHiJ"
+   ],
+   "keep": [
+    "using static credentials",
+    "for sts"
+   ]
+  },
+  {
+   "id": "aws_session_token",
+   "template": "AWS_SESSION_TOKEN={S0}\nsts get-caller-identity",
+   "secrets": [
+    "FwoGZXIvYXdzEAb1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4Ab1Cd2Ef3Gh4"
+   ],
+   "keep": [
+    "AWS_SESSION_TOKEN=",
+    "sts get-caller-identity"
+   ]
+  },
+  {
+   "id": "aws_presigned_url",
+   "template": "GET https://bucket.s3.amazonaws.com/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature={S0} 403",
+   "secrets": [
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+   ],
+   "keep": [
+    "https://bucket.s3.amazonaws.com/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=",
+    "403"
+   ]
+  },
+  {
+   "id": "aws_sigv4_header",
+   "template": "Authorization: AWS4-HMAC-SHA256 Credential={S0}/20260908/us-east-1/s3/aws4_request, SignedHeaders=host, Signature={S1}",
+   "secrets": [
+    "AKIAABCDABCDABCDABCD",
+    "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+   ],
+   "keep": [
+    "SignedHeaders=host",
+    "us-east-1/s3/aws4_request"
+   ]
+  },
+  {
+   "id": "github_ghp",
+   "template": "GITHUB_TOKEN: {S0}\nfetching refs",
+   "secrets": [
+    "ghp_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "GITHUB_TOKEN:",
+    "fetching refs"
+   ]
+  },
+  {
+   "id": "github_gho",
+   "template": "GITHUB_TOKEN: {S0}\nfetching refs",
+   "secrets": [
+    "gho_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "GITHUB_TOKEN:",
+    "fetching refs"
+   ]
+  },
+  {
+   "id": "github_ghs",
+   "template": "GITHUB_TOKEN: {S0}\nfetching refs",
+   "secrets": [
+    "ghs_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "GITHUB_TOKEN:",
+    "fetching refs"
+   ]
+  },
+  {
+   "id": "github_ghu",
+   "template": "GITHUB_TOKEN: {S0}\nfetching refs",
+   "secrets": [
+    "ghu_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "GITHUB_TOKEN:",
+    "fetching refs"
+   ]
+  },
+  {
+   "id": "github_ghr",
+   "template": "GITHUB_TOKEN: {S0}\nfetching refs",
+   "secrets": [
+    "ghr_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "GITHUB_TOKEN:",
+    "fetching refs"
+   ]
+  },
+  {
+   "id": "github_pat",
+   "template": "gh auth login --with-token <<< {S0}\nLogged in",
+   "secrets": [
+    "github_pat_11ABCDEFG0abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij_ZYXWVUTSRQZYXWVUTSRQZYXWVUTSRQ"
+   ],
+   "keep": [
+    "gh auth login --with-token <<<",
+    "Logged in"
+   ]
+  },
+  {
+   "id": "github_clone_url",
+   "template": "git clone https://x-access-token:{S0}@github.com/acme/app.git\nCloning into 'app'...",
+   "secrets": [
+    "ghs_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "https://x-access-token:",
+    "@github.com/acme/app.git",
+    "Cloning into 'app'..."
+   ]
+  },
+  {
+   "id": "github_token_as_username",
+   "template": "remote: https://{S0}@github.com/acme/app.git not found",
+   "secrets": [
+    "ghp_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "@github.com/acme/app.git not found"
+   ]
+  },
+  {
+   "id": "github_auth_header",
+   "template": "> Authorization: token {S0}\n< HTTP/2 401",
+   "secrets": [
+    "gho_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "Authorization: token",
+    "< HTTP/2 401"
+   ]
+  },
+  {
+   "id": "gitlab_pat",
+   "template": "GITLAB_TOKEN={S0}",
+   "secrets": [
+    "glpat-AbCdEfGh1234AbCdEfGh1234"
+   ],
+   "keep": [
+    "GITLAB_TOKEN="
+   ]
+  },
+  {
+   "id": "slack_bot",
+   "template": "SLACK_BOT_TOKEN={S0} channel=#ci",
+   "secrets": [
+    "xoxb-123456789012-123456789012-AbCdEfGhIjKlMnOpQrStUvWx"
+   ],
+   "keep": [
+    "SLACK_BOT_TOKEN=",
+    "channel=#ci"
+   ]
+  },
+  {
+   "id": "slack_user",
+   "template": "slack: using {S0} to post",
+   "secrets": [
+    "xoxp-123456789012-123456789012-123456789012-abcdef0123456789abcdef0123456789"
+   ],
+   "keep": [
+    "slack: using",
+    "to post"
+   ]
+  },
+  {
+   "id": "slack_app",
+   "template": "app token {S0} rejected",
+   "secrets": [
+    "xapp-1-A0123456789-1234567890123-ab12ab12ab12ab12ab12ab12ab12ab12"
+   ],
+   "keep": [
+    "app token",
+    "rejected"
+   ]
+  },
+  {
+   "id": "slack_webhook",
+   "template": "curl -X POST https://hooks.slack.com/services/{S0} -d x",
+   "secrets": [
+    "T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+   ],
+   "keep": [
+    "curl -X POST https://hooks.slack.com/services/",
+    "-d x"
+   ]
+  },
+  {
+   "id": "stripe_live",
+   "template": "stripe.api_key = '{S0}'\nStripe error: rate limited",
+   "secrets": [
+    "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+   ],
+   "keep": [
+    "stripe.api_key =",
+    "Stripe error: rate limited"
+   ]
+  },
+  {
+   "id": "stripe_restricted",
+   "template": "using key {S0} for refunds",
+   "secrets": [
+    "rk_live_51H8aBcDeFgHiJkLmNoPqRsT"
+   ],
+   "keep": [
+    "using key",
+    "for refunds"
+   ]
+  },
+  {
+   "id": "stripe_webhook",
+   "template": "STRIPE_WEBHOOK_SECRET={S0}",
+   "secrets": [
+    "whsec_AbCd1234EfGh5678IjKl9012"
+   ],
+   "keep": [
+    "STRIPE_WEBHOOK_SECRET="
+   ]
+  },
+  {
+   "id": "google_api_key",
+   "template": "GET https://maps.googleapis.com/maps/api/geocode/json?key={S0} 403 Forbidden",
+   "secrets": [
+    "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456"
+   ],
+   "keep": [
+    "https://maps.googleapis.com/maps/api/geocode/json?key=",
+    "403 Forbidden"
+   ]
+  },
+  {
+   "id": "google_oauth_access",
+   "template": "oauth access value: {S0} (expired)",
+   "secrets": [
+    "ya29.a0AfH6SMBxAbCdEfGhIjKl_0123456789"
+   ],
+   "keep": [
+    "oauth access value:",
+    "(expired)"
+   ]
+  },
+  {
+   "id": "gcp_sa_json",
+   "template": "{\"type\": \"service_account\", \"project_id\": \"demo-project\", \"private_key\": \"-----BEGIN PRIVATE KEY-----\\n{S0}\\n-----END PRIVATE KEY-----\\n\", \"client_email\": \"ci@demo-project.iam.gserviceaccount.com\"}",
+   "secrets": [
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\\nZm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h\\ndGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs"
+   ],
+   "keep": [
+    "\"type\": \"service_account\"",
+    "\"project_id\": \"demo-project\"",
+    "\"private_key\":",
+    "\"client_email\": \"ci@demo-project.iam.gserviceaccount.com\""
+   ]
+  },
+  {
+   "id": "pem_rsa_multiline",
+   "template": "key file contents follow\n-----BEGIN RSA PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\nZm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h\ndGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs\n-----END RSA PRIVATE KEY-----\nend of key",
+   "secrets": [
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7",
+    "Zm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h",
+    "dGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs"
+   ],
+   "keep": [
+    "key file contents follow",
+    "end of key"
+   ]
+  },
+  {
+   "id": "pem_openssh_multiline",
+   "template": "-----BEGIN OPENSSH PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\nZm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h\ndGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs\n-----END OPENSSH PRIVATE KEY-----\nIdentity added",
+   "secrets": [
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7",
+    "Zm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h",
+    "dGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs"
+   ],
+   "keep": [
+    "Identity added"
+   ]
+  },
+  {
+   "id": "pem_ec_multiline",
+   "template": "-----BEGIN EC PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\nZm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h\ndGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs\n-----END EC PRIVATE KEY-----",
+   "secrets": [
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7",
+    "Zm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h",
+    "dGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs"
+   ],
+   "keep": []
+  },
+  {
+   "id": "pem_pgp",
+   "template": "-----BEGIN PGP PRIVATE KEY BLOCK-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\nZm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h\ndGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs\n-----END PGP PRIVATE KEY BLOCK-----\ngpg: key imported",
+   "secrets": [
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7",
+    "Zm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h",
+    "dGVyaWFsZm9vYmFyZmFrZWtleW1hdGVyaWFs"
+   ],
+   "keep": [
+    "gpg: key imported"
+   ]
+  },
+  {
+   "id": "pem_truncated",
+   "template": "ssh key dump:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\nZm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h",
+   "secrets": [
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7",
+    "Zm9vYmFyZmFrZWtleW1hdGVyaWFsZm9vYmFyZmFrZWtleW1h"
+   ],
+   "keep": [
+    "ssh key dump:"
+   ]
+  },
+  {
+   "id": "jwt_bearer",
+   "template": "Authorization: Bearer {S0}\nHTTP/1.1 401",
+   "secrets": [
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlLXVzZXIifQ.ZmFrZXNpZ25hdHVyZWZha2VzaWduYXR1cmU"
+   ],
+   "keep": [
+    "Authorization: Bearer",
+    "HTTP/1.1 401"
+   ]
+  },
+  {
+   "id": "jwt_bare",
+   "template": "id_token={S0} expired",
+   "secrets": [
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlLXVzZXIifQ.ZmFrZXNpZ25hdHVyZWZha2VzaWduYXR1cmU"
+   ],
+   "keep": [
+    "id_token=",
+    "expired"
+   ]
+  },
+  {
+   "id": "npm_authtoken_line",
+   "template": "//registry.npmjs.org/:_authToken={S0}\nnpm ERR! code E401",
+   "secrets": [
+    "npm_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "//registry.npmjs.org/:_authToken=",
+    "npm ERR! code E401"
+   ]
+  },
+  {
+   "id": "npm_authtoken_uuid",
+   "template": "//npm.pkg.github.com/:_authToken={S0}",
+   "secrets": [
+    "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d"
+   ],
+   "keep": [
+    "//npm.pkg.github.com/:_authToken="
+   ]
+  },
+  {
+   "id": "npm_auth_base64",
+   "template": "//registry.example.com/:_auth={S0}\nalways-auth=true",
+   "secrets": [
+    "ZmFrZXVzZXI6ZmFrZXBhc3N3b3Jk"
+   ],
+   "keep": [
+    "//registry.example.com/:_auth=",
+    "always-auth=true"
+   ]
+  },
+  {
+   "id": "npm_token_in_text",
+   "template": "npm publish with {S0} failed",
+   "secrets": [
+    "npm_a1B2c3D4e5F6a1B2c3D4e5F6a1B2c3D4e5F6"
+   ],
+   "keep": [
+    "npm publish with",
+    "failed"
+   ]
+  },
+  {
+   "id": "docker_config_auth",
+   "template": "{\"auths\": {\"https://index.docker.io/v1/\": {\"auth\": \"{S0}\"}}}",
+   "secrets": [
+    "ZmFrZXVzZXI6ZmFrZXBhc3N3b3Jk"
+   ],
+   "keep": [
+    "\"auths\"",
+    "\"https://index.docker.io/v1/\"",
+    "\"auth\":"
+   ]
+  },
+  {
+   "id": "docker_login_flag",
+   "template": "docker login -u ci-user -p {S0} registry.example.com\nLogin Succeeded",
+   "secrets": [
+    "Pa55w0rdFake99"
+   ],
+   "keep": [
+    "docker login -u ci-user -p",
+    "registry.example.com",
+    "Login Succeeded"
+   ]
+  },
+  {
+   "id": "docker_pat",
+   "template": "DOCKERHUB_TOKEN={S0}",
+   "secrets": [
+    "dckr_pat_AbCdEfGhIjKl_0123456789"
+   ],
+   "keep": [
+    "DOCKERHUB_TOKEN="
+   ]
+  },
+  {
+   "id": "basic_auth_url",
+   "template": "Error: failed to fetch https://deploy:{S0}@registry.example.com/v2/ : 401",
+   "secrets": [
+    "p4ssw0rdFakeValue"
+   ],
+   "keep": [
+    "https://deploy:",
+    "@registry.example.com/v2/ : 401"
+   ]
+  },
+  {
+   "id": "basic_auth_url_pip",
+   "template": "Looking in indexes: https://__token__:{S0}@pypi.example.com/simple",
+   "secrets": [
+    "fake-index-secret-value"
+   ],
+   "keep": [
+    "https://__token__:",
+    "@pypi.example.com/simple"
+   ]
+  },
+  {
+   "id": "authorization_basic",
+   "template": "-H 'Authorization: Basic {S0}' https://api.example.com",
+   "secrets": [
+    "ZmFrZXVzZXI6ZmFrZXBhc3N3b3Jk"
+   ],
+   "keep": [
+    "Authorization: Basic",
+    "https://api.example.com"
+   ]
+  },
+  {
+   "id": "authorization_bearer_json",
+   "template": "\"Authorization\": \"Bearer {S0}\"",
+   "secrets": [
+    "fakeTokenValue0123456789abcdefABCDEF"
+   ],
+   "keep": [
+    "\"Authorization\": \"Bearer"
+   ]
+  },
+  {
+   "id": "curl_user",
+   "template": "curl -u admin:{S0} https://nexus.example.com/repository/x",
+   "secrets": [
+    "fakeNexusPassw0rd"
+   ],
+   "keep": [
+    "curl -u admin:",
+    "https://nexus.example.com/repository/x"
+   ]
+  },
+  {
+   "id": "postgres_url",
+   "template": "psql: error: connection to postgres://app:{S0}@db.internal:5432/orders failed",
+   "secrets": [
+    "Fake-Db-Passw0rd"
+   ],
+   "keep": [
+    "postgres://app:",
+    "@db.internal:5432/orders failed"
+   ]
+  },
+  {
+   "id": "mongodb_srv",
+   "template": "MongoServerError: bad auth for mongodb+srv://svc:{S0}@cluster0.example.mongodb.net/test",
+   "secrets": [
+    "FakeMongoPassw0rd"
+   ],
+   "keep": [
+    "mongodb+srv://svc:",
+    "@cluster0.example.mongodb.net/test"
+   ]
+  },
+  {
+   "id": "redis_empty_user",
+   "template": "redis://:{S0}@cache.internal:6379/0 NOAUTH",
+   "secrets": [
+    "FakeRedisPassw0rd"
+   ],
+   "keep": [
+    "redis://:",
+    "@cache.internal:6379/0 NOAUTH"
+   ]
+  },
+  {
+   "id": "mysql_flag",
+   "template": "mysql -h db -u root -p{S0} -e select1",
+   "secrets": [
+    "FakeMysqlPassw0rd"
+   ],
+   "keep": [
+    "mysql -h db -u root -p",
+    "-e select1"
+   ]
+  },
+  {
+   "id": "jdbc_password_param",
+   "template": "jdbc:postgresql://db:5432/app?user=app&password={S0}&ssl=true",
+   "secrets": [
+    "FakeJdbcPassw0rd"
+   ],
+   "keep": [
+    "jdbc:postgresql://db:5432/app?user=app&password=",
+    "&ssl=true"
+   ]
+  },
+  {
+   "id": "azure_storage_key",
+   "template": "DefaultEndpointsProtocol=https;AccountName=demostore;AccountKey={S0};EndpointSuffix=core.windows.net",
+   "secrets": [
+    "Zm9vYmFyYmF6Zm9vYmFyYmF6Zm9vYmFyYmF6Zm9vYmFyYmF6Zm9vYmFyYmF6Zm9vYmFyYmF6Zm9vYmFyYmF6=="
+   ],
+   "keep": [
+    "AccountName=demostore;AccountKey=",
+    "EndpointSuffix=core.windows.net"
+   ]
+  },
+  {
+   "id": "azure_sas",
+   "template": "GET https://demostore.blob.core.windows.net/c/b?sv=2022-11-02&sig={S0}&se=2026-12-31 403",
+   "secrets": [
+    "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789%2BAbCdEf%3D"
+   ],
+   "keep": [
+    "https://demostore.blob.core.windows.net/c/b?sv=2022-11-02&sig=",
+    "&se=2026-12-31 403"
+   ]
+  },
+  {
+   "id": "azure_client_secret",
+   "template": "AZURE_CLIENT_SECRET={S0}\nAZURE_TENANT_ID=11111111-1111-1111-1111-111111111111",
+   "secrets": [
+    "Abc8Q~fakeFAKEfake0123456789-_.AbCdEf"
+   ],
+   "keep": [
+    "AZURE_CLIENT_SECRET=",
+    "AZURE_TENANT_ID=11111111-1111-1111-1111-111111111111"
+   ]
+  },
+  {
+   "id": "sql_pwd_conn",
+   "template": "Server=db.internal;Database=app;Uid=svc;Pwd={S0};",
+   "secrets": [
+    "FakeSqlPassw0rd"
+   ],
+   "keep": [
+    "Server=db.internal;Database=app;Uid=svc;Pwd="
+   ]
+  },
+  {
+   "id": "anthropic_key",
+   "template": "ANTHROPIC_API_KEY={S0}\nerror: 401 authentication_error",
+   "secrets": [
+    "sk-ant-api03-AbCdEfGh0123_-AbCdEfGh0123_-AbCdEfGh0123_-AbCdEfGh0123_-AbCdEfGh0123_-AbCdEfGh0123_-AA"
+   ],
+   "keep": [
+    "ANTHROPIC_API_KEY=",
+    "error: 401 authentication_error"
+   ]
+  },
+  {
+   "id": "anthropic_in_text",
+   "template": "request failed with key {S0} (invalid x-api-key)",
+   "secrets": [
+    "sk-ant-api03-ZyXwVuTs9876_-ZyXwVuTs9876_-ZyXwVuTs9876_-ZyXwVuTs9876_-ZyXwVuTs9876_-ZyXwVuTs9876_-AA"
+   ],
+   "keep": [
+    "request failed with key",
+    "(invalid x-api-key)"
+   ]
+  },
+  {
+   "id": "openai_key",
+   "template": "OPENAI key {S0} hit quota",
+   "secrets": [
+    "sk-AbCd1234EfGh5678IjKl9012MnOp3456QrSt7890UvWx"
+   ],
+   "keep": [
+    "OPENAI key",
+    "hit quota"
+   ]
+  },
+  {
+   "id": "openai_proj_key",
+   "template": "using sk-proj key: {S0}",
+   "secrets": [
+    "sk-proj-Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2Yz3"
+   ],
+   "keep": [
+    "using sk-proj key:"
+   ]
+  },
+  {
+   "id": "sendgrid",
+   "template": "SENDGRID_API_KEY={S0}",
+   "secrets": [
+    "SG.AbCdEfGhIjKlMnOpQr.AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdE"
+   ],
+   "keep": [
+    "SENDGRID_API_KEY="
+   ]
+  },
+  {
+   "id": "pypi_token",
+   "template": "twine upload -u __token__ -p {S0}",
+   "secrets": [
+    "pypi-AgEIcHlwaS5vcmcAbCdEfGh0123AbCdEfGh0123AbCdEfGh0123AbCdEfGh0123AbCdEfGh0123"
+   ],
+   "keep": [
+    "twine upload -u __token__ -p"
+   ]
+  },
+  {
+   "id": "generic_password_colon",
+   "template": "database config\npassword: {S0}\nhost: db.internal",
+   "secrets": [
+    "hunter2hunter2"
+   ],
+   "keep": [
+    "password:",
+    "host: db.internal"
+   ]
+  },
+  {
+   "id": "generic_password_quoted_spaces",
+   "template": "password: \"{S0}\"\nport: 5432",
+   "secrets": [
+    "correct horse battery staple"
+   ],
+   "keep": [
+    "password:",
+    "port: 5432"
+   ]
+  },
+  {
+   "id": "generic_password_flag",
+   "template": "mytool login --user ci --password {S0} --retries 3",
+   "secrets": [
+    "fl4gPassw0rd"
+   ],
+   "keep": [
+    "mytool login --user ci --password",
+    "--retries 3"
+   ]
+  },
+  {
+   "id": "generic_password_flag_eq",
+   "template": "mytool login --password={S0} --retries 3",
+   "secrets": [
+    "fl4gPassw0rdEq"
+   ],
+   "keep": [
+    "mytool login --password=",
+    "--retries 3"
+   ]
+  },
+  {
+   "id": "generic_token_flag",
+   "template": "deploy --token {S0} --env prod",
+   "secrets": [
+    "tok3nValue0123"
+   ],
+   "keep": [
+    "deploy --token",
+    "--env prod"
+   ]
+  },
+  {
+   "id": "json_quoted_secret",
+   "template": "{\"client_id\": \"abc\", \"client_secret\": \"{S0}\", \"grant_type\": \"client_credentials\"}",
+   "secrets": [
+    "s3cr3tValue-with space"
+   ],
+   "keep": [
+    "\"client_id\": \"abc\"",
+    "\"client_secret\":",
+    "\"grant_type\": \"client_credentials\""
+   ]
+  },
+  {
+   "id": "json_api_key",
+   "template": "{\"apiKey\": \"{S0}\", \"region\": \"eu\"}",
+   "secrets": [
+    "Zx9Qm4Lp7Rt2Kv8Nb5Cw3Yd6"
+   ],
+   "keep": [
+    "\"apiKey\":",
+    "\"region\": \"eu\""
+   ]
+  },
+  {
+   "id": "env_dump",
+   "template": "DB_HOST=db.internal\nDB_PASSWORD={S0}\nPWD=/home/runner/work/app\nHOME=/home/runner\nSECRET_KEY_BASE={S1}\nPATH=/usr/bin",
+   "secrets": [
+    "hunter2fake",
+    "Zx9Qm4Lp7Rt2Kv8Nb5Cw3Yd6Hf1Js0Ga"
+   ],
+   "keep": [
+    "DB_HOST=db.internal",
+    "DB_PASSWORD=",
+    "PWD=/home/runner/work/app",
+    "HOME=/home/runner",
+    "SECRET_KEY_BASE=",
+    "PATH=/usr/bin"
+   ]
+  },
+  {
+   "id": "env_dump_xapikey",
+   "template": "x-api-key: {S0}\ncontent-type: application/json",
+   "secrets": [
+    "fakeApiKeyValue0123"
+   ],
+   "keep": [
+    "x-api-key:",
+    "content-type: application/json"
+   ]
+  },
+  {
+   "id": "k8s_secret_data",
+   "template": "data:\n  password: {S0}\n  username: ci",
+   "secrets": [
+    "Zm9vYmFyZmFrZXBhc3N3b3Jk"
+   ],
+   "keep": [
+    "data:",
+    "password:",
+    "username: ci"
+   ]
+  },
+  {
+   "id": "terraform_hcl",
+   "template": "client_secret = \"{S0}\"\nregion = \"us-east-1\"",
+   "secrets": [
+    "Fake_Client_Secret.0123456789"
+   ],
+   "keep": [
+    "client_secret =",
+    "region = \"us-east-1\""
+   ]
+  },
+  {
+   "id": "base64_after_secret_name",
+   "template": "secret: {S0}",
+   "secrets": [
+    "c2VjcmV0LXZhbHVlLWZha2UtMDEyMzQ1Njc4OQ=="
+   ],
+   "keep": [
+    "secret:"
+   ]
+  },
+  {
+   "id": "entropy_loose_key",
+   "template": "TOKEN_VALUE={S0}\nbuild ok",
+   "secrets": [
+    "Zx9Qm4Lp7Rt2Kv8Nb5Cw3Yd6Hf1Js0Ga"
+   ],
+   "keep": [
+    "TOKEN_VALUE=",
+    "build ok"
+   ]
+  },
+  {
+   "id": "entropy_loose_key_colon",
+   "template": "secret_blob: {S0}",
+   "secrets": [
+    "Qw3Er5Ty7Ui9Op1As2Df4Gh6Jk8Lz0Xc"
+   ],
+   "keep": [
+    "secret_blob:"
+   ]
+  },
+  {
+   "id": "entropy_auth_name",
+   "template": "x-auth-signature-value={S0}",
+   "secrets": [
+    "Mn4Bv6Cx8Za0Sd2Fg5Hj7Kl9Qw1Er3Ty"
+   ],
+   "keep": [
+    "x-auth-signature-value="
+   ]
+  },
+  {
+   "id": "tf_var_password",
+   "template": "TF_VAR_db_password={S0}",
+   "secrets": [
+    "Fake_Tf_Passw0rd_01"
+   ],
+   "keep": [
+    "TF_VAR_db_password="
+   ]
+  },
+  {
+   "id": "session_key_env",
+   "template": "SESSION_KEY={S0}",
+   "secrets": [
+    "fakeSessionKeyValue0123"
+   ],
+   "keep": [
+    "SESSION_KEY="
+   ]
+  }
+ ],
+ "no_false_positives": [
+  "commit 3a4f5b6c7d8e9f001122334455667788aabbccdd",
+  "HEAD is now at 0123456789abcdef0123456789abcdef01234567 fix lockfile",
+  "request id 123e4567-e89b-12d3-a456-426614174000 failed",
+  "execution_id: 9f8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+  "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "integrity sha512-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGhIjKlMnOp==",
+  "md5sum: d41d8cd98f00b204e9800998ecf8427e  package.json",
+  "terraform v1.5.7 on linux_amd64 + provider registry.terraform.io/hashicorp/aws v5.31.0",
+  "npm ERR! node v20.11.1 npm v10.2.4",
+  "Python 3.11.7 pip 23.3.1 setuptools==69.0.3",
+  "arn:aws:iam::123456789012:role/ci-deployer is not authorized to perform: sts:AssumeRole",
+  "User: arn:aws:sts::123456789012:assumed-role/ci/session-abc is not authorized to perform: secretsmanager:GetSecretValue on resource: arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-creds-AbCdEf",
+  "arn:aws:s3:::my-bucket/path/to/object.tar.gz",
+  "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+  "AccessDenied: not authorized to perform secretsmanager:GetSecretValue",
+  "PWD=/home/runner/work/app/app",
+  "Error: Unable to resolve action actions/checkout@v4, unable to find version",
+  "image: ghcr.io/acme/app@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "Token expired, please re-authenticate",
+  "The security token included in the request is expired",
+  "git clone git@github.com:acme/app.git",
+  "ssh://git@github.com:22/acme/app.git",
+  "Run actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8"
+ ]
+}

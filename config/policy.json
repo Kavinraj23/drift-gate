@@ -1,0 +1,4 @@
+{
+  "abort_ceiling": 2,
+  "comment": "Abort ceiling N: a failure whose blast radius is more than N executions is treated as fleet-wide and escalated to a human instead of being fixed by the agent. 2 means any fleet of 3 or more escalates. A missing or invalid file fails closed to 0 (escalate any correlated failure)."
+}

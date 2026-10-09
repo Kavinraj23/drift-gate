@@ -43,6 +43,7 @@ from driftgate.gates import DEFAULT_KILL_SWITCH_PATH, GateDecision, GateFacts, K
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
+from driftgate.policy import DEFAULT_POLICY_PATH, load_policy
 from driftgate.prefilter import prefilter
 from driftgate.remediation_catalog import TIER1_DIMENSION, is_catalog_action
 from driftgate.tier3 import (
@@ -60,6 +61,7 @@ from driftgate.tools.attempts import AttemptStore, RemediationAttempt
 from driftgate.tools.base import FailureAnalyzer
 from driftgate.tools.fleet_correlate import FLEET_MIN_EXECUTIONS
 
+#: Fallback/reference value; the orchestrator builders read N from config/policy.json (driftgate.policy).
 #: SafetyGate's abort ceiling is "blast radius over N executions". N is a human decision (BLOCKERS.md); the
 #: PRD says fleet-wide incidents escalate, and fleet_correlate defines fleet-wide as 3+ executions, so the
 #: orchestrator constructs the gate with N = that threshold minus one. Callers may override.
@@ -708,6 +710,11 @@ def make_synthetic_target(data_dir: Path | str, *, verified: bool = True) -> Rem
     return SyntheticTarget(default=SimulatedOutcome(verified=verified), data_dir=data_dir)
 
 
+def _ceiling(explicit: int | None, policy_path: Path | str) -> int:
+    """An explicit argument wins (tests); otherwise N comes from config/policy.json, failing closed."""
+    return explicit if explicit is not None else load_policy(policy_path).abort_ceiling
+
+
 def build_synthetic_orchestrator(
     data_dir: Path | str,
     model_factory: ModelFactory,
@@ -715,7 +722,8 @@ def build_synthetic_orchestrator(
     audit_path: Path | str,
     clock: Callable[[], float],
     kill_switch_path: Path | str = DEFAULT_KILL_SWITCH_PATH,
-    abort_ceiling: int = FLEET_ABORT_CEILING,
+    abort_ceiling: int | None = None,
+    policy_path: Path | str = DEFAULT_POLICY_PATH,
     limits: InvestigationLimits | None = None,
     target: SyntheticTarget | None = None,
     model: str = "",
@@ -730,7 +738,7 @@ def build_synthetic_orchestrator(
     `after_execution` hook and gives the default target the dataset's follow-ups. It is opt-in so callers that
     count target calls (the M5 tests) keep their exact behaviour; `eval/e2e.py` turns it on.
     """
-    gate = SafetyGate(KillSwitch(kill_switch_path), RateLimiter(clock), abort_ceiling)
+    gate = SafetyGate(KillSwitch(kill_switch_path), RateLimiter(clock), _ceiling(abort_ceiling, policy_path))
     orch = Orchestrator(
         SyntheticSource(data_dir),
         target or SyntheticTarget(data_dir=data_dir if verification else None),
@@ -759,13 +767,14 @@ def build_github_orchestrator(
     clock: Callable[[], float],
     tier3_review: Tier3Review,
     kill_switch_path: Path | str = DEFAULT_KILL_SWITCH_PATH,
-    abort_ceiling: int = FLEET_ABORT_CEILING,
+    abort_ceiling: int | None = None,
+    policy_path: Path | str = DEFAULT_POLICY_PATH,
     limits: InvestigationLimits | None = None,
     model: str = "",
     after_execution: AfterExecution | None = None,
 ) -> Orchestrator:
     """Wire a real provider (the GitHub adapter). A reviewer is mandatory and the unreviewed opt-out is never set."""
-    gate = SafetyGate(KillSwitch(kill_switch_path), RateLimiter(clock), abort_ceiling)
+    gate = SafetyGate(KillSwitch(kill_switch_path), RateLimiter(clock), _ceiling(abort_ceiling, policy_path))
     return Orchestrator(
         source,
         target,

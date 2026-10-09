@@ -36,7 +36,7 @@ force-resets each scenario branch to it.
 
 ## Needs human before M8b
 
-- **Throttle line.** The PRD wants a throttling line copied verbatim from a real log. `throttle/.github/workflows/throttle.yml`
+- **Throttle line (resolved 2026-10-09).** The line now matches real AWS CLI output (catalog `aws_throttling`, verified); it is echoed by the workflow, not returned by AWS. Original note: The PRD wants a throttling line copied verbatim from a real log. `throttle/.github/workflows/throttle.yml`
   uses the line recalled in `src/driftgate/generator/error_catalog.json` (`aws_throttling`, `verified: false`). Replace it
   with a captured real line and its source. Logged in `BLOCKERS.md`.
 - **Environment.** For `approval-rejected`, create an environment named `needs-approval` with a required reviewer, dispatch

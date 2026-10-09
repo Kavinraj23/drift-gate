@@ -48,7 +48,7 @@ from driftgate.tier3 import ReviewerHook
 from driftgate.verify import install_verification
 
 MODES = ("fake", "replay", "auto")
-OK, CONFLICT, MISMATCH, NO_FIXTURE = "ok", "known label conflict", "MISMATCH", "no fixture"
+OK, MISMATCH, NO_FIXTURE = "ok", "MISMATCH", "no fixture"
 DEFAULT_FIXTURES = Path("fixtures") / "replay"
 _KILL_SWITCH_ON = {"global": True, "tiers": {"0": True, "1": True, "2": True, "3": True}}
 _EXPECTED_KIND = {0: EXECUTED, 3: PR_PROPOSED}
@@ -138,16 +138,6 @@ def judge(label: FailureLabel, outcome: Outcome) -> tuple[str, str]:
         and rem.action == label.correct_action
     ):
         return OK, ""
-    gate_reason = outcome.gate.reason if outcome.gate else ""
-    if (
-        label.tier0_path == "flake_precedent"
-        and outcome.kind == ESCALATED
-        and "no deterministic signature" in gate_reason
-    ):
-        return (
-            CONFLICT,
-            "label says Tier 0 via flake precedent; invariant 3 needs a deterministic signature (BLOCKERS.md)",
-        )
     return MISMATCH, f"expected {expected_text(label)}"
 
 
@@ -493,11 +483,10 @@ def format_table(rows: list[Row], mode: str, metrics: tuple[str, RecoveryBreakdo
     lines = [header, "", "  ".join(c.ljust(w) for c, w in zip(cols, widths, strict=True))]
     lines.append("  ".join("-" * w for w in widths))
     lines += ["  ".join(v.ljust(w) for v, w in zip(b, widths, strict=True)) for b in body]
-    counts = {s: sum(r.status == s for r in rows) for s in (OK, CONFLICT, MISMATCH, NO_FIXTURE)}
+    counts = {s: sum(r.status == s for r in rows) for s in (OK, MISMATCH, NO_FIXTURE)}
     lines += [
         "",
-        f"{len(rows)} scenarios: {counts[OK]} ok, {counts[CONFLICT]} known label conflict, "
-        f"{counts[MISMATCH]} mismatch, {counts[NO_FIXTURE]} without fixture",
+        f"{len(rows)} scenarios: {counts[OK]} ok, {counts[MISMATCH]} mismatch, {counts[NO_FIXTURE]} without fixture",
         f"model calls {sum(r.model_calls for r in rows)}, tool calls {sum(r.tool_calls for r in rows)}, "
         f"tokens {sum(r.tokens for r in rows)}",
     ]
@@ -525,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
     results = run_all(args.data, mode=args.mode, fixtures_dir=args.fixtures, drills=True)
     rows = [r.row for r in results]
     print(format_table(rows, args.mode, loop_metrics(results)))
-    return 0 if all(r.status in (OK, CONFLICT) for r in rows) else 1
+    return 0 if all(r.status == OK for r in rows) else 1
 
 
 if __name__ == "__main__":

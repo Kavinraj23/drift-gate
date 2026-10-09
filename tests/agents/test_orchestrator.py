@@ -191,10 +191,14 @@ def test_overconfident_tier0_with_a_match_but_no_rule_or_precedent_is_downgraded
 
 
 def test_flaky_precedent_without_a_signature_is_not_acted_on(make_orch: MakeOrch, pick) -> None:
-    """The known label conflict: precedent exists, the only signature is a bare exit code, invariant 3 holds."""
+    """Precedent exists, the only signature is a bare exit code, and the agent overreaches with Tier 0: the gate holds.
+
+    The honest scripted agent now escalates this case itself (label: escalate, see BLOCKERS-B.md), so the overreach
+    variant is what exercises invariant 3 in the gate.
+    """
     label = pick("transient_flaky_test")
     target = SyntheticTarget()
-    orch = make_orch(label, target=target)
+    orch = make_orch(label, "overconfident_tier0", target=target)
     out = orch.handle(label.execution_id)
     assert out.kind == ESCALATED and target.calls == []
     facts = orch.audit.read("proposal")[1].payload["facts"]

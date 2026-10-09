@@ -11,7 +11,7 @@ from jsonschema import Draft202012Validator
 
 from driftgate.adapters.synthetic import SyntheticSource
 from driftgate.eval import e2e
-from driftgate.eval.e2e import CONFLICT, MISMATCH, NO_FIXTURE, OK, ScenarioResult, run_all, run_scenario
+from driftgate.eval.e2e import MISMATCH, NO_FIXTURE, OK, ScenarioResult, run_all, run_scenario
 from driftgate.eval.ground_truth import GroundTruth
 from driftgate.eval.scripted_agent import scripted_model
 from driftgate.llm.config import GatewayConfig
@@ -32,7 +32,7 @@ def test_every_scenario_ran_and_none_mismatch(results: list[ScenarioResult], tru
     ]
     assert len(results) == 33 and sum(r.row.held_out for r in results) == 9
     assert [r.row.scenario_id for r in results if r.row.status == MISMATCH] == []
-    assert {r.row.status for r in results} <= {OK, CONFLICT}
+    assert {r.row.status for r in results} == {OK}
 
 
 def test_each_row_matches_its_expected_outcome(results: list[ScenarioResult], truth: GroundTruth) -> None:
@@ -50,19 +50,21 @@ def test_each_row_matches_its_expected_outcome(results: list[ScenarioResult], tr
             assert out.kind == want and out.report.remediation.action == label.correct_action  # type: ignore[union-attr]
 
 
-def test_known_label_conflicts_are_exactly_the_flake_precedent_cases(
+def test_flaky_failures_are_labelled_escalate_and_the_gate_agrees(
     results: list[ScenarioResult], truth: GroundTruth
 ) -> None:
-    conflicts = [r for r in results if r.row.status == CONFLICT]
-    assert conflicts
-    for r in conflicts:
+    """Invariant 3: a bare exit code is no deterministic signature, so the flaky label is escalate, not Tier 0."""
+    flaky = [r for r in results if r.row.fault_id == "transient_flaky_test"]
+    assert len(flaky) == 3 and {r.row.scenario_id for r in flaky} == {"sc-05", "sc-07", "sc-13"}
+    for r in flaky:
         label = truth.for_execution(r.row.execution_id)
-        assert label.tier0_path == "flake_precedent" and label.disposition == "remediate"  # type: ignore[union-attr]
-        assert r.outcome.kind == ESCALATED  # type: ignore[union-attr]
-        assert r.outcome.gate.reason == "no deterministic signature match"  # type: ignore[union-attr]
-    labels = {r.row.execution_id: truth.for_execution(r.row.execution_id) for r in results}
-    expected = [e for e, lb in labels.items() if lb.tier0_path == "flake_precedent" and lb.disposition == "remediate"]  # type: ignore[union-attr]
-    assert sorted(r.row.execution_id for r in conflicts) == sorted(expected)
+        assert label is not None and r.outcome is not None
+        assert (label.disposition, label.correct_tier, label.correct_action) == ("escalate", None, None)
+        assert label.label_note == "no deterministic signature: invariant 3"
+        assert label.precedent_exists  # the fail-then-pass history is still in the data
+        assert r.row.status == OK and r.outcome.kind == ESCALATED
+        assert r.outcome.reason == "no deterministic cause and no safe action; a human should look"
+        assert r.outcome.report.remediation is None  # the agent proposed nothing to act on
 
 
 def test_governance_scenarios_make_zero_model_calls(results: list[ScenarioResult]) -> None:
@@ -140,7 +142,7 @@ def test_table_has_a_row_per_scenario_and_labels_the_fake_model(results: list[Sc
     for r in results:
         assert r.row.scenario_id in text
     assert "scripted fake model is a test double" in text
-    assert "33 scenarios: 30 ok, 3 known label conflict, 0 mismatch" in text
+    assert "33 scenarios: 33 ok, 0 mismatch, 0 without fixture" in text
     for col in ("expected", "actual", "model calls", "tool calls", "tokens"):
         assert col in text
 

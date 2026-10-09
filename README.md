@@ -106,43 +106,27 @@ Human-run targets that need an API key or the GitHub playground (not part of the
 
 > **The agent column is a scripted model and is correct by construction offline.** This table validates the pipeline, the gates and the metric code. It says nothing about how a real model performs; that needs the human-run `record` and `eval-live`. The baseline column is real. A `*` marks n < 10.
 
-Label-conflict cases counted as misses:
+Metrics (dev and held-out reported separately):
 
 | metric | baseline / dev (n=24) | agent / dev (n=24) | baseline / held-out (n=9) | agent / held-out (n=9) |
 | --- | --- | --- | --- | --- |
 | False remediation rate (all cases; lower is better) | 0/24 = 0% | 0/24 = 0% | 0/9 = 0%* | 0/9 = 0%* |
-|   of which: acted where label says escalate/close | 0/12 = 0% | 0/12 = 0% | 0/4 = 0%* | 0/4 = 0%* |
-|   of which: acted with a different action than the label | 0/12 = 0% | 0/12 = 0% | 0/5 = 0%* | 0/5 = 0%* |
-| Remediation success (verified / attempted) | n/a (no verifier) | 9/9 = 100%* | n/a (no verifier) | 5/5 = 100%* |
-|   proxy: label-correct share of actions taken | 3/3 = 100%* | 9/9 = 100%* | 2/2 = 100%* | 5/5 = 100%* |
-| Remediation recall (label-remediate cases fixed correctly) | 3/12 = 25% | 9/12 = 75% | 2/5 = 40%* | 5/5 = 100%* |
-| Escalation precision | 12/21 = 57% | 12/15 = 80% | 4/7 = 57%* | 4/4 = 100%* |
-| Classification accuracy | 23/24 = 96% | 23/24 = 96% | 9/9 = 100%* | 9/9 = 100%* |
-| Layer accuracy | 24/24 = 100% | 24/24 = 100% | 9/9 = 100%* | 9/9 = 100%* |
-| Tool efficiency (resolved with cheap tools only) | 15/15 = 100% | 5/21 = 24% | 6/6 = 100%* | 1/9 = 11%* |
-| Recovery rate after a failed first attempt | n/a (never retries) | 1/5 (drills, dev)* | n/a (never retries) | n/a (no held-out drills) |
-
-Label-conflict cases excluded:
-
-| metric | baseline / dev (n=21) | agent / dev (n=21) | baseline / held-out (n=9) | agent / held-out (n=9) |
-| --- | --- | --- | --- | --- |
-| False remediation rate (all cases; lower is better) | 0/21 = 0% | 0/21 = 0% | 0/9 = 0%* | 0/9 = 0%* |
-|   of which: acted where label says escalate/close | 0/12 = 0% | 0/12 = 0% | 0/4 = 0%* | 0/4 = 0%* |
+|   of which: acted where label says escalate/close | 0/15 = 0% | 0/15 = 0% | 0/4 = 0%* | 0/4 = 0%* |
 |   of which: acted with a different action than the label | 0/9 = 0%* | 0/9 = 0%* | 0/5 = 0%* | 0/5 = 0%* |
 | Remediation success (verified / attempted) | n/a (no verifier) | 9/9 = 100%* | n/a (no verifier) | 5/5 = 100%* |
 |   proxy: label-correct share of actions taken | 3/3 = 100%* | 9/9 = 100%* | 2/2 = 100%* | 5/5 = 100%* |
 | Remediation recall (label-remediate cases fixed correctly) | 3/9 = 33%* | 9/9 = 100%* | 2/5 = 40%* | 5/5 = 100%* |
-| Escalation precision | 12/18 = 67% | 12/12 = 100% | 4/7 = 57%* | 4/4 = 100%* |
-| Classification accuracy | 20/21 = 95% | 20/21 = 95% | 9/9 = 100%* | 9/9 = 100%* |
-| Layer accuracy | 21/21 = 100% | 21/21 = 100% | 9/9 = 100%* | 9/9 = 100%* |
-| Tool efficiency (resolved with cheap tools only) | 15/15 = 100% | 5/21 = 24% | 6/6 = 100%* | 1/9 = 11%* |
+| Escalation precision | 15/21 = 71% | 15/15 = 100% | 4/7 = 57%* | 4/4 = 100%* |
+| Classification accuracy | 23/24 = 96% | 23/24 = 96% | 9/9 = 100%* | 9/9 = 100%* |
+| Layer accuracy | 24/24 = 100% | 24/24 = 100% | 9/9 = 100%* | 9/9 = 100%* |
+| Tool efficiency (resolved with cheap tools only) | 18/18 = 100% | 5/24 = 21% | 6/6 = 100%* | 1/9 = 11%* |
 | Recovery rate after a failed first attempt | n/a (never retries) | 1/5 (drills, dev)* | n/a (never retries) | n/a (no held-out drills) |
 
 Reading it honestly:
 
 - False remediation (the heaviest-weighted metric) is 0 for both systems on this dataset. For the agent that is guaranteed by the script plus the gate, so it checks that the gate and the metric work; it is not evidence of a safe model.
 - The baseline can only re-run, so it fixes few of the cases that need a diff (low recall); the scripted agent covers them. That gap is the scripted agent's design, not a measured model gain.
-- The 3 label-conflict cases (flaky tests labelled Tier 0 via flake precedent, but with no deterministic signature) are shown twice: counted as misses, and excluded. They are an open label question, not a model result.
+- The 3 flaky-test cases (only a generic exit code, no deterministic signature) are labelled escalate under invariant 3, so declining them is correct and they are scored like any other escalate case. Before this change they were labelled Tier 0 and shown as conflicts (see docs/design/BLOCKERS-B.md).
 - Held-out has 9 scenarios; every held-out figure is small-n.
 - Cost is the price table applied to the scripted usage; nothing was spent. Latency offline is not meaningful.
 
@@ -159,7 +143,7 @@ Non-goals: exhaustive root-causing; acting above a tier's deterministic eligibil
 - The offline model is scripted. No real-model numbers exist yet. `record` (replay fixtures) and `eval-live` are human-run and have not been run.
 - The live GitHub playground work (M8b) and live numbers (M9b) are human-only steps.
 - Tier 2 can never execute: there is no deterministic lock-holder liveness source, so every Tier 2 proposal escalates (safe by design).
-- 3 flaky-test scenarios have a label that conflicts with invariant 3 (BLOCKERS.md).
+- Flaky-test scenarios escalate under invariant 3 (no deterministic signature). A deterministic-signature flaky scenario is deferred until a real signature sample is integrated (BLOCKERS.md).
 - No real-log holdout yet; generalization beyond the generator's templates is untested.
 
 ## Repo layout

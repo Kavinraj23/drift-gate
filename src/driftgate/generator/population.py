@@ -649,6 +649,7 @@ def _labels(
             "first_fix_fails": s in wff_slots,
             "error_catalog_ids": list(spec.catalog_ids),
             "flaky_pipeline": s.pipeline.flaky,
+            "label_note": spec.label_note,
             "scenario_id": None,
         }
     return {

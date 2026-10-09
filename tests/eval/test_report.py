@@ -23,7 +23,6 @@ def case(sid: str = "sc-x", **kw: object) -> CaseResult:
     base: dict[str, object] = dict(
         scenario_id=sid,
         held_out=False,
-        conflict=False,
         disposition="escalate",
         correct_action=None,
         true_layer="L1",
@@ -85,7 +84,7 @@ def test_a_failed_first_attempt_that_was_acted_is_a_false_remediation_when_wrong
 def test_escalation_precision_and_recall() -> None:
     cases = [
         case("right-decline"),
-        case("conflict-decline", disposition="remediate", correct_action="rerun_failed_job"),
+        case("declined-remediable", disposition="remediate", correct_action="rerun_failed_job"),
         correct_t0("fixed"),
     ]
     m = compute_metrics(cases, has_verification=False)
@@ -137,7 +136,7 @@ def test_small_n_is_flagged_and_large_n_is_not() -> None:
 def tiny_report() -> ReportData:
     dev = [
         correct_t0("sc-1", verified=True),
-        case("sc-2", disposition="remediate", correct_action="rerun_failed_job", conflict=True),
+        case("sc-2", disposition="escalate", acted=False),
     ]
     held = [case("sc-3", held_out=True), case("sc-4", held_out=True, acted=True, action="rerun_failed_job")]
     cases = {"agent": {"dev": dev, "held-out": held}, "baseline": {"dev": dev, "held-out": held}}
@@ -152,15 +151,14 @@ def tiny_report() -> ReportData:
         "wrong_first_fix_stopped_by_gate": zero,
     }
     t3 = {"diffs_proposed": 0, "correct_diffs": 0, "correct_diffs_approved": 0, "correct_diffs_rejected": 0}
-    return ReportData("fake", ["fake"], cases, ["sc-2"], recovery, t3, {})
+    return ReportData("fake", ["fake"], cases, recovery, t3, {})
 
 
-def test_report_separates_held_out_and_counts_conflicts_both_ways() -> None:
+def test_report_separates_held_out_and_explains_the_flaky_cases() -> None:
     text = render_markdown(tiny_report())
     assert "baseline / dev (n=2)" in text and "agent / held-out (n=2)" in text
-    assert "counted as misses" in text and "excluded" in text
-    assert "baseline / dev (n=1)" in text  # the excluded table drops the conflict case from dev
-    assert "sc-2" in text.split("Label-conflict footnote")[1]
+    assert "counted as misses" not in text and "excluded" not in text  # one table, no conflict split
+    assert "labelled escalate under" in text.split("## Metrics")[1]
     # held-out false remediation: sc-4 acted on an escalate label
     assert "1/2 = 50%*" in text
 
@@ -186,14 +184,15 @@ def test_both_systems_cover_the_same_scenarios_and_sets_are_separate(data: Repor
     assert ids["agent"] == ids["baseline"]
 
 
-def test_known_label_conflicts_are_reported_explicitly(data: ReportData) -> None:
-    assert data.conflict_ids == ["sc-05", "sc-07", "sc-13"]
+def test_flaky_cases_are_scored_as_escalations_not_misses(data: ReportData) -> None:
+    """Labels now agree with the gate: the three flaky cases are escalate labels, so they are not recall misses."""
+    dev = data.cases["agent"]["dev"]
+    agent = report.compute_metrics(dev, has_verification=True)
+    assert agent.remediation_recall.denominator == sum(c.disposition == "remediate" for c in dev) == 9
+    assert agent.remediation_recall.numerator == 9
+    assert not hasattr(data, "conflict_ids")
     text = render_markdown(data)
-    assert "sc-05, sc-07, sc-13" in text
-    agent = report.compute_metrics(data.cases["agent"]["dev"], has_verification=True)
-    kept = report.compute_metrics([c for c in data.cases["agent"]["dev"] if not c.conflict], has_verification=True)
-    assert agent.remediation_recall.denominator == kept.remediation_recall.denominator + 3
-    assert agent.remediation_recall.numerator == kept.remediation_recall.numerator
+    assert "label-conflict" not in text.lower() and "sc-05, sc-07, sc-13" not in text
 
 
 def test_agent_never_acts_wrongly_offline_and_baseline_recall_is_lower(data: ReportData) -> None:
@@ -222,9 +221,9 @@ def test_main_writes_artifacts_to_the_given_dir_and_is_deterministic(
     md = (out / "report.md").read_text(encoding="utf-8")
     assert md == render_markdown(data)  # same dataset, same output: no timestamps, no ordering noise
     js = json.loads((out / "report.json").read_text(encoding="utf-8"))
-    assert js["label_conflicts"] == ["sc-05", "sc-07", "sc-13"] and "SCRIPTED" in js["honesty"]
-    assert set(js["metrics"]) == {"conflicts_counted", "conflicts_excluded"}
-    assert js["metrics"]["conflicts_counted"]["agent/held-out"]["n"] == 9
+    assert "label_conflicts" not in js and "SCRIPTED" in js["honesty"]
+    assert set(js["metrics"]) == {f"{s}/{t}" for s in report.SYSTEMS for t in report.SETS}
+    assert js["metrics"]["agent/held-out"]["n"] == 9
 
 
 def test_readme_table_matches_the_current_report(data: ReportData) -> None:

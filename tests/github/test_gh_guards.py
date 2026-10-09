@@ -324,7 +324,7 @@ def test_adapter_failures_surface_without_the_token(
 
 
 def test_load_github_config_reads_only_the_given_mapping_and_never_prints(capsys: pytest.CaptureFixture[str]) -> None:
-    cfg = load_github_config({"DRIFTGATE_PLAYGROUND_REPO": REPO, "GITHUB_TOKEN": TOKEN})
+    cfg = load_github_config({"DRIFTGATE_PLAYGROUND_REPO": REPO, "PLAYGROUND_PAT": TOKEN})
     assert cfg.repo == REPO and cfg.token == TOKEN
     out = capsys.readouterr()
     assert TOKEN not in out.out + out.err and TOKEN not in repr(cfg)

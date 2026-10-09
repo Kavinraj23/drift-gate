@@ -30,7 +30,7 @@ from driftgate.domain import SourceError
 API_URL = "https://api.github.com"
 BRANCH_PREFIX = "driftgate/"
 PLAYGROUND_REPO_ENV = "DRIFTGATE_PLAYGROUND_REPO"
-TOKEN_ENV = "GITHUB_TOKEN"
+TOKEN_ENV = "PLAYGROUND_PAT"
 
 _REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+")
 

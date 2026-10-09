@@ -133,6 +133,10 @@ def test_audit_does_not_import_tools_or_agents() -> None:
 CREDS_FILE = "." + "env"
 
 
+def _is_creds_name(base: str) -> bool:
+    return base == CREDS_FILE or base.startswith(CREDS_FILE + ".")
+
+
 def _creds_file_literals(path: Path) -> list[int]:
     """Line numbers of string literals naming the credentials file (docstrings excluded)."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -150,7 +154,7 @@ def _creds_file_literals(path: Path) -> list[int]:
         if isinstance(n, ast.Constant)
         and isinstance(n.value, str)
         and id(n) not in docstrings
-        and n.value.replace("\\", "/").rsplit("/", 1)[-1] == CREDS_FILE
+        and _is_creds_name(n.value.replace("\\", "/").rsplit("/", 1)[-1])
     )
 
 
@@ -162,10 +166,11 @@ def test_credentials_file_is_not_opened_outside_the_confined_modules() -> None:
 def test_credentials_file_detector_flags_direct_reads(tmp_path: Path) -> None:
     f = tmp_path / "x.py"
     f.write_text(
-        f'open("{CREDS_FILE}")\nPath("{CREDS_FILE}").read_text()\nPath("a") / "{CREDS_FILE}"\n"""doc"""\n',
+        f'open("{CREDS_FILE}")\nPath("{CREDS_FILE}").read_text()\nPath("a") / "{CREDS_FILE}"\n"""doc"""\n'
+        f'open("a/{CREDS_FILE}.local")\nopen("{CREDS_FILE}.production")\nopen("x{CREDS_FILE}ample")\n',
         encoding="utf-8",
     )
-    assert _creds_file_literals(f) == [1, 2, 3]
+    assert _creds_file_literals(f) == [1, 2, 3, 5, 6]
 
 
 def test_network_is_blocked_in_tests() -> None:

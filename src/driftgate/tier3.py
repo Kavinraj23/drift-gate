@@ -29,7 +29,7 @@ from driftgate.domain import Evidence, ExecutionSource, Remediation, Review, Sou
 from driftgate.llm.budget import BudgetView, InvestigationBudget
 from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
-from driftgate.redaction import redact
+from driftgate.redaction import REDACTED, redact
 from driftgate.tools import ToolContext
 
 BRANCH_PREFIX = "driftgate/"
@@ -61,6 +61,8 @@ PROTECTED_PATTERNS: tuple[str, ...] = (
     r"(^|/)\.driftgate(/|$)",
     r"(^|/)\.claude(/|$)",
 )
+
+BROAD_NAME = "credential-like literal"
 
 SECRET_PATTERNS: tuple[tuple[str, str], ...] = (
     ("aws access key id", r"\bAKIA[0-9A-Z]{16}\b"),
@@ -125,13 +127,28 @@ def path_allowed_for(action: str, path: str) -> bool:
     return any(fnmatchcase(path if "/" in pat else name, pat) for pat in ACTION_PATHS.get(action, ()))
 
 
+#: Non-literal references to a secret (CI expressions, shell/Terraform variables). They are neutralized before the
+#: broad redaction detector runs, so `token: ${{ secrets.X }}` and `password = var.db_password` are not flagged
+#: while a literal credential elsewhere on the same line still is.
+REFERENCE_RE = re.compile(
+    r"\$\{\{[^}\n]*\}\}"  # ${{ secrets.X }}, ${{ env.X }}
+    r"|\$\{[A-Za-z_][^}\s]*\}"  # ${VAR}, ${var.x}
+    r"|\$\([^)\n]*\)"  # $(cmd)
+    r"|\$[A-Za-z_]\w*"  # $VAR
+    r"|(?<![\w.-])(?:secrets|vars|env|inputs|var|local|data|module|each|github)\.[A-Za-z_][\w.\[\]*-]*"
+    r"|(?:os\.environ|process\.env)(?:\[[^\]\n]*\]|\.[A-Za-z_]\w*)"
+)
+
+
 def find_secret_literals(added_lines: Iterable[str]) -> list[str]:
-    """Names of the secret patterns that match, never the matching text."""
+    """Names of the secret checks that match, never the matching text."""
     hits: list[str] = []
     for line in added_lines:
-        for name, pattern in SECRET_PATTERNS:
-            if re.search(pattern, line) and name not in hits:
-                hits.append(name)
+        neutral = REFERENCE_RE.sub(REDACTED, line)  # references are not literals; any literal beside them remains
+        matched = [name for name, pattern in SECRET_PATTERNS if re.search(pattern, neutral)]
+        if not matched and redact(neutral) != neutral:  # the broad detectors name a line the floor patterns missed
+            matched = [BROAD_NAME]
+        hits.extend(n for n in matched if n not in hits)
     return hits
 
 

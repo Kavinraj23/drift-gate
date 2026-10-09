@@ -259,6 +259,84 @@ def test_references_to_secrets_are_not_literals() -> None:
     assert find_secret_literals(["token: ${{ secrets.GITHUB_TOKEN }}", "password = var.db_password"]) == []
 
 
+# Secret-shaped test values are assembled from parts so this file holds no literal that scanners would flag.
+_RAND = "Zq8" + "Xv2Lm9" + "Rt4Pw7Kc1" + "Hn5Bd3Gs6Yj0"  # 30 random-looking characters
+BROAD_SECRET_LINES = [
+    "SLACK_BOT = " + "xox" + "b-1234567890-abcdefghijkl",
+    "url: https://hooks." + "slack.com/services/T0000000/B0000000/" + "abcdefghijklmnopqrstuvwx",
+    "stripe = " + "sk_" + "live_" + "abcdefghijklmnop1234",
+    "restricted = " + "rk_" + "live_" + "abcdefghijklmnop1234",
+    "maps = " + "AI" + "za" + "A" * 35,
+    "token = " + "glp" + "at-" + "abcdefghijklmnopqrst12",
+    "pat = " + "github_" + "pat_" + "abcdefghijklmnopqrst12",
+    "jwt = " + "ey" + "J" + "abcdefghij.abcdefghij.abcdefghij",
+    "DATABASE_URL=postgres://app:" + "s3cret" + "@db.internal:5432/app",
+    'password = "p@ssw0rd!x"',
+    "client_secret_blob: " + _RAND,
+]
+
+
+@pytest.mark.parametrize("line", BROAD_SECRET_LINES)
+def test_broad_secret_shapes_are_flagged_without_echo(line: str) -> None:
+    assert find_secret_literals([line])
+    text = make_unified_diff({"requirements.txt": GOOD}, {"requirements.txt": GOOD + line + "\n"})
+    res = check(text, {"requirements.txt": GOOD})
+    assert "secret_literal" in res.codes
+    secret_part = line.split("= ", 1)[-1].split(": ", 1)[-1]
+    assert secret_part not in res.reason and line not in res.reason
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "token: ${{ secrets.GITHUB_TOKEN }}",
+        "      GH_TOKEN: ${{ secrets.GH_TOKEN }}",
+        "password = var.db_password",
+        "password = local.db_password",
+        "password = data.aws_secretsmanager_secret_version.db.secret_string",
+        "api_key: ${{ env.API_KEY }}",
+        'password = "${var.db_password}"',
+        "api_key=$API_KEY",
+        "token: ${GITHUB_TOKEN}",
+        "secret: secrets.MY_SECRET",
+        "url: https://user:${{ secrets.PW }}@host/repo",
+        "run: curl -H 'Authorization: Bearer ${{ secrets.TOKEN }}' https://example.com",
+        "requests==2.31.0",
+        'resource "aws_s3_bucket" "logs" {',
+        "      - uses: actions/checkout@v4",
+        'variable "db_password" {',
+    ],
+)
+def test_benign_references_and_normal_code_are_not_flagged(line: str) -> None:
+    assert find_secret_literals([line]) == []
+
+
+def test_literal_secret_on_a_line_with_a_reference_is_still_flagged() -> None:
+    lit = "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789"
+    assert find_secret_literals([f"token: ${{{{ secrets.X }}}} # {lit}"])
+    assert find_secret_literals(["password = var.x; backup_password = " + '"p@ssw0rd!x"'])
+
+
+def test_undefined_variable_scenario_diffs_pass_the_secret_check(
+    dataset_dir: Path, t3_labels: list[FailureLabel]
+) -> None:
+    labels = [lb for lb in t3_labels if lb.correct_action == "fix_undefined_variable"]
+    assert labels
+    for label in labels:
+        res = _check_label(dataset_dir, label, label.fix_diff or "", label.fix_paths)
+        assert "secret_literal" not in res.codes and res.ok, (label.execution_id, res.reason)
+
+
+def test_secret_scope_fix_diff_passes_the_secret_check() -> None:
+    # The synthetic dataset has no fix_secret_scope scenario, so this is the typical shape: pass the secret through
+    # a scoped reference instead of a literal.
+    path = ".github/workflows/ci.yml"
+    old = "steps:\n  - run: ./deploy.sh\n"
+    env = "    env:\n      DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}\n      password: ${{ secrets.DB_PASSWORD }}\n"
+    res = check(make_unified_diff({path: old}, {path: old + env}), {path: old}, action="fix_secret_scope")
+    assert res.ok, res.reason
+
+
 def test_additive_before_subtractive_for_multi_file_changes() -> None:
     files = {"main.tf": "a\nb\nc\n", "variables.tf": "x\n"}
     shrink = ("main.tf", "a\nb\nc\n", "a\nc\n")

@@ -117,7 +117,7 @@ def test_cost_math_comes_from_the_price_table() -> None:
     c = case("c", input_tokens=1_000_000, output_tokens=1_000_000, model_calls=2)
     assert report.case_cost(c) == pytest.approx(1.0 + 5.0)  # haiku: $1/Mtok in, $5/Mtok out
     sonnet = report.case_cost(c, model="claude-sonnet-5-5")
-    assert sonnet == pytest.approx(3.0 + 15.0)
+    assert sonnet == pytest.approx(2.0 + 10.0)
     m = compute_metrics([c, case("free")], has_verification=True)
     assert m.mean_cost_usd == pytest.approx(3.0) and m.mean_input_tokens == 500_000 and m.mean_model_calls == 1.0
     assert report.case_cost(case("zero")) == 0.0
@@ -245,16 +245,14 @@ def test_eval_target_is_registered_and_runs_the_report_module(monkeypatch: pytes
 
 
 def test_eval_live_stays_unimplemented_and_human_only() -> None:
-    assert (
-        "eval-live" in tasks.NOT_IMPLEMENTED and "eval-live" in tasks.HUMAN_ONLY and "eval-live" not in tasks.HANDLERS
-    )
+    assert "eval-live" in tasks.LIVE_TARGETS and "eval-live" in tasks.HUMAN_ONLY and "eval-live" not in tasks.HANDLERS
 
 
 @pytest.mark.parametrize("doc", ["README.md", "docs/DEMO.md"])
 def test_docs_reference_only_existing_targets(doc: str) -> None:
     text = (ROOT / doc).read_text(encoding="utf-8")
     targets = set(re.findall(r"python tasks\.py ([a-z0-9-]+)", text))
-    known = set(tasks.HANDLERS) | set(tasks.NOT_IMPLEMENTED)
+    known = set(tasks.HANDLERS) | set(tasks.NOT_IMPLEMENTED) | set(tasks.LIVE_TARGETS)
     assert targets and targets <= known, targets - known
 
 

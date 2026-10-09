@@ -236,4 +236,4 @@ def test_tasks_e2e_is_wired() -> None:
     spec.loader.exec_module(tasks)
     assert "e2e" in tasks.HANDLERS and "e2e" not in tasks.NOT_IMPLEMENTED
     assert {"M0", "M1", "M2", "M3", "M4", "M5"} <= tasks.IMPLEMENTED_MILESTONES
-    assert "record" in tasks.NOT_IMPLEMENTED and "record" in tasks.HUMAN_ONLY
+    assert "record" in tasks.LIVE_TARGETS and "record" in tasks.HUMAN_ONLY

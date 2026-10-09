@@ -15,11 +15,22 @@ SPEC.loader.exec_module(tasks)
 def test_not_implemented_target_exits_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Only human-only targets are still unimplemented; use a root without `.autonomous` so the
-    # not-implemented path (not the human-only refusal) is what runs.
+    # e2e-live is still unimplemented; use a root without `.autonomous` so the not-implemented path (not the
+    # human-only refusal) is what runs.
     monkeypatch.setattr(tasks, "ROOT", tmp_path)
-    assert tasks.main(["tasks.py", "eval-live"]) == 1
-    assert "not implemented (M9b)" in capsys.readouterr().out
+    assert tasks.main(["tasks.py", "e2e-live"]) == 1
+    assert "not implemented (M8b)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("target", ["record", "eval-live"])
+def test_live_targets_dispatch_to_the_live_module_with_options(
+    target: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(tasks, "ROOT", tmp_path)
+    monkeypatch.setattr(tasks, "_live", lambda t, extra: seen.append((t, extra)) or 0)
+    assert tasks.main(["tasks.py", target, "--estimate"]) == 0
+    assert seen == [(target, ["--estimate"])]
 
 
 @pytest.mark.parametrize("target", sorted(tasks.HUMAN_ONLY))

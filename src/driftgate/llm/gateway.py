@@ -37,6 +37,9 @@ def _estimate_input_tokens(request: ModelRequest) -> int:
     return chars // 4 + 1
 
 
+estimate_input_tokens = _estimate_input_tokens  # public: the live-run cost estimator uses the same rough count
+
+
 def build_payload(request: ModelRequest, model: str) -> dict[str, Any]:
     """SDK `messages.create` kwargs with cache_control on the static system prompt and tool definitions."""
     payload: dict[str, Any] = {

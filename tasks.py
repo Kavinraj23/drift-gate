@@ -14,11 +14,10 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
 NOT_IMPLEMENTED: dict[str, str] = {
-    "record": "M5",
-    "eval-live": "M9b",
     "e2e-live": "M8b",
     "playground-reset": "M8b",
 }
+LIVE_TARGETS = {"record", "eval-live"}  # implemented in driftgate.eval.live; human-only
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
@@ -123,14 +122,25 @@ HANDLERS: dict[str, Callable[[], int]] = {
 }
 
 
+def _live(target: str, extra: list[str]) -> int:
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.live", target, *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: python tasks.py <target>")
+    if len(argv) < 2:
+        print("usage: python tasks.py <target> [options]")
         return 2
     target = argv[1]
+    if len(argv) > 2 and target not in LIVE_TARGETS:
+        print("usage: python tasks.py <target>")
+        return 2
     if target in HUMAN_ONLY and (ROOT / ".autonomous").exists():
         print(f"refusing: '{target}' is human-only and .autonomous exists")
         return 1
+    if target in LIVE_TARGETS:
+        return _live(target, argv[2:])
     if target in HANDLERS:
         return HANDLERS[target]()
     if target in NOT_IMPLEMENTED:

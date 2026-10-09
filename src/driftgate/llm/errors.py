@@ -38,6 +38,22 @@ class FixtureMissing(GatewayError):
         super().__init__(f"no replay fixture for request key {key} (expected {path})")
 
 
+class FixtureStale(FixtureMissing):
+    """A fixture exists but was recorded under a different prompt/schema fingerprint."""
+
+    def __init__(self, key: str, path: str, recorded: str | None, expected: str) -> None:
+        self.recorded = recorded
+        self.expected = expected
+        GatewayError.__init__(
+            self,
+            f"stale replay fixture {path}: recorded under prompt fingerprint {recorded or 'none (legacy)'}, "
+            f"current is {expected}. Prompts or tool schemas changed; re-record with "
+            "`python tasks.py record --all --only-stale --yes-spend` (human-only).",
+        )
+        self.key = key
+        self.path = path
+
+
 class UnknownModel(GatewayError):
     """No price table entry for the model; fail closed rather than guess a cost."""
 

@@ -71,6 +71,7 @@ class CaseResult:
     tool_calls: int
     tools: tuple[str, ...]
     latency_s: float = 0.0
+    cost_usd: float | None = None  # real spend for this case (live runs); None means "price the tokens"
 
     @property
     def correct_action_taken(self) -> bool:
@@ -144,7 +145,7 @@ def compute_metrics(
         tool_efficiency=Rate(sum(not (set(c.tools) & MEDIUM_TOOLS) for c in resolved), len(resolved)),
         mean_input_tokens=_mean((c.input_tokens for c in cases), n),
         mean_output_tokens=_mean((c.output_tokens for c in cases), n),
-        mean_cost_usd=_mean((case_cost(c, prices) for c in cases), n),
+        mean_cost_usd=_mean((case_cost(c, prices) if c.cost_usd is None else c.cost_usd for c in cases), n),
         mean_tool_calls=_mean((c.tool_calls for c in cases), n),
         mean_model_calls=_mean((c.model_calls for c in cases), n),
         mean_latency_s=_mean((c.latency_s for c in cases), n),
@@ -152,7 +153,7 @@ def compute_metrics(
 
 
 # -- building cases from real runs ---------------------------------------------------------------------------------
-def agent_case(res: ScenarioResult) -> CaseResult:
+def agent_case(res: ScenarioResult, *, real_cost: bool = False) -> CaseResult:
     out, label = res.outcome, res.label
     if out is None or label is None:
         raise ValueError(f"{res.row.scenario_id} produced no outcome (no replay fixture); report it, do not score it")
@@ -181,6 +182,7 @@ def agent_case(res: ScenarioResult) -> CaseResult:
         tool_calls=out.tool_calls,
         tools=tuple(names),
         latency_s=run.latency_s,
+        cost_usd=run.cost_usd if real_cost else None,
     )
 
 
@@ -216,6 +218,20 @@ class ReportData:
     tier3: dict[str, Any]
     bad_diff_drills: dict[str, Any]
     loop_drills: list[dict[str, Any]] = field(default_factory=list)
+    live: LiveInfo | None = None
+
+
+@dataclass
+class LiveInfo:
+    """Present only on a report whose agent column is a REAL model (the human-run `eval-live`)."""
+
+    models: dict[str, str]  # role -> model name
+    spent_usd: float
+    reserve_usd: float
+    ran: list[str]  # scenario ids that ran
+    not_run: list[str]  # scenario ids skipped to keep the reserve / caps
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
 
 
 def _tier3_scores(results: list[ScenarioResult], source: SyntheticSource) -> list[Tier3Score]:
@@ -256,11 +272,26 @@ def build_report(
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}")
     truth = load_ground_truth(data_dir)
-    source = SyntheticSource(data_dir)
     results = e2e.run_all(data_dir, mode=mode, fixtures_dir=fixtures_dir, truth=truth)
+    return build_report_from_results(data_dir, results, mode=mode, with_drills=with_drills, truth=truth)
+
+
+def build_report_from_results(
+    data_dir: Path,
+    results: list[ScenarioResult],
+    *,
+    mode: str,
+    with_drills: bool = True,
+    truth: GroundTruth | None = None,
+    live: LiveInfo | None = None,
+) -> ReportData:
+    """Score already-run scenarios. `live` marks the agent column as a real model (costs come from real usage,
+    the scripted loop drills are not mixed in)."""
+    truth = truth or load_ground_truth(data_dir)
+    source = SyntheticSource(data_dir)
     scored = [r for r in results if r.outcome is not None]
     ctx = ToolContext(source)
-    agent_cases = [agent_case(r) for r in scored]
+    agent_cases = [agent_case(r, real_cost=live is not None) for r in scored]
     base_cases = [
         baseline_case(
             r.label,  # type: ignore[arg-type]
@@ -275,7 +306,7 @@ def build_report(
     }
     drills = (
         e2e.run_all(data_dir, mode="fake", truth=truth, drills=True)[len(results) :]
-        if with_drills and mode != "replay"
+        if with_drills and mode != "replay" and live is None
         else []
     )
     loop = [(r.label, r.outcome) for r in [*scored, *drills] if r.label is not None and r.outcome is not None]
@@ -296,8 +327,11 @@ def build_report(
         cases=cases,
         recovery=recovery,
         tier3=quality,
-        bad_diff_drills=bad_diff_drills(data_dir, truth, source) if with_drills and mode != "replay" else {},
+        bad_diff_drills=(
+            bad_diff_drills(data_dir, truth, source) if with_drills and mode != "replay" and live is None else {}
+        ),
         loop_drills=[asdict(r.row) for r in drills],
+        live=live,
     )
 
 
@@ -311,6 +345,25 @@ HONESTY = (
     "or label finding, not model skill. The synthetic dataset is generated; error "
     "text is copied from real sources but unverified (BLOCKERS.md). No production traffic is involved."
 )
+
+
+LIVE_HONESTY = (
+    "**Read this before the numbers.** The agent column in THIS report is a REAL model ({models}) called through the "
+    "gateway, on the same synthetic scenarios and the same simulated remediation target as the offline report; "
+    "nothing was run against production. It is not a scripted model, so these numbers, unlike the offline ones, say "
+    "something about the model: but only on this small, generated, template-based dataset, with `n` shown beside "
+    "every figure. A trailing `*` marks n < {small_n}, which is too small to read as a rate; every held-out cell is "
+    "small. Cost, tokens and latency are measured from each response's `usage` and wall clock, and spend was "
+    "recorded in the persistent ledger ({spent}, reserve ${reserve:.2f} kept). A single run is one sample from a "
+    "stochastic model. The baseline column is the deterministic pipeline with no model calls. Known label conflicts "
+    "(BLOCKERS.md) still count as misses in the first table. Scenarios the budget did not reach are listed as not "
+    "run and are absent from every n. This file never replaces the offline `report.md`."
+)
+
+
+def live_honesty(live: LiveInfo) -> str:
+    models = ", ".join(f"{role}: {name}" for role, name in sorted(live.models.items()))
+    return LIVE_HONESTY.format(models=models, small_n=SMALL_N, spent=f"${live.spent_usd:.4f}", reserve=live.reserve_usd)
 
 
 def fmt(r: Rate | None, na: str = "n/a") -> str:
@@ -368,16 +421,27 @@ def _recovery_cell(data: ReportData, key: tuple[str, str]) -> str:
 
 
 def _cost_table(data: ReportData) -> str:
+    live = data.live is not None
     cols = _columns()
     ms = {k: compute_metrics(data.cases[k[0]][k[1]], has_verification=k[0] == "agent") for k in cols}
     header = ["per case (mean)"] + [f"{sys_} / {s}" for sys_, s in cols]
     spec: tuple[tuple[str, Callable[[Metrics], str]], ...] = (
         ("input tokens", lambda m: f"{m.mean_input_tokens:,.0f}"),
         ("output tokens", lambda m: f"{m.mean_output_tokens:,.0f}"),
-        (f"USD (price table, as {PRICED_AS}; nothing was spent)", lambda m: f"${m.mean_cost_usd:.4f}"),
+        (
+            "USD, real (from response usage, price table in llm/config.py)"
+            if live
+            else f"USD (price table, as {PRICED_AS}; nothing was spent)",
+            lambda m: f"${m.mean_cost_usd:.4f}",
+        ),
         ("tool calls", lambda m: f"{m.mean_tool_calls:.1f}"),
         ("model calls", lambda m: f"{m.mean_model_calls:.1f}"),
-        ("latency (s; scripted model, not meaningful offline)", lambda m: f"{m.mean_latency_s:.1f}"),
+        (
+            "latency (s, model calls only, wall clock)"
+            if live
+            else "latency (s; scripted model, not meaningful offline)",
+            lambda m: f"{m.mean_latency_s:.1f}",
+        ),
     )
     return _md_table(header, [[name] + [f(ms[k]) for k in cols] for name, f in spec])
 
@@ -393,20 +457,37 @@ def render_markdown(data: ReportData) -> str:
         "fake": "scripted fake model for every case",
         "replay": "gateway replay of recorded fixtures",
         "auto": "replay where fixtures exist, otherwise the scripted fake model",
+        "live": "real model through the gateway",
     }[data.mode]
     mixed = any(m.startswith("fake") for m in data.models)
     t3, rec, bad = data.tier3, data.recovery, data.bad_diff_drills
     n_cases = sum(len(v) for v in data.cases["agent"].values())
+    live = data.live
     lines = [
-        "# DriftGate offline evaluation: agent vs. deterministic baseline",
+        "# DriftGate live evaluation (REAL model): agent vs. deterministic baseline"
+        if live
+        else "# DriftGate offline evaluation: agent vs. deterministic baseline",
         "",
-        f"Mode: `{data.mode}` ({mode_note}). Agent model source: {models}."
-        + (" The agent column is SCRIPTED." if mixed else ""),
+        (
+            f"Mode: `live` (real model through the gateway). Agent model source: {models}."
+            if live
+            else f"Mode: `{data.mode}` ({mode_note}). Agent model source: {models}."
+            + (" The agent column is SCRIPTED." if mixed else "")
+        ),
         f"Cases: {n_cases} labelled synthetic scenarios (dev and held-out reported separately).",
+        *(
+            [
+                f"Ran {len(live.ran)}; not run (budget or reserve): {', '.join(live.not_run) or 'none'}. "
+                f"Spend this run: ${live.spent_usd:.4f}; tokens in/out: {live.total_input_tokens:,}/"
+                f"{live.total_output_tokens:,}."
+            ]
+            if live
+            else []
+        ),
         "",
         "## Honesty",
         "",
-        HONESTY,
+        live_honesty(live) if live else HONESTY,
         "",
         "Figures are `k/n = rate`. A trailing `*` marks n < "
         f"{SMALL_N}: too small to read as a rate. Every held-out cell is small.",
@@ -424,8 +505,12 @@ def render_markdown(data: ReportData) -> str:
         "",
         "## Verification loop (agent only)",
         "",
-        f"Computed over {rec['cases']} cases: the labelled scenarios plus {rec['drills_run']} scripted loop drills "
-        "(a wrong first fix is injected, because the real gate stops most before they run).",
+        (
+            f"Computed over the {rec['cases']} cases that ran (no scripted loop drills in a live report)."
+            if live
+            else f"Computed over {rec['cases']} cases: the labelled scenarios plus {rec['drills_run']} scripted loop "
+            "drills (a wrong first fix is injected, because the real gate stops most before they run)."
+        ),
         "",
         f"- Remediation success (verified / attempted): {_fmt_json(rec['success'])}",
         f"- Recovery rate (verified fix after a failed first attempt): {_fmt_json(rec['recovered_by_verified_fix'])}",
@@ -441,7 +526,9 @@ def render_markdown(data: ReportData) -> str:
         f"(by resulting-file hash): {t3['correct_diffs']}; correct diffs approved: {t3['correct_diffs_approved']}; "
         f"correct diffs rejected: {t3['correct_diffs_rejected']}.",
     ]
-    if bad:
+    if live:
+        lines.append("- Seeded bad-diff drills use a scripted reviewer and were not run here.")
+    elif bad:
         lines.append(
             f"- Seeded bad diffs ({bad['runs']} runs, {len(BAD_KINDS)} kinds, strict scripted reviewer): "
             f"caught {bad['bad_diffs_caught']}/{bad['bad_diffs']} (no PR opened), missed {bad['bad_diffs_missed']}. "
@@ -450,6 +537,17 @@ def render_markdown(data: ReportData) -> str:
         )
     else:
         lines.append("- Seeded bad-diff drills were not run in this mode.")
+    if live:
+        lines += [
+            "",
+            "## What this does and does not show",
+            "",
+            "- Shows: how the configured real model behaved on these scenarios, end to end through the same "
+            "gates, with real cost and latency.",
+            "- Does not show: generalization beyond the generator's templates, behaviour on real production logs, "
+            "run-to-run variance (one run), or anything about a different model.",
+        ]
+        return "\n".join(lines) + "\n"
     lines += [
         "",
         "## What this does and does not show",
@@ -471,7 +569,8 @@ def to_json(data: ReportData) -> dict[str, Any]:
     out: dict[str, Any] = {
         "mode": data.mode,
         "models": data.models,
-        "honesty": HONESTY,
+        "honesty": live_honesty(data.live) if data.live else HONESTY,
+        "live": asdict(data.live) if data.live else None,
         "recovery": data.recovery,
         "tier3": data.tier3,
         "bad_diff_drills": data.bad_diff_drills,
@@ -492,8 +591,10 @@ def asdict_metrics(m: Metrics) -> dict[str, Any]:
 
 
 def write_report(data: ReportData, out_dir: Path) -> tuple[Path, Path]:
+    """Offline reports go to report.*; a live report goes to report-live.* and can never overwrite the offline one."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    md, js = out_dir / "report.md", out_dir / "report.json"
+    stem = "report-live" if data.live else "report"
+    md, js = out_dir / f"{stem}.md", out_dir / f"{stem}.json"
     md.write_text(render_markdown(data), encoding="utf-8")
     js.write_text(json.dumps(to_json(data), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return md, js

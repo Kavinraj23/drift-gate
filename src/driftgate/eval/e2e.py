@@ -21,6 +21,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from driftgate.adapters.synthetic import SyntheticSource
+from driftgate.agents.fingerprint import prompt_fingerprint
 from driftgate.audit import AuditEntry
 from driftgate.domain import RemediationTarget
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth, load_ground_truth
@@ -29,9 +30,9 @@ from driftgate.eval.scripted_agent import scripted_model, two_round_factory
 from driftgate.eval.tier3_scripts import revising_model_factory, scripted_reviewer, scripted_reviewer_factory
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.config import GatewayConfig
-from driftgate.llm.errors import FixtureMissing
+from driftgate.llm.errors import FixtureMissing, FixtureStale
 from driftgate.llm.gateway import Gateway
-from driftgate.llm.replay import FixtureStore
+from driftgate.llm.replay import STALE, FixtureStore, scenario_status
 from driftgate.llm.types import ModelClient, ModelRequest, ModelResponse
 from driftgate.orchestrator import (
     AWAITING_APPROVAL,
@@ -182,6 +183,19 @@ def _scripted_factory(label: FailureLabel, source: SyntheticSource, variant: str
     return lambda _e, _b: scripted_model(label, source, variant)
 
 
+def _wrapped(factory: ModelFactory, wrap: Callable[[ModelClient], ModelClient] | None) -> ModelFactory:
+    if wrap is None:
+        return factory
+    return lambda eid, budget: wrap(factory(eid, budget))
+
+
+def _is_stale(fixtures_dir: Path, label: FailureLabel, exc: FixtureMissing) -> bool:
+    """A missing fixture is `stale` when the manifest says this scenario was recorded under another fingerprint."""
+    if isinstance(exc, FixtureStale):
+        return True
+    return scenario_status(fixtures_dir, label.scenario_id or "", prompt_fingerprint()) == STALE
+
+
 def run_scenario(
     data_dir: Path,
     label: FailureLabel,
@@ -191,7 +205,9 @@ def run_scenario(
     fixtures_dir: Path | None = None,
     variant: str = "correct",
     reviewer: str = "strict",
+    wrap: Callable[[ModelClient], ModelClient] | None = None,
 ) -> ScenarioResult:
+    """`wrap` decorates every scripted model client (fake mode only); the cost estimator uses it to read requests."""
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}")
     source = SyntheticSource(data_dir)
@@ -201,20 +217,21 @@ def run_scenario(
             data_dir,
             label,
             held_out,
-            two_round_factory(label, source, "overconfident_tier0"),
+            _wrapped(two_round_factory(label, source, "overconfident_tier0"), wrap),
             "fake",
-            scripted_reviewer_factory(label, source, reviewer),
+            _wrapped(scripted_reviewer_factory(label, source, reviewer), wrap),
         )
     if mode == "fake":
         return _run(
             data_dir,
             label,
             held_out,
-            _scripted_factory(label, source, variant),
+            _wrapped(_scripted_factory(label, source, variant), wrap),
             "fake",
-            scripted_reviewer_factory(label, source, reviewer),
+            _wrapped(scripted_reviewer_factory(label, source, reviewer), wrap),
         )
-    gateway = Gateway(GatewayConfig(), mode="replay", fixtures=FixtureStore(fixtures_dir or DEFAULT_FIXTURES))
+    fixtures = fixtures_dir or DEFAULT_FIXTURES
+    gateway = Gateway(GatewayConfig(), mode="replay", fixtures=FixtureStore(fixtures, fingerprint=prompt_fingerprint()))
     fallbacks: list[bool] = []
     try:
         return _run(
@@ -226,7 +243,8 @@ def run_scenario(
             _replay_reviewer_factory(gateway, label, source, reviewer, fallbacks),
             fallbacks,
         )
-    except FixtureMissing:
+    except FixtureMissing as exc:
+        stale = _is_stale(fixtures, label, exc)
         if mode == "replay":
             row = Row(
                 label.scenario_id or "",
@@ -234,7 +252,7 @@ def run_scenario(
                 label.execution_id,
                 label.fault_id,
                 expected_text(label),
-                "no replay fixture",
+                "stale replay fixture (prompts changed; re-record)" if stale else "no replay fixture",
                 NO_FIXTURE,
                 "replay",
                 0,
@@ -247,8 +265,32 @@ def run_scenario(
         label,
         held_out,
         _scripted_factory(label, source, variant),
-        "fake (no fixture)",
+        "fake (stale fixture)" if stale else "fake (no fixture)",
         scripted_reviewer_factory(label, source, reviewer),
+    )
+
+
+def run_with_gateway(
+    data_dir: Path,
+    label: FailureLabel,
+    held_out: bool,
+    gateway: Gateway,
+    model_name: str,
+    *,
+    wrap_client: Callable[[ModelClient], ModelClient] | None = None,
+) -> ScenarioResult:
+    """One scenario with the investigator AND the reviewer driven through an already-built gateway.
+
+    This module never builds a gateway for a real model or reads credentials; the human-run live entry points
+    (`eval/live.py`) construct the gateway and pass it in. `wrap_client` decorates each bound client (error spy)."""
+    wrap = wrap_client or (lambda c: c)
+    return _run(
+        data_dir,
+        label,
+        held_out,
+        lambda _e, budget: wrap(gateway.bind(budget, role="investigator")),
+        model_name,
+        lambda _e, budget: wrap(gateway.bind(budget, role="reviewer")),
     )
 
 

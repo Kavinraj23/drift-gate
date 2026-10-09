@@ -317,6 +317,72 @@ def test_literal_secret_on_a_line_with_a_reference_is_still_flagged() -> None:
     assert find_secret_literals(["password = var.x; backup_password = " + '"p@ssw0rd!x"'])
 
 
+_GH = "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789"
+_AWS = "AKIA" + "IOSFODNN7EXAMPLE"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "token: ${TOKEN:-" + _GH + "}",
+        "token: ${{ '" + _GH + "' }}",
+        "run: $(echo " + _AWS + ")",
+        "password = ${X}hunter2hunter2",
+        "password: ${{ secrets.A }}hunter2hunter2",
+        "url: https://u:${{ secrets.A }}literalpw@host",
+        "url: https://u:${PW}literalpw@host",
+        "token: secrets.A " + _GH,
+    ],
+)
+def test_literals_hidden_in_or_next_to_references_are_flagged(line: str) -> None:
+    assert find_secret_literals([line])
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "token: ${{ secrets.X }}",
+        "token: ${{secrets.X}}",
+        "password: '${{ secrets.DB_PASSWORD }}'",
+        "password = var.db_password",
+        "password = local.db.password",
+        "password = data.a.b.c",
+        "secret = secrets.MY_SECRET",
+        "api_key: env.API_KEY",
+        "api_key=$API_KEY",
+        "token: ${GITHUB_TOKEN}",
+        'password = "${var.db_password}"',
+        'password = os.environ["DB_PASSWORD"]',
+        "token = process.env.NPM_TOKEN",
+        "url: https://user:${{ secrets.PW }}@host/repo",
+    ],
+)
+def test_whole_value_references_are_not_flagged(line: str) -> None:
+    assert find_secret_literals([line]) == []
+
+
+def test_a_password_written_exactly_as_an_attribute_path_is_treated_as_a_reference() -> None:
+    # Pinned residual risk: `data.hunter2hunter2` cannot be told apart from a Terraform data reference, so it is
+    # allowed. Anything else in the value (a prefix, a suffix, quotes inside) is checked as written.
+    assert find_secret_literals(["password = data.hunter2hunter2"]) == []
+    assert find_secret_literals(["password = data.hunter2hunter2x!"])
+
+
+def test_a_reference_containing_a_vendor_token_is_never_a_reference() -> None:
+    assert find_secret_literals(["token: secrets." + _GH])
+    assert find_secret_literals(["password = var." + _AWS])
+
+
+def test_over_long_added_lines_are_rejected_fail_closed() -> None:
+    from driftgate.tier3 import MAX_SCAN_LINE
+
+    long_line = "x = " + "a" * MAX_SCAN_LINE
+    assert find_secret_literals([long_line]) == ["line too long to scan"]
+    assert find_secret_literals(["x = " + "a" * (MAX_SCAN_LINE - 10)]) == []
+    text = make_unified_diff({"requirements.txt": GOOD}, {"requirements.txt": GOOD + long_line + "\n"})
+    assert "secret_literal" in check(text, {"requirements.txt": GOOD}).codes
+
+
 def test_undefined_variable_scenario_diffs_pass_the_secret_check(
     dataset_dir: Path, t3_labels: list[FailureLabel]
 ) -> None:

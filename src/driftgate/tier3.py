@@ -127,27 +127,77 @@ def path_allowed_for(action: str, path: str) -> bool:
     return any(fnmatchcase(path if "/" in pat else name, pat) for pat in ACTION_PATHS.get(action, ()))
 
 
-#: Non-literal references to a secret (CI expressions, shell/Terraform variables). They are neutralized before the
-#: broad redaction detector runs, so `token: ${{ secrets.X }}` and `password = var.db_password` are not flagged
-#: while a literal credential elsewhere on the same line still is.
-REFERENCE_RE = re.compile(
-    r"\$\{\{[^}\n]*\}\}"  # ${{ secrets.X }}, ${{ env.X }}
-    r"|\$\{[A-Za-z_][^}\s]*\}"  # ${VAR}, ${var.x}
-    r"|\$\([^)\n]*\)"  # $(cmd)
+_VENDOR_FLOOR = 4  # SECRET_PATTERNS[:4] are token/key shapes (raw line); the last is the generic key/value one
+MAX_SCAN_LINE = 4000  # longer added lines are not scanned (regex cost) and are rejected, fail-closed
+LONG_LINE_NAME = "line too long to scan"
+
+_PATH = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[\d+\])*"
+_ROOTS = r"(?:secrets|vars|env|inputs|var|local|data|module|each|github)"
+#: A whole-value reference to a secret, never a literal: CI expression, shell/Terraform variable, or attribute path.
+#: Matched against the whitespace-collapsed form of the line (see `_collapse_expressions`).
+_REF = (
+    rf"(?:\$\{{\{{{_PATH}\}}\}}"  # ${{secrets.X}}
+    r"|\$\{[A-Za-z_]\w*\}"  # ${VAR}
+    rf"|\$\{{{_ROOTS}\.{_PATH}\}}"  # ${var.x}
     r"|\$[A-Za-z_]\w*"  # $VAR
-    r"|(?<![\w.-])(?:secrets|vars|env|inputs|var|local|data|module|each|github)\.[A-Za-z_][\w.\[\]*-]*"
-    r"|(?:os\.environ|process\.env)(?:\[[^\]\n]*\]|\.[A-Za-z_]\w*)"
+    rf"|{_ROOTS}\.{_PATH}"  # secrets.X, var.x, local.x.y, data.a.b.c
+    r"|os\.environ\[[\"'][A-Za-z_]\w*[\"']\]"
+    r"|process\.env\.[A-Za-z_]\w*)"
 )
+#: key/value form: the ENTIRE value is one reference (optional quotes, optional trailing comma or semicolon).
+_KV_REF = re.compile(rf"(?P<pre>[:=][ ]*[\"']?)(?P<ref>{_REF})(?P<post>[\"']?[ ]*[,;]?[ ]*)$")
+#: URL form: the whole password part of user:password@host is one reference.
+_URL_REF = re.compile(rf"(?P<pre>://[^/\s:@]*:)(?P<ref>{_REF})(?P<post>@)")
+#: Authorization scheme form: `Bearer REF`, `Authorization: token REF` (the reference ends at a quote, space or end).
+_AUTH_REF = re.compile(rf"(?P<pre>\b(?i:bearer|basic|token)[ ]+)(?P<ref>{_REF})(?P<post>(?=[\"'\s;,]|$))")
+_EXPR = re.compile(r"\$\{\{([^}\n]*)\}\}")
+
+
+def _collapse_expressions(line: str) -> str:
+    """`${{ secrets.X }}` -> `${{secrets.X}}`, so spaces inside an expression cannot hide what follows it."""
+    return _EXPR.sub(lambda m: "${{" + re.sub(r"\s+", "", m.group(1)) + "}}", line)
+
+
+def _neutralize_whole_value_references(line: str) -> str:
+    """Replace a reference with the redaction placeholder ONLY when it is the entire value of a key or URL password.
+
+    A reference with anything else around it in the value (`${X}hunter2hunter2`, `${TOKEN:-ghp_...}`,
+    `$(echo AKIA...)`) is left in place, and a reference that itself contains a vendor-shaped token is never treated
+    as a reference. Residual risk, accepted: a real password that is written exactly as an attribute path, such as
+    `data.hunter2hunter2`, is indistinguishable from a reference and is not flagged.
+    """
+
+    def sub(m: re.Match[str]) -> str:
+        ref = m.group("ref")
+        if redact(ref) != ref:
+            return m.group(0)
+        return m.group("pre") + REDACTED + m.group("post")
+
+    return _AUTH_REF.sub(sub, _URL_REF.sub(sub, _KV_REF.sub(sub, line)))
 
 
 def find_secret_literals(added_lines: Iterable[str]) -> list[str]:
-    """Names of the secret checks that match, never the matching text."""
+    """Names of the secret checks that match, never the matching text.
+
+    Vendor-shape patterns (the first four floor patterns) run on the RAW line. The generic key/value floor pattern and
+    the broad redaction detectors run on the line with whole-value references neutralised; every other character of
+    the line, including any literal inside or next to a reference, is checked as written.
+    Trade-off versus the old floor: `password = local.db_password` is no longer flagged by the old generic pattern
+    (it only allowed `${`, `$(`, `var.`, `secrets.`); a whole-value reference is the only thing newly allowed.
+    """
     hits: list[str] = []
     for line in added_lines:
-        neutral = REFERENCE_RE.sub(REDACTED, line)  # references are not literals; any literal beside them remains
-        matched = [name for name, pattern in SECRET_PATTERNS if re.search(pattern, neutral)]
-        if not matched and redact(neutral) != neutral:  # the broad detectors name a line the floor patterns missed
-            matched = [BROAD_NAME]
+        if len(line) > MAX_SCAN_LINE:
+            matched = [LONG_LINE_NAME]
+        else:
+            checked = _neutralize_whole_value_references(_collapse_expressions(line))
+            matched = [
+                name
+                for i, (name, pattern) in enumerate(SECRET_PATTERNS)
+                if re.search(pattern, line if i < _VENDOR_FLOOR else checked)
+            ]
+            if not matched and redact(checked) != checked:  # the broad detectors name a line the floor missed
+                matched = [BROAD_NAME]
         hits.extend(n for n in matched if n not in hits)
     return hits
 

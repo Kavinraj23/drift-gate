@@ -29,8 +29,8 @@ from driftgate.domain import Evidence, ExecutionSource, Remediation, Review, Sou
 from driftgate.llm.budget import BudgetView, InvestigationBudget
 from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
+from driftgate.redaction import redact
 from driftgate.tools import ToolContext
-from driftgate.tools.redaction import redact
 
 BRANCH_PREFIX = "driftgate/"
 PR_BASE_BRANCH = "main"
@@ -250,18 +250,14 @@ class PullRequestRecord:
 
 
 def redact_pull_request(pr: PullRequest) -> PullRequest:
-    """The single choke point for outgoing Tier 3 text: title, body, the model-authored diff and file contents.
+    """The single choke point for outgoing Tier 3 free text: the title and body only.
 
-    Every pull request is passed through here before any target sees it. The commit message is derived from the
-    (validated) path by the target, so it carries no free text.
+    The diff and file contents are deliberately NOT redacted: redaction is lossy on code (`token: ${{ secrets.X }}`),
+    and the committed files must equal what `check_diff` verified and the reviewer approved. Code is verified, not
+    rewritten: `check_diff` rejects any added line that looks like a credential before a PR is ever built.
+    The commit message is derived from a validated path by the target, so it carries no free text.
     """
-    return replace(
-        pr,
-        title=redact(pr.title),
-        body=redact(pr.body),
-        diff_text=redact(pr.diff_text),
-        files=tuple((path, redact(content)) for path, content in pr.files),
-    )
+    return replace(pr, title=redact(pr.title), body=redact(pr.body))
 
 
 @runtime_checkable

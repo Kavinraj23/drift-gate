@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from driftgate.audit import AuditLog
-from driftgate.tools.redaction import redact, redact_value
+from driftgate.redaction import redact, redact_value
 
 ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-creds-AbCdEf"
 
@@ -49,20 +49,22 @@ def test_audit_entries_are_redacted(tmp_path: Path) -> None:
     assert entry.payload["n"] == 2
 
 
-def test_redact_pull_request_covers_title_body_diff_and_files() -> None:
+def test_redact_pull_request_redacts_only_title_and_body() -> None:
     from driftgate.tier3 import PullRequest, redact_pull_request
 
     secret = "ghp_" + "a1B2c3D4e5" * 4
+    benign = "      token: ${{ secrets.GITHUB_TOKEN }}\npassword = var.db_password\n"
+    diff = f"--- a/x.tf\n+++ b/x.tf\n@@ -1 +1,2 @@\n+{benign}"
     pr = PullRequest(
         "driftgate/x",
         "main",
         f"fix token={secret}",
         f"body password=hunter2hunter2 {secret}",
-        f"+ API_TOKEN={secret}\n",
-        ("a.txt",),
-        files=(("a.txt", f"API_TOKEN={secret}\n"),),
+        diff,
+        ("x.tf",),
+        files=(("x.tf", benign),),
     )
     out = redact_pull_request(pr)
-    blob = "|".join([out.title, out.body, out.diff_text, *(c for _, c in out.files)])
-    assert secret not in blob and "hunter2hunter2" not in blob
-    assert out.branch == pr.branch and out.paths == pr.paths and out.files[0][0] == "a.txt"
+    assert secret not in out.title + out.body and "hunter2hunter2" not in out.body
+    assert out.diff_text == diff and out.files == pr.files  # code is verified by check_diff, never rewritten
+    assert out.branch == pr.branch and out.paths == pr.paths and out.base == pr.base

@@ -125,6 +125,49 @@ def test_credential_and_env_loading_is_confined() -> None:
     assert config_offenders == []
 
 
+def test_audit_does_not_import_tools_or_agents() -> None:
+    bad = [n for n in _imports(SRC / "audit.py") if n.startswith(("driftgate.tools", "driftgate.agents"))]
+    assert bad == []
+
+
+CREDS_FILE = "." + "env"
+
+
+def _creds_file_literals(path: Path) -> list[int]:
+    """Line numbers of string literals naming the credentials file (docstrings excluded)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings = {
+        id(n.body[0].value)
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and n.body
+        and isinstance(n.body[0], ast.Expr)
+        and isinstance(n.body[0].value, ast.Constant)
+    }
+    return sorted(
+        n.lineno
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and id(n) not in docstrings
+        and n.value.replace("\\", "/").rsplit("/", 1)[-1] == CREDS_FILE
+    )
+
+
+def test_credentials_file_is_not_opened_outside_the_confined_modules() -> None:
+    offenders = [(_rel(p), _creds_file_literals(p)) for p in _py_files() if _rel(p) not in ENV_READERS]
+    assert [o for o in offenders if o[1]] == []
+
+
+def test_credentials_file_detector_flags_direct_reads(tmp_path: Path) -> None:
+    f = tmp_path / "x.py"
+    f.write_text(
+        f'open("{CREDS_FILE}")\nPath("{CREDS_FILE}").read_text()\nPath("a") / "{CREDS_FILE}"\n"""doc"""\n',
+        encoding="utf-8",
+    )
+    assert _creds_file_literals(f) == [1, 2, 3]
+
+
 def test_network_is_blocked_in_tests() -> None:
     with pytest.raises(RuntimeError, match="network access is blocked"):
         socket.create_connection(("127.0.0.1", 9))

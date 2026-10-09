@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from driftgate.tools.redaction import redact_value
+from driftgate.redaction import redact_value
 
 if TYPE_CHECKING:
     from driftgate.gates import GateDecision

@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .redaction import REDACTED as REDACTED  # re-exported
-from .redaction import redact as redact  # re-exported
-from .redaction import redact_lines
+from driftgate.redaction import REDACTED as REDACTED  # re-exported
+from driftgate.redaction import redact as redact  # re-exported
+from driftgate.redaction import redact_lines
+
 from .signatures import GENERIC_EXIT_ID, line_signature
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")

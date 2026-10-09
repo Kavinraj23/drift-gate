@@ -13,10 +13,8 @@ _VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
 PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
-NOT_IMPLEMENTED: dict[str, str] = {
-    "e2e-live": "M8b",
-}
-LIVE_TARGETS = {"record", "eval-live"}  # implemented in driftgate.eval.live; human-only
+NOT_IMPLEMENTED: dict[str, str] = {}
+LIVE_TARGETS = {"record", "eval-live", "e2e-live"}  # implemented in driftgate.eval.live; human-only
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.

@@ -55,4 +55,4 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 ### M8b (live playground) - Needs human
 - Add `DRIFTGATE_PLAYGROUND_REPO=kavinraj23/drift-gate-playground` to `.env` (the PAT is `PLAYGROUND_PAT`).
 - Run `python scripts/playground.py setup` (dry run), then `--yes`, to push main, the six `scenario/*` branches and `baseline/<name>` tags. Confirm one tag per scenario is acceptable against the PRD's "a tagged baseline".
-- `e2e-live` is not implemented (needs the orchestrator wired to `GitHubActionsSource/Target` and a live gateway, and can only be checked against the real playground).
+- `e2e-live` is implemented but has never run live. Dispatch a fresh run per scenario in the browser, then `python tasks.py e2e-live` (plan) and `--yes-live --scenario approval-rejected` first. See docs/design/M8b.md.

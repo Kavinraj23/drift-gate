@@ -11,6 +11,9 @@ the tests and every default never reach it. Nothing is read from the environment
     python tasks.py record --all --only-stale --yes-spend
     python tasks.py eval-live --estimate
     python tasks.py eval-live --yes-spend
+    python tasks.py e2e-live                     # plan only: no network, no key
+    python tasks.py e2e-live --yes-live          # all six playground scenarios, real GitHub + real API
+    python tasks.py e2e-live --yes-live --scenario flaky
 
 Safeguards: nothing calls the API without `--yes-spend`; `--estimate` builds no gateway and never touches the key
 (only the model names are taken from `.env`); `record` stops at a cumulative `--cap-usd`, checked before each
@@ -24,11 +27,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
+from driftgate.adapters.github_live import Playground, connect_playground
 from driftgate.agents import reviewer as reviewer_agent
 from driftgate.agents.fingerprint import prompt_fingerprint
 from driftgate.eval import e2e
@@ -49,6 +54,9 @@ from driftgate.llm.gateway import Gateway, estimate_input_tokens
 from driftgate.llm.ledger import SpendLedger, utc_day
 from driftgate.llm.replay import FRESH, FixtureStore, save_manifest_entry, scenario_status
 from driftgate.llm.types import ModelClient, ModelRequest, ModelResponse, Usage
+from driftgate.orchestrator import CLOSED, ESCALATED, EXECUTED, PR_PROPOSED, build_github_orchestrator
+from driftgate.tier3 import ReviewerHook
+from driftgate.verify import install_verification
 
 ASSUMED_OUTPUT_TOKENS = 300  # per model call; the scripted model's own numbers are not real token counts
 DEFAULT_MARGIN = 1.5  # covers: the real model taking more turns, the ~30% tokenizer difference, chars/4 error
@@ -478,6 +486,123 @@ def run_eval_live(
     return 3 if state.skipped else 0
 
 
+# -- e2e-live: the six playground scenarios against real GitHub and the real model -------------------------------
+# scenario -> (workflow file, expected outcome kind, why). Nothing here dispatches a workflow: you start each run
+# yourself in the browser, so this command only ever reads runs, re-runs a failed job, or opens a driftgate/ PR.
+E2E_SCENARIOS: dict[str, tuple[str, str, str]] = {
+    "flaky": ("flaky.yml", ESCALATED, "no deterministic signature (invariant 3)"),
+    "throttle": ("throttle.yml", EXECUTED, "Tier 0 re-run, known-transient rule, verified green"),
+    "lockfile": ("lockfile.yml", PR_PROPOSED, "Tier 3 PR regenerating the lock file"),
+    "provider-pin": ("provider-pin.yml", PR_PROPOSED, "Tier 3 PR pinning a working provider version"),
+    "undefined-var": ("undefined-var.yml", PR_PROPOSED, "Tier 3 PR fixing the expression"),
+    "approval-rejected": ("approval-rejected.yml", CLOSED, "pre-filter closes it, no model call"),
+}
+
+
+def format_e2e_plan() -> str:
+    lines = ["e2e-live plan (nothing was called):"]
+    for name, (_wf, kind, why) in E2E_SCENARIOS.items():
+        lines.append(f"  {name:<18} expect {kind:<12} {why}")
+    lines += [
+        "",
+        "Before --yes-live: dispatch each scenario in the Actions tab on its scenario/<name> branch (flaky and",
+        "throttle: let attempt 1 fail and do NOT re-run it; approval-rejected: reject the deployment). The newest",
+        "failed run of each workflow is investigated. Tier 0 re-runs and Tier 3 PRs are REAL.",
+        "Run `python tasks.py playground-reset` between runs.",
+    ]
+    return "\n".join(lines)
+
+
+def run_e2e_live(
+    argv: list[str],
+    *,
+    root: Path,
+    out: TextIO,
+    config_loader: Callable[[Path], GatewayConfig] = full_config,
+    gateway_factory: GatewayFactory = default_gateway_factory,
+    connect: Callable[[], Playground] = connect_playground,
+) -> int:
+    ap = argparse.ArgumentParser(prog="python tasks.py e2e-live")
+    ap.add_argument("--yes-live", action="store_true", help="act on the real playground and call the real API")
+    ap.add_argument("--scenario", choices=sorted(E2E_SCENARIOS), help="one scenario (default: all six)")
+    ap.add_argument("--cap-usd", type=float, default=DEFAULT_RECORD_CAP_USD, help="cumulative model spend cap")
+    args = ap.parse_args(argv)
+    selected = [args.scenario] if args.scenario else list(E2E_SCENARIOS)
+    if not args.yes_live:
+        print(format_e2e_plan(), file=out)
+        print("\nnot running: pass --yes-live.", file=out)
+        return 2
+    try:
+        pg = connect()
+        config = config_loader(root)
+    except (ValueError, OSError) as exc:
+        print(f"cannot start: {exc}", file=out)
+        return 2
+    if gateway_factory is default_gateway_factory and not config.api_key:
+        print("no ANTHROPIC_API_KEY found in the environment or the env file (nothing was called)", file=out)
+        return 2
+    source, target = pg.source, pg.target
+    gateway = gateway_factory(config, "live", None)
+    errors: list[GatewayError] = []
+
+    def guard() -> None:
+        spent = sum(c.cost_usd for c in gateway.calls)
+        if spent >= args.cap_usd:
+            raise BudgetExceeded("run cap", args.cap_usd, spent, 0.0)
+
+    def investigator(_eid: str, budget: Any) -> ModelClient:
+        return _ErrorSpy(gateway.bind(budget, role="investigator"), errors, guard)
+
+    def reviewer(_eid: str, budget: Any) -> ModelClient:
+        return _ErrorSpy(gateway.bind(budget, role="reviewer"), errors, guard)
+
+    print(f"{'scenario':<18} {'expected':<12} {'got':<12} ok  detail", file=out)
+    matched = 0
+    for name in selected:
+        workflow, expected, _why = E2E_SCENARIOS[name]
+        failed = source.list_executions(None, {"pipeline": f"{pg.repo}:{workflow}", "status": "failed"})
+        if not failed:
+            print(f"{name:<18} {expected:<12} {'-':<12} NO  no failed run of {workflow}; dispatch it first", file=out)
+            continue
+        eid = failed[-1].execution_id
+        label = _model_label(config)
+        orch = build_github_orchestrator(
+            source,
+            target,
+            investigator,
+            audit_path=root / "data" / "audit_live.jsonl",
+            clock=time.time,
+            tier3_review=ReviewerHook(source, reviewer, model=label),
+            model=label,
+        )
+        install_verification(orch)
+        before = len(gateway.calls)
+        try:
+            outcome = orch.handle(eid)
+        except Exception as exc:  # noqa: BLE001 - a live run reports and moves on; the audit log has the detail
+            msg = pg.scrub(f"{type(exc).__name__}: {exc}")
+            print(f"{name:<18} {expected:<12} {'error':<12} NO  {msg}", file=out)
+            if errors:
+                break
+            continue
+        cost = sum(c.cost_usd for c in gateway.calls[before:])
+        ok = outcome.kind == expected and (expected != PR_PROPOSED or outcome.pr_opened)
+        matched += ok
+        pr = f" PR {outcome.pr_record.url}" if outcome.pr_record is not None and outcome.pr_opened else ""
+        ver = "" if outcome.verified is None else f" verified={outcome.verified}"
+        print(
+            f"{name:<18} {expected:<12} {outcome.kind:<12} {'yes' if ok else 'NO ':<3} "
+            f"{eid} ${cost:.4f} {outcome.reason}{ver}{pr}",
+            file=out,
+        )
+        if errors:
+            print(f"stopping: gateway failure ({errors[0]})", file=out)
+            break
+    total = sum(c.cost_usd for c in gateway.calls)
+    print(f"\n{matched}/{len(selected)} scenarios matched; model spend ${total:.4f}", file=out)
+    return 0 if matched == len(selected) else 1
+
+
 # -- command line ------------------------------------------------------------------------------------------------
 def _parser(prog: str, root: Path) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog=f"python tasks.py {prog}", description=__doc__)
@@ -513,13 +638,15 @@ def main(
     out = out or sys.stdout
     root = root or Path.cwd()
     clock = clock or SystemClock()
-    if not argv or argv[0] not in ("record", "eval-live"):
-        print("usage: python -m driftgate.eval.live (record|eval-live) [options]", file=out)
+    if not argv or argv[0] not in ("record", "eval-live", "e2e-live"):
+        print("usage: python -m driftgate.eval.live (record|eval-live|e2e-live) [options]", file=out)
         return 2
     prog = argv[0]
     if (root / ".autonomous").exists():
         print(f"refusing: '{prog}' is human-only and .autonomous exists", file=out)
         return 1
+    if prog == "e2e-live":
+        return run_e2e_live(argv[1:], root=root, out=out, config_loader=config_loader, gateway_factory=gateway_factory)
     args = _parser(prog, root).parse_args(argv[1:])
     if prog == "eval-live" and args.reserve_usd < MIN_RESERVE_USD:
         print(f"--reserve-usd cannot be below ${MIN_RESERVE_USD:.2f}", file=out)

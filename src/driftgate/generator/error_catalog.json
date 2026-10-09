@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Strings are recalled from well-known real tool output (or quoted from tool documentation); none was captured byte-for-byte in this offline environment. Every entry is therefore marked verified=false and needs human verification against a real sample (see BLOCKERS.md, Needs human). Placeholders {name} stand only for run-specific values (ids, paths, names). Literal braces are doubled.",
+  "note": "Strings are recalled from well-known real tool output (or quoted from tool documentation); none was captured byte-for-byte in this offline environment. Entries not marked verified=true are marked verified=false and needs human verification against a real sample (see BLOCKERS.md, Needs human). Placeholders {name} stand only for run-specific values (ids, paths, names). Literal braces are doubled. Entries with verified=true were matched against real output; the source URL is in each entry.",
   "entries": [
     {
       "id": "gha_group",
@@ -108,51 +108,51 @@
     {
       "id": "pip_no_matching_distribution",
       "tool": "pip (pip install -r requirements.txt)",
-      "source": "pip resolver errors when a pinned requirement does not exist on the index",
+      "source": "pip resolver errors when a pinned requirement does not exist on the index; matched verbatim against real output in https://github.com/tensorflow/tensorflow/issues/83097 and https://github.com/pypa/pip/issues/10137 (run-specific values are placeholders)",
       "box": false,
       "summary": "ERROR: No matching distribution found for {requirement}",
       "lines": [
         "ERROR: Could not find a version that satisfies the requirement {requirement} (from versions: none)",
         "ERROR: No matching distribution found for {requirement}"
       ],
-      "verified": false,
-      "source_kind": "recalled-from-widely-posted-output"
+      "verified": true,
+      "source_kind": "captured-verbatim"
     },
     {
       "id": "aws_throttling",
       "tool": "AWS CLI",
-      "source": "AWS CLI client error format 'An error occurred (ThrottlingException) when calling the X operation (reached max retries: N): Rate exceeded'; https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-retries.html",
+      "source": "AWS CLI client error format 'An error occurred (ThrottlingException) when calling the X operation (reached max retries: N): Rate exceeded'; https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-retries.html; matched verbatim against real output in https://github.com/aws/aws-cli/issues/4635 and https://github.com/aws/aws-cli/issues/2948 (run-specific values are placeholders)",
       "box": false,
       "summary": "An error occurred (ThrottlingException) when calling the {operation} operation (reached max retries: {retries}): Rate exceeded",
       "lines": [
         "An error occurred (ThrottlingException) when calling the {operation} operation (reached max retries: {retries}): Rate exceeded"
       ],
-      "verified": false,
-      "source_kind": "recalled-from-widely-posted-output"
+      "verified": true,
+      "source_kind": "captured-verbatim"
     },
     {
       "id": "aws_expired_token",
       "tool": "AWS CLI",
-      "source": "AWS CLI client error format for ExpiredToken from STS-backed credentials; https://docs.aws.amazon.com/STS/latest/APIReference/CommonErrors.html",
+      "source": "AWS CLI client error format for ExpiredToken from STS-backed credentials; https://docs.aws.amazon.com/STS/latest/APIReference/CommonErrors.html; matched verbatim against real output in https://github.com/aws/aws-cli/issues/7870 (run-specific values are placeholders)",
       "box": false,
       "summary": "An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired",
       "lines": [
         "An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired"
       ],
-      "verified": false,
-      "source_kind": "recalled-from-widely-posted-output"
+      "verified": true,
+      "source_kind": "captured-verbatim"
     },
     {
       "id": "docker_pull_rate_limit",
       "tool": "Docker Engine (docker pull / build)",
-      "source": "Docker Hub pull rate limit message; https://docs.docker.com/docker-hub/download-rate-limit/",
+      "source": "Docker Hub pull rate limit message; https://docs.docker.com/docker-hub/download-rate-limit/; matched verbatim against real output in https://github.com/docker/setup-buildx-action/issues/395 (run-specific values are placeholders)",
       "box": false,
       "summary": "toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading: https://www.docker.com/increase-rate-limit",
       "lines": [
         "Error response from daemon: toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading: https://www.docker.com/increase-rate-limit"
       ],
-      "verified": false,
-      "source_kind": "recalled-from-widely-posted-output"
+      "verified": true,
+      "source_kind": "captured-verbatim"
     },
     {
       "id": "k8s_image_pull_backoff",

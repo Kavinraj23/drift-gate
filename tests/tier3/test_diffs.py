@@ -373,6 +373,28 @@ def test_a_reference_containing_a_vendor_token_is_never_a_reference() -> None:
     assert find_secret_literals(["password = var." + _AWS])
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "password: [REDACTED]hunter2hunter2",
+        "run: tool --token [REDACTED]abcdefghijklmnop",
+        'password = "[REDACTED]p@ssw0rd!x"',
+    ],
+)
+def test_placeholder_text_in_an_added_line_is_rejected(line: str) -> None:
+    assert find_secret_literals([line])
+
+
+def test_lines_without_the_placeholder_still_pass() -> None:
+    assert find_secret_literals(["password: ${{ secrets.DB }}", "name: build"]) == []
+
+
+def test_json_password_shape_is_flagged() -> None:
+    assert find_secret_literals(['  "password": "x9Kd02mQ"'])
+    assert find_secret_literals(['{"db": {"password": "hunter2hunter2hunter2"}}'])
+    assert find_secret_literals(['  "password": "${{ secrets.DB }}"']) == []
+
+
 def test_over_long_added_lines_are_rejected_fail_closed() -> None:
     from driftgate.tier3 import MAX_SCAN_LINE
 

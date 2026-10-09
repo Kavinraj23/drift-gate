@@ -130,6 +130,7 @@ def path_allowed_for(action: str, path: str) -> bool:
 _VENDOR_FLOOR = 4  # SECRET_PATTERNS[:4] are token/key shapes (raw line); the last is the generic key/value one
 MAX_SCAN_LINE = 4000  # longer added lines are not scanned (regex cost) and are rejected, fail-closed
 LONG_LINE_NAME = "line too long to scan"
+PLACEHOLDER_NAME = "redaction placeholder text in an added line"
 
 _PATH = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[\d+\])*"
 _ROOTS = r"(?:secrets|vars|env|inputs|var|local|data|module|each|github)"
@@ -189,6 +190,8 @@ def find_secret_literals(added_lines: Iterable[str]) -> list[str]:
     for line in added_lines:
         if len(line) > MAX_SCAN_LINE:
             matched = [LONG_LINE_NAME]
+        elif REDACTED in line:  # redaction skips values that start with the placeholder, so it could hide a literal
+            matched = [PLACEHOLDER_NAME]
         else:
             checked = _neutralize_whole_value_references(_collapse_expressions(line))
             matched = [

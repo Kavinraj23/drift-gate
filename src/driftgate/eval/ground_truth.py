@@ -33,6 +33,7 @@ class FailureLabel:
     first_fix_fails: bool
     error_catalog_ids: tuple[str, ...]
     flaky_pipeline: bool
+    label_note: str | None  # e.g. "no deterministic signature: invariant 3"
     scenario_id: str | None
 
 
@@ -77,6 +78,7 @@ def _label(raw: dict) -> FailureLabel:
         first_fix_fails=raw["first_fix_fails"],
         error_catalog_ids=tuple(raw["error_catalog_ids"]),
         flaky_pipeline=raw["flaky_pipeline"],
+        label_note=raw["label_note"],
         scenario_id=raw["scenario_id"],
     )
 

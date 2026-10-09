@@ -35,7 +35,7 @@ from typing import Any
 from driftgate.adapters.synthetic import SyntheticSource
 from driftgate.baseline import BaselineResult, run_baseline
 from driftgate.eval import e2e
-from driftgate.eval.e2e import CONFLICT, MODES, ScenarioResult
+from driftgate.eval.e2e import MODES, ScenarioResult
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth, load_ground_truth
 from driftgate.eval.metrics import Rate, attempted_remediation, recovery_breakdown, remediation_success_rate
 from driftgate.eval.tier3_scripts import BAD_KINDS, Tier3Score, bad_diff, score_tier3, tier3_quality
@@ -56,7 +56,6 @@ class CaseResult:
 
     scenario_id: str
     held_out: bool
-    conflict: bool  # known label conflict (BLOCKERS.md); reported on its own line
     disposition: str  # label: remediate | escalate | close
     correct_action: str | None  # label, only meaningful when disposition == remediate
     true_layer: str
@@ -167,7 +166,6 @@ def agent_case(res: ScenarioResult) -> CaseResult:
     return CaseResult(
         scenario_id=res.row.scenario_id,
         held_out=res.row.held_out,
-        conflict=res.row.status == CONFLICT,
         disposition=label.disposition,
         correct_action=label.correct_action,
         true_layer=label.true_layer,
@@ -186,12 +184,11 @@ def agent_case(res: ScenarioResult) -> CaseResult:
     )
 
 
-def baseline_case(label: FailureLabel, res: BaselineResult, held_out: bool, conflict: bool) -> CaseResult:
+def baseline_case(label: FailureLabel, res: BaselineResult, held_out: bool) -> CaseResult:
     rem = res.report.remediation
     return CaseResult(
         scenario_id=label.scenario_id or label.execution_id,
         held_out=held_out,
-        conflict=conflict,
         disposition=label.disposition,
         correct_action=label.correct_action,
         true_layer=label.true_layer,
@@ -215,7 +212,6 @@ class ReportData:
     mode: str
     models: list[str]
     cases: dict[str, dict[str, list[CaseResult]]]  # system -> set -> cases
-    conflict_ids: list[str]
     recovery: dict[str, Any]
     tier3: dict[str, Any]
     bad_diff_drills: dict[str, Any]
@@ -263,7 +259,6 @@ def build_report(
     source = SyntheticSource(data_dir)
     results = e2e.run_all(data_dir, mode=mode, fixtures_dir=fixtures_dir, truth=truth)
     scored = [r for r in results if r.outcome is not None]
-    conflict_ids = sorted(r.row.scenario_id for r in scored if r.row.status == CONFLICT)
     ctx = ToolContext(source)
     agent_cases = [agent_case(r) for r in scored]
     base_cases = [
@@ -271,7 +266,6 @@ def build_report(
             r.label,  # type: ignore[arg-type]
             run_baseline(ctx, r.label.execution_id),  # type: ignore[union-attr]
             r.row.held_out,
-            r.row.status == CONFLICT,
         )
         for r in scored
     ]
@@ -300,7 +294,6 @@ def build_report(
         mode=mode,
         models=sorted({r.row.model for r in scored}),
         cases=cases,
-        conflict_ids=conflict_ids,
         recovery=recovery,
         tier3=quality,
         bad_diff_drills=bad_diff_drills(data_dir, truth, source) if with_drills and mode != "replay" else {},
@@ -315,7 +308,7 @@ HONESTY = (
     "and the metric code. It says NOTHING about how a real model performs. Real agent numbers require the "
     "human-run `record` and `eval-live` targets, which have not been run. The baseline column is real: it is the "
     "deterministic pipeline with no model calls. Where the scripted agent and the labels disagree, that is a gate "
-    "or label finding (see the label-conflict line), not model skill. The synthetic dataset is generated; error "
+    "or label finding, not model skill. The synthetic dataset is generated; error "
     "text is copied from real sources but unverified (BLOCKERS.md). No production traffic is involved."
 )
 
@@ -352,12 +345,11 @@ def _md_table(header: list[str], rows: list[list[str]]) -> str:
     return "\n".join(out)
 
 
-def _metrics_table(data: ReportData, *, exclude_conflicts: bool) -> str:
+def _metrics_table(data: ReportData) -> str:
     cols = _columns()
     metrics: dict[tuple[str, str], Metrics] = {}
     for sys_, s in cols:
-        cs = [c for c in data.cases[sys_][s] if not (exclude_conflicts and c.conflict)]
-        metrics[(sys_, s)] = compute_metrics(cs, has_verification=sys_ == "agent")
+        metrics[(sys_, s)] = compute_metrics(data.cases[sys_][s], has_verification=sys_ == "agent")
     header = ["metric"] + [f"{sys_} / {s} (n={metrics[(sys_, s)].n})" for sys_, s in cols]
     rows = []
     for label, attr in _METRIC_ROWS:
@@ -392,17 +384,7 @@ def _cost_table(data: ReportData) -> str:
 
 def readme_tables(data: ReportData) -> str:
     """The block embedded in README.md under "Eval results (offline)"; a test keeps it in sync with the report."""
-    return "\n".join(
-        [
-            "Label-conflict cases counted as misses:",
-            "",
-            _metrics_table(data, exclude_conflicts=False),
-            "",
-            "Label-conflict cases excluded:",
-            "",
-            _metrics_table(data, exclude_conflicts=True),
-        ]
-    )
+    return _metrics_table(data)
 
 
 def render_markdown(data: ReportData) -> str:
@@ -414,7 +396,6 @@ def render_markdown(data: ReportData) -> str:
     }[data.mode]
     mixed = any(m.startswith("fake") for m in data.models)
     t3, rec, bad = data.tier3, data.recovery, data.bad_diff_drills
-    all_conflict = [c for s in SETS for c in data.cases["agent"][s] if c.conflict]
     n_cases = sum(len(v) for v in data.cases["agent"].values())
     lines = [
         "# DriftGate offline evaluation: agent vs. deterministic baseline",
@@ -430,21 +411,12 @@ def render_markdown(data: ReportData) -> str:
         "Figures are `k/n = rate`. A trailing `*` marks n < "
         f"{SMALL_N}: too small to read as a rate. Every held-out cell is small.",
         "",
-        "## Metrics, label-conflict cases counted as misses",
+        "## Metrics",
         "",
-        _metrics_table(data, exclude_conflicts=False),
+        _metrics_table(data),
         "",
-        "## Metrics, label-conflict cases excluded",
-        "",
-        _metrics_table(data, exclude_conflicts=True),
-        "",
-        f"Label-conflict footnote: {len(data.conflict_ids)} scenarios ({', '.join(data.conflict_ids) or 'none'}) are "
-        "flaky-test failures that the generator labels Tier 0 via flake precedent, but whose only signature is the "
-        "generic exit code. Invariant 3 needs a deterministic signature match, so the gate (correctly) escalates "
-        "them and both systems 'miss' the label. This is an open label question in BLOCKERS.md, not a model result. "
-        f"Dev/held-out split of these cases: {sum(not c.held_out for c in all_conflict)} dev, "
-        f"{sum(c.held_out for c in all_conflict)} held-out. "
-        "The first table counts them as misses; the second removes them.",
+        "Flaky-test failures (generic exit code only, no deterministic signature) are labelled escalate under "
+        "invariant 3, so declining them counts as correct. They are scored like any other escalate case.",
         "",
         "## Cost and latency per case",
         "",
@@ -500,23 +472,18 @@ def to_json(data: ReportData) -> dict[str, Any]:
         "mode": data.mode,
         "models": data.models,
         "honesty": HONESTY,
-        "label_conflicts": data.conflict_ids,
         "recovery": data.recovery,
         "tier3": data.tier3,
         "bad_diff_drills": data.bad_diff_drills,
         "loop_drills": data.loop_drills,
         "metrics": {},
     }
-    for variant, exclude in (("conflicts_counted", False), ("conflicts_excluded", True)):
-        block: dict[str, Any] = {}
-        for sys_ in SYSTEMS:
-            for s in SETS:
-                cs = [c for c in data.cases[sys_][s] if not (exclude and c.conflict)]
-                m = compute_metrics(cs, has_verification=sys_ == "agent")
-                block[f"{sys_}/{s}"] = {
-                    k: (_rate_json(v) if isinstance(v, Rate) else v) for k, v in asdict_metrics(m).items()
-                }
-        out["metrics"][variant] = block
+    for sys_ in SYSTEMS:
+        for s in SETS:
+            m = compute_metrics(data.cases[sys_][s], has_verification=sys_ == "agent")
+            out["metrics"][f"{sys_}/{s}"] = {
+                k: (_rate_json(v) if isinstance(v, Rate) else v) for k, v in asdict_metrics(m).items()
+            }
     return out
 
 

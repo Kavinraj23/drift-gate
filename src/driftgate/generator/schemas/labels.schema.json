@@ -74,6 +74,7 @@
           "first_fix_fails",
           "error_catalog_ids",
           "flaky_pipeline",
+          "label_note",
           "scenario_id"
         ],
         "additionalProperties": false,
@@ -200,6 +201,12 @@
           },
           "flaky_pipeline": {
             "type": "boolean"
+          },
+          "label_note": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "scenario_id": {
             "type": [

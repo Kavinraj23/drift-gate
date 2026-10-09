@@ -20,6 +20,7 @@ class FaultSpec:
     tier0_path: str | None = None  # known_transient_rule | flake_precedent
     repo_fault: bool = False
     weight: float = 1.0  # background selection weight; 0 means injected specially
+    label_note: str | None = None  # why the label is what it is, when that is not obvious from the fields above
 
 
 _PLAN = "./scripts/plan.sh"
@@ -140,6 +141,8 @@ FAULTS: dict[str, FaultSpec] = {
             weight=3,
         ),
         FaultSpec(
+            # Only signature is the runner's generic exit code (no catalog entry). Invariant 3 needs a deterministic
+            # signature match before any Tier 0, so the correct label is escalate even with fail-then-pass precedent.
             "transient_flaky_test",
             "transient",
             "L4",
@@ -147,11 +150,11 @@ FAULTS: dict[str, FaultSpec] = {
             {"node": "npm test"},
             (),
             1,
-            0,
-            "rerun_failed_job",
-            "remediate",
-            tier0_path="flake_precedent",
+            None,
+            None,
+            "escalate",
             weight=0,
+            label_note="no deterministic signature: invariant 3",
         ),
         FaultSpec(
             "platform_state_lock",

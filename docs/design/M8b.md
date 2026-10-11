@@ -20,3 +20,33 @@ Plan mode needs no config or gateway; `.autonomous` refusal; missing GitHub conf
 - A fresh failed run must exist per scenario; `playground-reset` does not delete old runs, so "newest failed run" is chosen by start time.
 - Flaky and throttle: if attempt 1 was already re-run, the target reports nothing to do. Dispatch fresh runs and do not re-run them by hand.
 - The PRD's single `baseline` tag vs. one tag per scenario needs the human's OK.
+
+## Live results (2026-10-10, `e2e-live --yes-live`, one scenario at a time)
+All six scenarios matched their expected outcome. Model spend for the whole session was about $0.67 of the $2.50 lifetime cap, most of it on failed lockfile attempts.
+
+| Scenario | Expected | Got | Notes |
+| --- | --- | --- | --- |
+| approval-rejected | closed | closed | pre-filter, no model call, $0 |
+| throttle | executed | executed | re-run requested, `verified=True` |
+| flaky | escalated | escalated | "no deterministic signature match" (invariant 3) |
+| provider-pin | pr_proposed | pr_proposed | PR #2, `verified=True`, Haiku |
+| undefined-var | pr_proposed | pr_proposed | PR #3, `verified=True`, Haiku |
+| lockfile | pr_proposed | pr_proposed | PR #4, `verified=True`, **Sonnet 5.5 investigator**; Haiku's diff failed to apply in most of about six attempts |
+
+PRs #2 to #4 were left open and unmerged, as required.
+
+## What the first live runs found (all fixed without weakening a gate)
+- **Evidence integrity dropped everything.** Tool results did not show the model its own call id. Each result now carries `tool_call_id`, and the prompt says to copy it. Validation in code is unchanged.
+- **Free-text `action`.** The model wrote a sentence instead of a catalog identifier; the gate refused it. The report schema now has an enum of catalog actions.
+- **Tier 3 proposal without a `diff`.** The prompt now states a diff is mandatory, with a format example, and asks for exact copies of context lines, exact indentation and at most one context line either side.
+- **Wasted tool calls.** A wrong path (`lockfile.yml` instead of `.github/workflows/lockfile.yml`) costs a call. The `read_repo_file` description now gives the path convention, and the prompt makes `fleet_correlate` and `flake_history` optional for code-level fixes.
+- **Reviewer starved by the shared budget.** The case shares one 8-call budget, so a reviewer tool call after the investigator used all 8 failed closed. The reviewer prompt now says to judge from the diff and files it was given.
+- **`e2e-live` with different investigator and reviewer models** sent the display label "a + b" as a request model. It now passes an empty model so the gateway chooses per role (regression test added).
+- **Audit gained diagnostics:** per-call tool trace (tool, path@ref or error), `diff_chars`, `hypothesis`, `escalation_reason`, and the redacted rejected diff (2000 chars).
+- **Token scopes:** the fine-grained PAT needed Actions and Pull requests read/write.
+
+## Open doubts after the live run
+- Haiku 4.5 is unreliable at writing applying unified diffs for lock files (it mislabels which lines change). The deterministic checks caught every bad diff before GitHub; the cost is retries. Sonnet fixed it in one attempt, on one sample.
+- When the investigator spends all 8 calls, only the reviewer prompt keeps the reviewer from failing closed. Reserving calls for review would change the PRD budget rule, so it is not done.
+- `record` and `eval-live` still pass the combined model label to `e2e.run_with_gateway`; the same hazard applies if their models are ever set differently.
+- GitHub REST fixtures other than the rejected-run ones are still hand-written stubs.

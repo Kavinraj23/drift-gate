@@ -565,15 +565,14 @@ def run_e2e_live(
             print(f"{name:<18} {expected:<12} {'-':<12} NO  no failed run of {workflow}; dispatch it first", file=out)
             continue
         eid = failed[-1].execution_id
-        label = _model_label(config)
         orch = build_github_orchestrator(
             source,
             target,
             investigator,
             audit_path=root / "data" / "audit_live.jsonl",
             clock=time.time,
-            tier3_review=ReviewerHook(source, reviewer, model=label),
-            model=label,
+            tier3_review=ReviewerHook(source, reviewer, model=""),
+            model="",  # empty: the gateway picks each role's model; `label` is for display only, never a request model
         )
         install_verification(orch)
         before = len(gateway.calls)

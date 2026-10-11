@@ -897,6 +897,281 @@
    "keep": [
     "arn:aws:s3:::bucket/key?password="
    ]
+  },
+  {
+   "id": "mailgun_key",
+   "template": "Sending via mailgun with key-{S0}",
+   "secrets": [
+    [
+     "key-",
+     "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+    ]
+   ],
+   "keep": [
+    "Sending via mailgun with "
+   ]
+  },
+  {
+   "id": "twilio_api_key",
+   "template": "TWILIO_API_KEY_SID={S0}\nregion=us1",
+   "secrets": [
+    [
+     "SK",
+     "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+    ]
+   ],
+   "keep": [
+    "region=us1"
+   ]
+  },
+  {
+   "id": "digitalocean_pat",
+   "template": "doctl auth init --access-token {S0}",
+   "secrets": [
+    [
+     "dop_v1_",
+     "a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718"
+    ]
+   ],
+   "keep": [
+    "doctl auth init"
+   ]
+  },
+  {
+   "id": "shopify_token",
+   "template": "X-Shopify-Access-Token: {S0}",
+   "secrets": [
+    [
+     "shpat_",
+     "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+    ]
+   ],
+   "keep": [
+    "X-Shopify-Access-Token:"
+   ]
+  },
+  {
+   "id": "databricks_pat",
+   "template": "DATABRICKS_HOST=https://x.cloud.databricks.com\nauth with {S0}",
+   "secrets": [
+    [
+     "dapi",
+     "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+    ]
+   ],
+   "keep": [
+    "DATABRICKS_HOST="
+   ]
+  },
+  {
+   "id": "vault_service_token",
+   "template": "vault login {S0}",
+   "secrets": [
+    [
+     "hvs.",
+     "CAESIAAbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGh"
+    ]
+   ],
+   "keep": [
+    "vault login"
+   ]
+  },
+  {
+   "id": "sentry_auth_token",
+   "template": "sentry-cli --auth-token ignored; found {S0} in env",
+   "secrets": [
+    [
+     "sntrys_",
+     "eyJpYXQiOjE2eyJpYXQiOjE2eyJpYXQiOjE2eyJpYXQiOjE2eyJpYXQiOjE2eyJpYXQiOjE2"
+    ]
+   ],
+   "keep": [
+    "found "
+   ]
+  },
+  {
+   "id": "linear_api_key",
+   "template": "LINEAR key {S0} rejected",
+   "secrets": [
+    [
+     "lin_api_",
+     "AbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGh"
+    ]
+   ],
+   "keep": [
+    "rejected"
+   ]
+  },
+  {
+   "id": "postman_key",
+   "template": "postman login --with-api-key {S0}",
+   "secrets": [
+    [
+     "PMAK-",
+     "a1b2c3d4e5f6a1b2c3d4e5f6-a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5"
+    ]
+   ],
+   "keep": [
+    "postman login"
+   ]
+  },
+  {
+   "id": "doppler_token",
+   "template": "DOPPLER_TOKEN={S0}",
+   "secrets": [
+    [
+     "dp.pt.",
+     "AbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGh"
+    ]
+   ],
+   "keep": [
+    "DOPPLER_TOKEN="
+   ]
+  },
+  {
+   "id": "fly_token",
+   "template": "flyctl deploy --access-token {S0}",
+   "secrets": [
+    [
+     "fo1_",
+     "AbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGh"
+    ]
+   ],
+   "keep": [
+    "flyctl deploy"
+   ]
+  },
+  {
+   "id": "telegram_bot_token",
+   "template": "curl https://api.telegram.org/bot{S0}/getMe",
+   "secrets": [
+    [
+     "123456789:",
+     "AAEhBOweik6ad9r_QXMENQjcrTu-pKb8Wg4"
+    ]
+   ],
+   "keep": [
+    "/getMe"
+   ]
+  },
+  {
+   "id": "discord_webhook",
+   "template": "POST https://discord.com/api/webhooks/123456789012345678/{S0}",
+   "secrets": [
+    [
+     "AbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGh",
+     "AbCdEfGhAbCdEfGhAbCdEfGhAbCdEfGh"
+    ]
+   ],
+   "keep": [
+    "discord.com/api/webhooks/123456789012345678/"
+   ]
+  },
+  {
+   "id": "teams_webhook",
+   "template": "POST https://contoso.webhook.office.com/webhookb2/{S0}",
+   "secrets": [
+    [
+     "a1b2c3d4-e5f6-a1b2-c3d4-e5f6a1b2c3d4@b1b1b1b1/Incom",
+     "ingWebhook/a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4/c1c1c1c1"
+    ]
+   ],
+   "keep": [
+    "webhook.office.com/webhookb2/"
+   ]
+  },
+  {
+   "id": "kubeconfig_client_key",
+   "template": "users:\n- name: ci\n  user:\n    client-key-data: {S0}\n    client-certificate-data: PUBLICCERTDATA",
+   "secrets": [
+    [
+     "Y2xpZW50a2V5ZGF0Y2xpZW50a2V5ZGF0",
+     "Y2xpZW50a2V5ZGF0Y2xpZW50a2V5ZGF0"
+    ]
+   ],
+   "keep": [
+    "client-key-data:",
+    "client-certificate-data: PUBLICCERTDATA"
+   ]
+  },
+  {
+   "id": "netrc_login_password",
+   "template": "machine api.example.com login deploy password {S0}",
+   "secrets": [
+    [
+     "netrcfakepw7",
+     "netrcfakepw7"
+    ]
+   ],
+   "keep": [
+    "machine api.example.com login deploy password"
+   ]
+  },
+  {
+   "id": "cookie_header",
+   "template": "Cookie: sessionid={S0}; csrftoken=abc",
+   "secrets": [
+    [
+     "a1b2c3d4a1b2c3d4",
+     "a1b2c3d4a1b2c3d4"
+    ]
+   ],
+   "keep": [
+    "Cookie:"
+   ]
+  },
+  {
+   "id": "set_cookie_header",
+   "template": "Set-Cookie: session={S0}; Path=/; HttpOnly",
+   "secrets": [
+    [
+     "a1b2c3d4a1b2c3d4",
+     "a1b2c3d4a1b2c3d4"
+    ]
+   ],
+   "keep": [
+    "Set-Cookie:"
+   ]
+  },
+  {
+   "id": "actions_add_mask",
+   "template": "::add-mask::{S0}",
+   "secrets": [
+    [
+     "a1b2c3d4a1b2c3d4",
+     "a1b2c3d4a1b2c3d4"
+    ]
+   ],
+   "keep": [
+    "::add-mask::"
+   ]
+  },
+  {
+   "id": "rails_master_key",
+   "template": "RAILS_MASTER_KEY={S0}\nbundle exec rails assets:precompile",
+   "secrets": [
+    [
+     "a1b2c3d4a1b2c3d4",
+     "a1b2c3d4a1b2c3d4"
+    ]
+   ],
+   "keep": [
+    "RAILS_MASTER_KEY=",
+    "bundle exec rails"
+   ]
+  },
+  {
+   "id": "kubectl_from_literal",
+   "template": "kubectl create secret generic db --from-literal=pw={S0}",
+   "secrets": [
+    [
+     "literalfakepw3",
+     "literalfakepw3"
+    ]
+   ],
+   "keep": [
+    "kubectl create secret generic db --from-literal=pw="
+   ]
   }
  ],
  "no_false_positives": [
@@ -922,6 +1197,15 @@
   "The security token included in the request is expired",
   "git clone git@github.com:acme/app.git",
   "ssh://git@github.com:22/acme/app.git",
-  "Run actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8"
+  "Run actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8",
+  "key-value store ready, monkey-patching disabled",
+  "SKU0123456789 shipped, SK_LIVE flag is off",
+  "pulled image registry.example.com/team/app:20240131123456 in 3.2s",
+  "Content-Type: application/json",
+  "Accept-Language: en-US and cookie settings are on the account page",
+  "client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUM=",
+  "hvs is not a word we use; see the vault docs",
+  "machine type n2-standard-4 with 16 GB memory",
+  "kubectl create configmap app --from-file=config.yaml"
  ]
 }

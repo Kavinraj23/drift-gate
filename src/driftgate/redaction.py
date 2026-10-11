@@ -25,7 +25,7 @@ REDACTED = "[REDACTED]"
 # Key names whose value is a credential. The name must END with the keyword, so `secretsmanager:Get...` is safe.
 KEYWORDS = (
     r"(?:password|passwd|passphrase|secret|token|credentials?|api[_-]?key|access[_-]?key|account[_-]?key|"
-    r"(?:secret|private|signing|encryption|session)[_-]?key)"
+    r"(?:secret|private|signing|encryption|session|master)[_-]?key)"
 )
 _NOT_YET = r"(?!\[REDACTED\])"
 _VALUE = r"[^\s\"',;}&]+"  # an unquoted value stops at whitespace, quotes, separators and `&` (URL query)
@@ -67,6 +67,36 @@ REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(_PFX + r"SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"), REDACTED),
     (re.compile(_PFX + r"[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{40,}"), REDACTED),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), REDACTED),
+    # More vendor shapes (hex/base64 bodies are required so ordinary words and ids do not match).
+    (re.compile(_PFX + r"key-[0-9a-f]{32}\b"), REDACTED),  # Mailgun
+    (re.compile(_PFX + r"SK[0-9a-f]{32}\b"), REDACTED),  # Twilio API key SID
+    (re.compile(_PFX + r"do[por]_v1_[a-f0-9]{64}"), REDACTED),  # DigitalOcean
+    (re.compile(_PFX + r"shp(?:at|ca|pa|ss)_[a-f0-9]{32}"), REDACTED),  # Shopify
+    (re.compile(_PFX + r"dapi[a-f0-9]{32}(?:-\d)?\b"), REDACTED),  # Databricks
+    (re.compile(_PFX + r"hv[sbr]\.[A-Za-z0-9_-]{24,}"), REDACTED),  # HashiCorp Vault
+    (re.compile(_PFX + r"sntrys_[A-Za-z0-9+/=_-]{24,}"), REDACTED),  # Sentry
+    (re.compile(_PFX + r"lin_(?:api|oauth)_[A-Za-z0-9]{32,}"), REDACTED),  # Linear
+    (re.compile(_PFX + r"PMAK-[0-9a-f]{24}-[0-9a-f]{34}"), REDACTED),  # Postman
+    (re.compile(_PFX + r"dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,}"), REDACTED),  # Doppler
+    (re.compile(_PFX + r"fo1_[A-Za-z0-9_-]{30,}"), REDACTED),  # Fly.io
+    (re.compile(r"(?<!\d)\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"), REDACTED),  # Telegram bot token
+    (re.compile(r"(discord(?:app)?\.com/api/webhooks/\d+/)[A-Za-z0-9_-]{20,}"), r"\1" + REDACTED),
+    (re.compile(r"(webhook\.office\.com/webhookb2/)[^\s\"']+"), r"\1" + REDACTED),  # Teams webhook
+    # Structural forms: kubeconfig client key, .netrc, cookies, GitHub Actions masks, create-secret literals.
+    (
+        re.compile(
+            r"(?i)(\bclient-key-data[\"']?" + _SP + r"[:=]" + _SP + r"[\"']?)" + _NOT_YET + r"[A-Za-z0-9+/=]{16,}"
+        ),
+        r"\1" + REDACTED,
+    ),
+    (
+        re.compile(r"(?i)(\bmachine[ \t]+\S+[ \t]+(?:login[ \t]+\S+[ \t]+)?password[ \t]+)" + _NOT_YET + r"\S+"),
+        r"\1" + REDACTED,
+    ),
+    # The value starts with a non-space so a second pass cannot backtrack over the space and redact again.
+    (re.compile(r"(?i)(\b(?:Set-)?Cookie" + _SP + r":" + _SP + r")" + _NOT_YET + r"[^\s][^\r\n]*"), r"\1" + REDACTED),
+    (re.compile(r"(::add-mask::)" + _NOT_YET + r"\S+"), r"\1" + REDACTED),
+    (re.compile(r"(--from-literal=[\w.-]+=)" + _NOT_YET + r"[^\s\"']+"), r"\1" + REDACTED),
     # Request signatures (AWS SigV4 query/header form, Azure SAS `sig=`).
     (re.compile(r"(?i)(\bSignature=)[0-9a-f]{32,}"), r"\1" + REDACTED),
     (re.compile(r"([?&;]sig=)[A-Za-z0-9%+/=_-]{16,}"), r"\1" + REDACTED),

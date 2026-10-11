@@ -1,23 +1,38 @@
 # DriftGate MVP 1: report
 
-Branch `mvp1/integration` (tags `mvp1-m0` to `mvp1-m9a`). Nothing was pushed. `main` is untouched. Real API spend: $0. No real network call was made by any test or run.
+**Status (2026-10-11): feature-complete and live-verified on the playground; real-model eval numbers (M9b) are the one open item.** Latest work is on branch `mvp1/m8b-live-playground` (pushed, two commits ahead of `main`, fast-forwardable); `main` has M0 to M8a plus the `e2e-live` code. Real API spend to date: $0.6648 of the $2.50 lifetime cap (the gateway ledger agrees with the Anthropic Console credit drop of about $0.66). No test or offline target makes a network call.
+
+## Live verification (M8b, 2026-10-10 to 2026-10-11)
+
+`python tasks.py e2e-live --yes-live` was run one scenario at a time against `Kavinraj23/drift-gate-playground`. All six matched their expected outcome:
+
+| Scenario | Outcome | Notes |
+| --- | --- | --- |
+| approval-rejected | closed, no model call | pre-filter on the real rejected run |
+| throttle | Tier 0 re-run executed, `verified=True` | echoes a real-shape AWS CLI line; no AWS account behind it |
+| flaky | escalated | no deterministic signature, so invariant 3 forbids a re-run |
+| provider-pin | PR #2 opened, `verified=True` | Haiku |
+| undefined-var | PR #3 opened, `verified=True` | Haiku |
+| lockfile | PR #4 opened, `verified=True` | Sonnet 5.5 investigator; Haiku's diff failed to apply in most of about six attempts |
+
+PRs #2 to #4 were left open, unmerged. Each scenario was run once to a match, with several failed attempts before it. This shows the end-to-end path works on real GitHub; it is **not** a success rate. Every failed attempt was stopped by a deterministic layer before anything wrong reached GitHub (evidence integrity, the catalog check, the diff check, the reviewer's fail-closed budget, and token scopes). The fixes (call ids visible to the model, an enum of catalog actions, stricter diff instructions, reviewer prompt, redaction hardening) did not weaken any gate, budget, check or contract. Details: `docs/design/M8b.md`.
 
 ## What works, and how it was verified
 
-All verification below is offline and deterministic.
+Offline items below are deterministic; the live items are in the section above.
 
 - **Pipeline end to end:** pre-filter, investigator tool-use loop, deterministic gate facts, SafetyGate, SyntheticTarget execution, audit log, verification, one re-investigation. Verified by `python tasks.py e2e`: 38 scenarios (33 labelled plus 5 loop drills), 35 ok, 3 known label conflicts, 0 mismatches.
 - **Safety spine:** gate can only downgrade (property test over random incoming decisions), kill switch re-read on every decision and fail-closed, abort ceiling, 2-per-fingerprint-per-hour rate limit, Tier 0 eligibility paths, Tier 2 never executes, one shared investigation budget per case (8 tool calls, 40k tokens, 1 re-investigation, 1 revision), evidence integrity enforced in code (uncited evidence dropped; unique tool-call ids).
 - **Tier 3:** deterministic diff checks plus an independent reviewer that sees only the diff, target files and hypothesis. PR record is never merged, `driftgate/` branch prefix enforced.
-- **LLM gateway:** rate limits, SQLite spend ledger ($2.50 lifetime, $1.00 daily), retries, prompt-cache markers, record/replay fixtures. Verified against a stub SDK client only.
-- **GitHub adapter:** guarded client (one configured repo, tight write allow-list, no merge/delete/patch). Verified against hand-written HTTP stubs only.
+- **LLM gateway:** rate limits, SQLite spend ledger ($2.50 lifetime, $1.00 daily), retries, prompt-cache markers, record/replay fixtures. Verified against a stub SDK client and live (the real SDK was exercised in the `e2e-live` runs; ledger and Console agree on spend).
+- **GitHub adapter:** guarded client (one configured repo, tight write allow-list, no merge/delete/patch). Verified against hand-written HTTP stubs and live: Tier 0 re-run, branch, commit and PR creation, CI dispatch on the PR branch, and verification all ran against real GitHub. Most response fixtures are still hand-written stubs; only the rejected-run fixtures are real captures.
 - **Eval:** `python tasks.py eval` prints the agent-vs-baseline table and writes `data/eval/report.md`.
 - **Guardrails:** `.claude/settings.json` rules and hooks (hardened against `bash -c`, `env`, `cmd /c`, `$(...)`); these blocked a subagent's attempt to run `record`.
-- **Counts:** lint clean, 798 tests passing, 1 skipped (real-symlink test; symlinks are not permitted on this Windows account, and a simulated-escape test runs instead).
+- **Counts:** lint clean, 1282 tests passing, 1 skipped (real-symlink test; symlinks are not permitted on this Windows account, and a simulated-escape test runs instead).
 
 ### What the numbers do and do not mean
 
-The offline agent is a **scripted model that is correct by construction**. The eval table validates the pipeline, the gates and the metric code. It says nothing about how a real model performs. Real agent numbers need your `record` and `eval-live` runs. The baseline column is real. The synthetic dataset's error text is recalled from well-known real outputs and is **not byte-verified** (every catalog entry is `verified: false`).
+The offline agent is a **scripted model that is correct by construction**. The eval table validates the pipeline, the gates and the metric code. It says nothing about how a real model performs. Real agent numbers need your `record` and `eval-live` runs. The baseline column is real. The synthetic dataset's error text is mostly recalled from well-known real outputs: four catalog entries are verified against real output with sources, the rest are not byte-verified.
 
 Headline offline results (dev set, n=24; held-out n=9 is too small to read as rates):
 
@@ -52,26 +67,24 @@ eval table + README (M9a)                           M9a        pass
 | Item | Status | Note |
 | --- | --- | --- |
 | Pre-filter | Done | Closes governance outcomes with zero model calls; verified in e2e. |
-| Investigator agent with MVP tools | Partial | Built and tested with a scripted model only. Never run against a real model. |
+| Investigator agent with MVP tools | Done (live, small n) | Ran against real models on all six playground scenarios (Haiku 4.5; Sonnet 5.5 for lockfile). Success rate over many cases is unmeasured until M9b. |
 | SafetyGate, kill switch, abort ceiling, rate limit | Done | The abort ceiling N=2 is a judgement call (see Needs human). |
-| LLM gateway with budgets | Partial | Built and tested offline. Response shapes unverified against the live SDK; Sonnet prices and rate limits are placeholders. |
-| Real Tier 0 and Tier 3 on GitHub Actions | Partial | Adapter built against stubs. Nothing has touched real GitHub. Live proof is M8b (human-only). |
-| PR reviewer agent | Partial | Built; only a scripted reviewer has been exercised. A real reviewer's catch rate is unmeasured. |
-| Verification and re-investigation loop | Done | Tier 3 CI is simulated from file paths in the synthetic target. |
-| Agent-vs-baseline eval on synthetic data | Partial | Harness done. The agent column is scripted, so the comparison is not yet evidence about a real agent. |
+| LLM gateway with budgets | Done | Exercised live: caps and ledger agree with the Console; mixed per-role models work. Sonnet price and rate-limit values in `llm/config.py` still to confirm if Sonnet is used more widely. |
+| Real Tier 0 and Tier 3 on GitHub Actions | Done | Live on the playground: Tier 0 re-run verified green, three Tier 3 PRs opened unmerged with green CI, governance closed with no model call. |
+| PR reviewer agent | Partial | A real reviewer approved the three correct diffs and failed closed when its shared budget was spent. Its catch rate on bad diffs is still unmeasured against a real model (M9b). |
+| Verification and re-investigation loop | Done | Offline drills for the wrong-first-fix path; live verification (`verified=True`) on the throttle re-run and on the three PRs' CI. A live wrong-first-fix recovery has not occurred. |
+| Agent-vs-baseline eval on synthetic data | Partial | Harness done and offline numbers printed. The agent column is still scripted until M9b (`record`, then `eval-live`). |
 
 ## Needs human, in order
 
-1. Confirm Claude Code bills to your subscription, not the API key (`/status`). Create the Console workspace (limit about $2.50) and put the key in the gitignored `.env`. Never paste it into Claude Code.
-2. Confirm real `claude-sonnet-5-5` prices and your account's rate limits, then edit `src/driftgate/llm/config.py`. Current values ($3/$15 per MTok, 40 rpm, 40k tpm) are placeholders.
-3. Decide the **flaky-test label conflict**: the generator labels flaky-test failures Tier 0 via flake precedent, but their only signature is the generic exit code, and invariant 3 requires a deterministic signature. Either supply a real verbatim signature or relabel those cases as escalations. The `scenario/flaky` playground case has the same problem.
-4. Supply real captured error samples (with sources) for the unverified catalog entries, the throttling line for `scenario/throttle`, and governance text. The full list is in `BLOCKERS.md`.
-5. Decide the abort-ceiling N. The orchestrator uses 2 (any fleet of 3 or more escalates); the gate default is 10.
-6. Harden log redaction with a corpus of real secret shapes before the first `record` run (it is regex-only).
-7. Run `python tasks.py record` on ONE scenario and check the real cost, then the rest, then `python tasks.py e2e` on replay, then `python tasks.py eval-live`. Changing the system prompt, tool schemas, `max_tokens` or tool result formats invalidates recorded fixtures. `record` and `eval-live` are not implemented yet. They are the only unimplemented targets, and both need your hands (see `docs/design/M5.md` for what `record` should do).
-8. M8b: create `drift-gate-playground`, a repo-scoped PAT (Actions read/write, Contents, Pull requests, Workflows), branch protection, then push the `playground/` scenario branches and the `baseline` tag yourself. Record real GitHub responses to replace the stubs, and capture a real rejected-approval run. `playground-reset` and `e2e-live` are not implemented yet.
-9. Decide the open reviewer follow-ups: tighten `_agent_ref` and allow-list redirect hosts; whether workflow-editing PRs may have CI auto-dispatched; whether a revision gets a reserved budget slice or is exempt from the hourly counter.
-10. Review the work, merge `mvp1/integration` into `main` and push. Update the PRD's open questions (ship date, $2.50 budget, Haiku default).
+Done since the first version of this report: Console workspace and key; flaky-test label (relabelled as escalation, invariant 3); abort-ceiling N (kept at 2); the playground (created, pushed, all six scenarios run live, PRs #2 to #4 reviewed); redaction hardening (21 new corpus cases, 9 false-positive guards; still regex-only); four error-catalog entries verified against real output.
+
+1. **M9b, in this order, before changing any agent prompt or tool schema** (recorded fixtures are keyed on them): `python tasks.py record --yes-spend` for one scenario; then on a fresh daily cap `python tasks.py record --all --yes-spend --cap-usd 0.90`; then `python tasks.py e2e` on replay; then, on another day, `python tasks.py eval-live`. The estimate (`record --estimate`) is $0.49 plain and $0.73 with margin for all 31 model-using scenarios; the daily cap is $1.00 and only $0.3352 remained on 2026-10-11, so record and eval-live cannot share a day. Remaining lifetime budget is $1.8352 of $2.50.
+2. Confirm real `claude-sonnet-5-5` prices and rate limits in `src/driftgate/llm/config.py` if Sonnet is used for more than a few demo cases. The Haiku-only estimate and the observed spend agree with the Console.
+3. Error catalog: entries still not byte-verified (`npm_ci_lock_out_of_sync`, `tf_undeclared_variable`, `tf_provider_constraints`, the state-lock block, `kubectl describe` indentation) and the missing real governance, CI-hosted lock and reusable-workflow samples. Full list in `BLOCKERS.md`.
+4. Decisions logged in `BLOCKERS.md`: whether to reserve tool calls for the reviewer (the shared 8-call budget can starve it; changing it changes the PRD budget rule); one `baseline/<name>` tag per scenario versus the PRD's single tag; the open reviewer follow-ups (tighten `_agent_ref`, allow-list redirect hosts, whether workflow-editing PRs may have CI auto-dispatched, whether a revision gets a reserved budget slice).
+5. `python tasks.py playground-reset` (human-only) when you want a clean playground; it closes PRs #2 to #4 and deletes the `driftgate/*` branches, and old failed runs then need fresh dispatches.
+6. Merge: `mvp1/m8b-live-playground` fast-forwards onto `main`; push `main` yourself and tag it. Update the PRD's open questions (ship date, the $2.50 budget, Haiku as the default model).
 
 ## Reviewer questions to answer before trusting each module
 

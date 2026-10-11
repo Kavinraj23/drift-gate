@@ -43,18 +43,22 @@ pipeline execution. You only read; you never change anything. Everything you pro
 deterministic code that can refuse it, and you cannot override that.
 
 How to work
-- Start with the cheapest tools (get_execution, classify_signature, fleet_correlate, flake_history). Use the \
-medium-cost tools (get_step_logs, read_repo_file) only when the cheap ones leave the cause open. You have at \
-most 8 tool calls; spend them deliberately.
+- Start with the cheapest tools: get_execution and classify_signature. Use fleet_correlate and flake_history \
+only when their answer could change your decision (many executions share a ref, or a re-run is on the table); a \
+code-level fix does not need them. Use the medium-cost tools (get_step_logs, read_repo_file) when the cheap ones \
+leave the cause open. You have at most 8 tool calls and every call counts, including one that fails on a wrong \
+path, so name the files you need from the logs and read each one once. submit_report is free.
 - The first error in a log is often not the operative one. Read all error blocks before you decide.
-- Cite evidence by tool call id. Each evidence item must carry the id of a tool call you actually made in this \
-investigation. Items without a valid id are deleted before anyone sees them.
+- Cite evidence by tool call id. Every tool result carries its id in a `tool_call_id` field; copy that value \
+exactly into the evidence item's `source` (not the tool's name). Items without a valid id are deleted before \
+anyone sees them.
 - Fleet-wide failures (many executions on a shared connector, template or runner pool) are not yours to fix: \
 report them and do not propose a remediation.
 - Governance outcomes (approval rejected or expired) and user aborts are normal and never remediated.
 
 Proposing a remediation (optional)
-Propose one only when the evidence supports a specific action from this catalog, with its tier:
+Propose one only when the evidence supports a specific action from this catalog, with its tier. `action` must \
+be one of these identifiers exactly, never a description (put the explanation in `rationale`):
 {_catalog_text()}
 - Tier 0 re-runs are only ever allowed by deterministic code when the failure has a deterministic signature \
 match AND either a fail-then-pass history (flake_history) or a Tier 0 known-transient rule \
@@ -64,7 +68,21 @@ match AND either a fail-then-pass history (flake_history) or a Tier 0 known-tran
 (relative paths inside the repository) and put the change itself in `diff`: a unified diff (a/ and b/ paths, \
 hunks) against those files as read at the failing commit, minimal and limited to the named files. When it spans \
 several files, list additions before removals. Never delete files, and never put credentials in a diff. An \
-independent reviewer sees only the diff, the files and your hypothesis.
+independent reviewer sees only the diff, the files and your hypothesis. A Tier 3 proposal with an empty `diff` is \
+rejected outright, so describing the change in `rationale` or `params` is not enough: read the file with \
+read_repo_file, then write the edit itself as a unified diff in `diff`. Copy every context line and every removed \
+line from the file exactly as read, character for character: a context line that differs from the file makes the \
+whole diff fail to apply, and a line whose value must change is a `-` and `+` pair, never a context line. \
+Leading spaces are part of a line, so keep each line's exact indentation. Use at most one context line above and \
+one below each change, and only as many as you need to make the place unambiguous: every extra context line is \
+another chance to mistype the file. For example:
+--- a/path/file
++++ b/path/file
+@@ -3,3 +3,3 @@
+ context line
+-old line
++new line
+ context line
 - Your confidence is recorded. It is never sufficient for any tier. State it honestly.
 - If you cannot support an action, propose none and say why in escalation_reason: escalating is a good outcome.
 
@@ -108,11 +126,17 @@ def submit_report_definition() -> dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "tier": {"enum": list(TIERS)},
-                        "action": {"type": "string"},
+                        "action": {
+                            "enum": [a for actions in CATALOG.values() for a in actions],
+                            "description": "Exactly one catalog action identifier, in the tier you also give.",
+                        },
                         "rationale": {"type": "string"},
                         "reversible": {"type": "boolean"},
                         "paths": {"type": "array", "items": {"type": "string"}},
-                        "diff": {"type": "string", "description": "Tier 3 only: the unified diff of the change."},
+                        "diff": {
+                            "type": "string",
+                            "description": "Required for Tier 3: the unified diff (---/+++/@@ hunks) of the change.",
+                        },
                         "params": {"type": "object"},
                     },
                     "required": ["tier", "action", "rationale", "reversible"],
@@ -423,7 +447,9 @@ def _tool_result_block(call_id: str, content: str, is_error: bool) -> dict[str, 
 
 
 def _render(r: ToolResult) -> str:
-    return json.dumps({"error": r.error} if not r.ok else r.data, separators=(",", ":"), default=str)
+    """The result as JSON, with its tool call id in `tool_call_id` so the model has a visible id to cite."""
+    body = {"error": r.error} if not r.ok else dict(r.data)
+    return json.dumps({"tool_call_id": r.source, **body}, separators=(",", ":"), default=str)
 
 
 def _validate(data: dict[str, Any]) -> str:

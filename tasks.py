@@ -13,11 +13,8 @@ _VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
 PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
-NOT_IMPLEMENTED: dict[str, str] = {
-    "e2e-live": "M8b",
-    "playground-reset": "M8b",
-}
-LIVE_TARGETS = {"record", "eval-live"}  # implemented in driftgate.eval.live; human-only
+NOT_IMPLEMENTED: dict[str, str] = {}
+LIVE_TARGETS = {"record", "eval-live", "e2e-live"}  # implemented in driftgate.eval.live; human-only
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
@@ -95,6 +92,11 @@ def eval_() -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def playground_reset() -> int:
+    """Human-only: force scenario branches back to their baseline tags (see scripts/playground.py)."""
+    return run([PY, "scripts/playground.py", "reset", "--yes"])
+
+
 def mvp_check() -> int:
     rows: list[tuple[str, str, str]] = []
     for name, milestone, cmd in CHECKS:
@@ -119,6 +121,7 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "e2e": e2e,
     "eval": eval_,
     "mvp-check": mvp_check,
+    "playground-reset": playground_reset,
 }
 
 

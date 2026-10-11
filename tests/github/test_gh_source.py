@@ -85,6 +85,19 @@ def test_jobs_that_never_started_are_a_rejected_approval_and_closed_without_a_mo
     assert prefilter(ex).closed
 
 
+def test_a_real_rejected_deployment_maps_to_approval_rejected(
+    source: GitHubActionsSource, session: FakeSession
+) -> None:
+    """Captured from the live playground (2026-10-09): a rejected `needs-approval` environment deployment."""
+    session.on("GET", "/actions/runs/37990687614/attempts/1", FakeResponse(200, fixture("real_rejected_run.json")))
+    session.on(
+        "GET", "/actions/runs/37990687614/attempts/1/jobs", FakeResponse(200, fixture("real_rejected_jobs.json"))
+    )
+    ex = source.get_execution("37990687614.1")
+    assert ex.status == "approval_rejected" and ex.pipeline == f"{REPO}:approval-rejected.yml"
+    assert prefilter(ex).closed
+
+
 def test_a_failed_job_with_steps_is_not_mistaken_for_a_rejection(
     source: GitHubActionsSource, session: FakeSession
 ) -> None:

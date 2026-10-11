@@ -221,15 +221,44 @@ def test_specific_violation_codes_are_reported(run_t3: RunT3, t3_labels: list[Fa
     assert [v["code"] for v in run.stage("tier3_diff")[0].payload["violations"]] == ["secret_literal"]
 
 
+def test_a_rejected_diff_is_audited_as_text_unless_a_credential_was_the_reason(
+    run_t3: RunT3, t3_labels: list[FailureLabel]
+) -> None:
+    lock = next(lb for lb in t3_labels if lb.correct_action == "regenerate_lockfile")
+    ok = run_t3(lock)
+    assert ok.stage("tier3_diff")[0].payload["rejected_diff"] is None  # an accepted diff is not stored here
+    bad = run_t3(lock, "diff:delete_fix_file")
+    text = bad.stage("tier3_diff")[0].payload["rejected_diff"]
+    assert isinstance(text, str) and text.startswith("---") and len(text) <= 2000
+    secret = run_t3(lock, "diff:secret_literal")
+    payload = secret.stage("tier3_diff")[0].payload
+    assert payload["rejected_diff"] is None and [v["code"] for v in payload["violations"]] == ["secret_literal"]
+
+
+def test_agent_audit_record_carries_the_tool_trace_and_capped_reasoning(
+    make_orch: Callable[..., Any], t3_labels: list[FailureLabel]
+) -> None:
+    label = t3_labels[0]
+    model = report_model(label, tier3(label, diff=""), hypothesis="x" * 5000)
+    orch = make_orch(label, model_factory=lambda e, b: model)
+    orch.handle(label.execution_id)
+    agent = next(e.payload for e in orch.audit.read() if e.payload.get("stage") == "agent")
+    assert agent["tools"] == ["classify_signature"]
+    assert agent["diff_chars"] == 0
+    assert len(agent["hypothesis"]) == 600 and "escalation_reason" in agent
+
+
 # --- hand-built investigator reports -------------------------------------------------------------------------
-def report_model(label: FailureLabel, remediation: dict[str, Any] | None) -> FakeModel:
+def report_model(
+    label: FailureLabel, remediation: dict[str, Any] | None, hypothesis: str = "the lockfile is stale"
+) -> FakeModel:
     eid = label.execution_id
     call = ToolCall("c0", "classify_signature", {"execution_id": eid})
     body: dict[str, Any] = {
         "classification": "user",
         "layer": "L4",
         "confidence": 0.7,
-        "hypothesis": "the lockfile is stale",
+        "hypothesis": hypothesis,
         "evidence": [{"source": "c0", "finding": "a finding", "supports": "hypothesis"}],
     }
     if remediation is not None:
@@ -462,3 +491,14 @@ def test_scripted_factory_is_the_one_the_e2e_uses(dataset_dir: Path, t3_labels: 
     factory = _scripted_factory(t3_labels[0], SyntheticSource(dataset_dir), "revise:wrong_file")
     first, second = factory("e", None), factory("e", None)  # type: ignore[arg-type]
     assert first is not second
+
+
+def test_an_unparsed_diff_is_never_stored_in_the_audit() -> None:
+    from types import SimpleNamespace
+
+    from driftgate.orchestrator import _rejected_diff_text
+
+    unparsed = SimpleNamespace(ok=False, diff=None, violations=[SimpleNamespace(code="parse_error")])
+    parsed = SimpleNamespace(ok=False, diff=object(), violations=[SimpleNamespace(code="does_not_apply")])
+    assert _rejected_diff_text(unparsed, "--- a/x\n+++ b/x\n") is None  # type: ignore[arg-type]
+    assert _rejected_diff_text(parsed, "--- a/x\n+++ b/x\n") == "--- a/x\n+++ b/x\n"  # type: ignore[arg-type]

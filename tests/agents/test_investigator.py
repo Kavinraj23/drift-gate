@@ -108,6 +108,23 @@ def test_requests_carry_a_static_cache_friendly_prefix_and_tool_results(run, pic
     assert not last[0]["is_error"] and isinstance(json.loads(last[0]["content"]), dict)
 
 
+def test_report_schema_offers_exactly_the_catalog_actions() -> None:
+    from driftgate.remediation_catalog import CATALOG
+
+    schema = agent_tool_definitions()[-1]["input_schema"]
+    offered = schema["properties"]["remediation"]["properties"]["action"]["enum"]
+    assert sorted(offered) == sorted(a for actions in CATALOG.values() for a in actions)
+
+
+def test_every_tool_result_shows_the_model_its_own_call_id(run, pick) -> None:
+    inv = run(pick("transient_throttling", fleet=False))
+    blocks = [b for m in inv.model.requests[-1].messages if isinstance(m["content"], list) for b in m["content"]]
+    results = [b for b in blocks if b["type"] == "tool_result"]
+    assert results
+    for b in results:
+        assert json.loads(b["content"])["tool_call_id"] == b["tool_use_id"]
+
+
 def test_first_request_is_deterministic_across_runs(run, pick) -> None:
     label = pick("transient_throttling", fleet=False)
     a, b = run(label), run(label)

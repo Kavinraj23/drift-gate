@@ -45,6 +45,7 @@ from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
 from driftgate.policy import DEFAULT_POLICY_PATH, load_policy
 from driftgate.prefilter import prefilter
+from driftgate.redaction import redact
 from driftgate.remediation_catalog import TIER1_DIMENSION, is_catalog_action
 from driftgate.tier3 import (
     PR_BASE_BRANCH,
@@ -424,6 +425,7 @@ class Orchestrator:
             files=list(check.diff.paths) if check.diff else [],
             added=check.diff.added if check.diff else 0,
             removed=check.diff.removed if check.diff else 0,
+            rejected_diff=_rejected_diff_text(check, proposal.diff),
         )
         return check
 
@@ -681,7 +683,30 @@ class Orchestrator:
             evidence_dropped=inv.evidence_dropped,
             duplicate_ids_rejected=inv.duplicate_ids_rejected,
             tool_call_ids=inv.tool_call_ids,
+            tools=[_tool_trace(r) for r in inv.tool_results],
+            diff_chars=len(inv.proposal.diff) if inv.proposal else 0,
+            hypothesis=inv.report.hypothesis[:600],
+            escalation_reason=inv.report.escalation_reason[:600],
         )
+
+
+def _rejected_diff_text(check: DiffCheck, diff: str) -> str | None:
+    """The rejected diff for the audit, redacted and capped. Never stored when a credential was the reason, or when
+    the diff did not parse (the secret scan never ran): the Tier 3 secret check is broader than the log redactor,
+    so the text could still carry a secret."""
+    if check.ok or check.diff is None or any(v.code == "secret_literal" for v in check.violations):
+        return None
+    return redact(diff)[:2000]
+
+
+def _tool_trace(r: ToolResult) -> str:
+    """One short audit line per tool call: the tool, and the file it read or the error it returned."""
+    if not r.ok:
+        return f"{r.tool}: error: {(r.error or '')[:120]}"
+    path, ref = r.data.get("path"), r.data.get("ref")
+    if not isinstance(path, str):
+        return r.tool
+    return f"{r.tool}: {path}@{str(ref)[:12]}" if isinstance(ref, str) else f"{r.tool}: {path}"
 
 
 def _spent_stop(budget: InvestigationBudget) -> str:

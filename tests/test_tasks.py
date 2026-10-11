@@ -15,14 +15,14 @@ SPEC.loader.exec_module(tasks)
 def test_not_implemented_target_exits_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # e2e-live is still unimplemented; use a root without `.autonomous` so the not-implemented path (not the
-    # human-only refusal) is what runs.
+    # No real target is unimplemented any more; a stand-in keeps the not-implemented path covered.
     monkeypatch.setattr(tasks, "ROOT", tmp_path)
-    assert tasks.main(["tasks.py", "e2e-live"]) == 1
-    assert "not implemented (M8b)" in capsys.readouterr().out
+    monkeypatch.setitem(tasks.NOT_IMPLEMENTED, "future-target", "M99")
+    assert tasks.main(["tasks.py", "future-target"]) == 1
+    assert "not implemented (M99)" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("target", ["record", "eval-live"])
+@pytest.mark.parametrize("target", ["record", "eval-live", "e2e-live"])
 def test_live_targets_dispatch_to_the_live_module_with_options(
     target: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

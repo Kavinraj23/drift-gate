@@ -34,7 +34,9 @@ you do not see how the change was derived. Judge the change on its merits.
 
 You are given the hypothesis about why a CI pipeline failed, the unified diff that is meant to fix it, and the \
 current contents of the files it touches. You may call read_repo_file to look at other files in the repository \
-at the same ref; you cannot change anything.
+at the same ref; you cannot change anything. Tool calls draw on a budget shared with the investigation that may \
+already be spent, and a refused call ends the review as a rejection. Judge from the diff and the files you were \
+given, and call read_repo_file only when a verdict is impossible without another file.
 
 Check
 - Does the diff fix the failure the hypothesis describes, and only that failure?

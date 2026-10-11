@@ -32,7 +32,9 @@ SPEC = ToolSpec(
     name="read_repo_file",
     description=(
         "Read one file (workflow YAML, lockfile, terraform, config) from a repo at a ref. repo is the pipeline "
-        "name; ref is the execution's refs.commit (a sha or 'main'). Size-capped; secrets redacted. Medium cost."
+        "name; ref is the execution's refs.commit (a sha or 'main'). path is relative to the repository root: a "
+        "GitHub Actions workflow file lives at .github/workflows/<name>.yml, not at the root. A path that does not "
+        "exist still costs a tool call. Size-capped; secrets redacted. Medium cost."
     ),
     input_schema={
         "type": "object",

@@ -132,11 +132,28 @@ class InvestigationLimits:
     max_reinvestigations: int = 1
 
 
+def _daily_cap(env: Mapping[str, str], lifetime_cap_usd: float, default: float) -> float:
+    """Optional `DRIFTGATE_DAILY_CAP_USD`: a human's per-run pacing override. It is clamped to the lifetime cap, so it
+    can never raise total spend, and a malformed or non-positive value fails loudly rather than being ignored."""
+    raw = (env.get("DRIFTGATE_DAILY_CAP_USD") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"DRIFTGATE_DAILY_CAP_USD must be a number, got {raw!r}") from None
+    if not value > 0:  # also rejects NaN
+        raise ValueError(f"DRIFTGATE_DAILY_CAP_USD must be positive, got {raw!r}")
+    return min(value, lifetime_cap_usd)
+
+
 def config_from_env(env: Mapping[str, str]) -> GatewayConfig:
     """Pure: build a config from an env mapping. Never touches os.environ or files."""
+    defaults = GatewayConfig()
     return GatewayConfig(
         investigator_model=env.get("DRIFTGATE_INVESTIGATOR_MODEL") or DEFAULT_MODEL,
         reviewer_model=env.get("DRIFTGATE_REVIEWER_MODEL") or DEFAULT_MODEL,
+        daily_cap_usd=_daily_cap(env, defaults.lifetime_cap_usd, defaults.daily_cap_usd),
         api_key=env.get("ANTHROPIC_API_KEY") or None,
     )
 

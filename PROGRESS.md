@@ -118,3 +118,6 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 - `src/driftgate/redaction.py`: 20 new patterns (vendor tokens, kubeconfig client key, netrc, cookies, `::add-mask::`, `--from-literal=`) and `master` as a key-name prefix. Corpus +21 cases, +9 false-positive guards; the 81 existing cases are unchanged. Fixed two defects found by the corpus tests: the cookie rule was not idempotent, and the Telegram rule missed `bot<id>:<token>`.
 - Retracted a claim from the M8b notes: `record`/`eval-live` are not affected by the combined model label (display column only).
 - Still needs human: Sonnet price confirmation, `record --estimate`, and the first `record`.
+
+## Optional daily-cap override (2026-10-11)
+- `llm/config.py`: `DRIFTGATE_DAILY_CAP_USD` (env or `.env`) sets the gateway's daily cap for a run. Default stays $1.00; the value is clamped to the lifetime cap ($2.50, not overridable), and a malformed or non-positive value raises. Added at the user's request so M9b's `record --all` and `eval-live` can share a day; `tests/gateway/test_config_daily_cap.py` covers it. The lifetime cap still binds all spend.

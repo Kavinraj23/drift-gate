@@ -28,10 +28,22 @@ class DatasetValidationError(Exception):
     pass
 
 
+#: Files that live in `data/` but are not part of the dataset: the gateway's spend ledger (it enforces the lifetime
+#: and daily caps, so wiping it silently resets the budget) and the live audit log. Regenerating the dataset, which
+#: `python tasks.py data` and `mvp-check` do, must never delete them.
+PRESERVED = ("spend.sqlite", "spend.sqlite-journal", "spend.sqlite-wal", "spend.sqlite-shm", "audit_live.jsonl")
+
+
 def write_dataset(dataset: Dataset, out_dir: Path) -> None:
-    """Replace `out_dir` with the dataset (a stale tree must never mix with a new one)."""
+    """Replace the dataset in `out_dir` (a stale tree must never mix with a new one); keep the PRESERVED files."""
     if out_dir.exists():
-        shutil.rmtree(out_dir)
+        for child in out_dir.iterdir():
+            if child.name in PRESERVED:
+                continue
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
     for rel, text in dataset.files.items():
         path = out_dir / rel
         path.parent.mkdir(parents=True, exist_ok=True)

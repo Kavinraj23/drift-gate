@@ -284,6 +284,22 @@ def test_schema_validation_and_eval_reader_round_trip(ds: Dataset, tmp_path: Pat
     assert gt.flaky_pipelines and gt.bursts
 
 
+def test_regenerating_the_dataset_keeps_the_spend_ledger_and_live_audit_log(ds: Dataset, tmp_path: Path) -> None:
+    """`tasks.py data` (also run by mvp-check) rewrites data/; it once deleted the ledger that enforces the budget."""
+    out = tmp_path / "data"
+    write_dataset(ds, out)
+    (out / "spend.sqlite").write_bytes(b"ledger")
+    (out / "audit_live.jsonl").write_text("live audit line", encoding="utf-8")
+    (out / "stale.json").write_text("{}", encoding="utf-8")
+    (out / "stale_dir").mkdir()
+    (out / "stale_dir" / "f.txt").write_text("x", encoding="utf-8")
+    write_dataset(ds, out)
+    assert (out / "spend.sqlite").read_bytes() == b"ledger"
+    assert (out / "audit_live.jsonl").read_text(encoding="utf-8") == "live audit line"
+    assert not (out / "stale.json").exists() and not (out / "stale_dir").exists()  # stale dataset files still go
+    validate_dataset(out)
+
+
 def test_schema_validation_rejects_bad_data(ds: Dataset) -> None:
     bad = dict(ds.files)
     execs = json.loads(bad["executions.json"])

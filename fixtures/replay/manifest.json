@@ -1,0 +1,14 @@
+{
+  "scenarios": {
+    "sc-21": {
+      "cost_usd": 0.022768,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    }
+  }
+}

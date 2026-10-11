@@ -1,6 +1,6 @@
 # DriftGate MVP 1: report
 
-**Status (2026-10-11): feature-complete and live-verified on the playground; real-model eval numbers (M9b) are the one open item.** Latest work is on branch `mvp1/m8b-live-playground` (pushed, two commits ahead of `main`, fast-forwardable); `main` has M0 to M8a plus the `e2e-live` code. Real API spend to date: $0.6648 of the $2.50 lifetime cap (the gateway ledger agrees with the Anthropic Console credit drop of about $0.66). No test or offline target makes a network call.
+**Status (2026-10-11): feature-complete and live-verified on the playground; real-model eval numbers (M9b) are the one open item.** Latest work is on branch `mvp1/m8b-live-playground` (pushed, two commits ahead of `main`, fast-forwardable); `main` has M0 to M8a plus the `e2e-live` code. Real API spend to date: $0.6876 of the $2.50 lifetime cap (live runs $0.6648, matching the Anthropic Console credit drop of about $0.66, plus the $0.0228 first `record` run). Note: `tasks.py data` and `mvp-check` used to delete the spend ledger and the live audit log; fixed on 2026-10-11 and the ledger restored with a labelled carry-over row (see `PROGRESS.md`), but the live audit trail of the M8b runs is lost. No test or offline target makes a network call.
 
 ## Live verification (M8b, 2026-10-10 to 2026-10-11)
 

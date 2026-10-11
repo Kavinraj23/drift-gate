@@ -121,3 +121,9 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 
 ## Optional daily-cap override (2026-10-11)
 - `llm/config.py`: `DRIFTGATE_DAILY_CAP_USD` (env or `.env`) sets the gateway's daily cap for a run. Default stays $1.00; the value is clamped to the lifetime cap ($2.50, not overridable), and a malformed or non-positive value raises. Added at the user's request so M9b's `record --all` and `eval-live` can share a day; `tests/gateway/test_config_daily_cap.py` covers it. The lifetime cap still binds all spend.
+
+## Incident: `mvp-check` / `tasks.py data` wiped the spend ledger (2026-10-11)
+- `generator.writer.write_dataset` did `shutil.rmtree(data/)`, and `data/` also holds the gateway's spend ledger (`spend.sqlite`) and the live audit log (`audit_live.jsonl`). `python tasks.py data` and `mvp-check` (which runs it) therefore deleted both. Found when `record --yes-spend` reported lifetime $0.0228 where the ledger had said $0.6648 minutes earlier. Nothing was overspent, but the lifetime and daily caps were blind to prior spend until this was caught.
+- Fixed: `write_dataset` now clears everything it generated and keeps `PRESERVED` files (`spend.sqlite` and its journal/WAL/SHM files, `audit_live.jsonl`); test `test_regenerating_the_dataset_keeps_the_spend_ledger_and_live_audit_log`.
+- Restored the ledger with one labelled carry-over row (`restored-after-data-wipe`, $0.6648, the figure the ledger itself reported before the wipe; the Console credit drop was about $0.66). Lifetime now $0.6876 including the $0.0228 sc-21 record run.
+- Lost and not recoverable: `data/audit_live.jsonl`, the live audit trail of the M8b runs. The PRs, the design note and PROGRESS keep the outcomes; per-call detail is gone.

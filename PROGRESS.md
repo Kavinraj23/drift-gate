@@ -127,3 +127,8 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 - Fixed: `write_dataset` now clears everything it generated and keeps `PRESERVED` files (`spend.sqlite` and its journal/WAL/SHM files, `audit_live.jsonl`); test `test_regenerating_the_dataset_keeps_the_spend_ledger_and_live_audit_log`.
 - Restored the ledger with one labelled carry-over row (`restored-after-data-wipe`, $0.6648, the figure the ledger itself reported before the wipe; the Console credit drop was about $0.66). Lifetime now $0.6876 including the $0.0228 sc-21 record run.
 - Lost and not recoverable: `data/audit_live.jsonl`, the live audit trail of the M8b runs. The PRs, the design note and PROGRESS keep the outcomes; per-call detail is gone.
+
+## M9b: record --all and the replay eval (2026-10-11)
+- `record --smoke` (sc-21, $0.0228) then `record --all --yes-spend --cap-usd 0.90` over 31 scenarios (about $0.88). First complete run: 27/31 matched; misses sc-01, sc-23, sc-27 (lockfile) and sc-25 (provider pin), all escalations. The same command was submitted twice by accident; the duplicate ran about $0.31 before it was stopped and overwrote sc-01's fixture with a passing recording (replay shows 3 mismatches, not 4; disclosed in MVP_REPORT.md). `python tasks.py e2e` on replay: 0 scenarios without a fixture, 35 of 38 ok. `python tasks.py eval`: real-model table in `data/eval/report.md`.
+- `eval/report.py`: the offline report said the agent column was SCRIPTED even when it replayed real recordings; added a replay-specific honesty block and "does and does not show" section (`offline_honesty`), with a test. No metric or scoring code changed.
+- Spend $1.8775 of $2.50 lifetime; `eval-live` not run (budget). Held-out outcomes are not used for tuning.

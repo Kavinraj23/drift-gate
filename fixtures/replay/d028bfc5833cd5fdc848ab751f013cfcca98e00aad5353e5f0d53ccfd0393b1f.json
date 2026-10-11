@@ -1,0 +1,454 @@
+{
+  "fingerprint": "88a8278480e61498",
+  "fixture_version": 1,
+  "key": "d028bfc5833cd5fdc848ab751f013cfcca98e00aad5353e5f0d53ccfd0393b1f",
+  "request": {
+    "max_tokens": 1500,
+    "messages": [
+      {
+        "content": "Investigate failed CI execution ex-000605. Gather evidence with the read-only tools, then finish with submit_report.",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "I'll investigate the failed CI execution ex-000605 by gathering evidence systematically.",
+            "type": "text"
+          },
+          {
+            "id": "toolu_015A1y8ynwKrPekQLqeKsPYx",
+            "input": {
+              "execution_id": "ex-000605"
+            },
+            "name": "get_execution",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_01CFqZ6rpivEAxtRRyt3Y692",
+            "input": {
+              "execution_id": "ex-000605"
+            },
+            "name": "classify_signature",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "{\"tool_call_id\":\"toolu_015A1y8ynwKrPekQLqeKsPYx\",\"execution_id\":\"ex-000605\",\"pipeline\":\"infra-db\",\"status\":\"failed\",\"started_at\":\"2026-09-20T01:44:43Z\",\"finished_at\":\"2026-09-20T01:48:18Z\",\"refs\":{\"connector\":\"aws-prod\",\"template\":\"terraform-plan@v2.0.0\",\"runner_pool\":\"pool-large\",\"infra_def\":\"tf-db\",\"commit\":\"main\"},\"tree\":{\"node_id\":\"ex-000605-n0\",\"name\":\"infra-db\",\"status\":\"failed\",\"children\":[{\"node_id\":\"ex-000605-n1\",\"name\":\"Plan\",\"status\":\"failed\",\"children\":[{\"node_id\":\"ex-000605-n2\",\"name\":\"Checkout\",\"status\":\"success\"},{\"node_id\":\"ex-000605-n3\",\"name\":\"Configure AWS credentials\",\"status\":\"success\"},{\"node_id\":\"ex-000605-n4\",\"name\":\"Terraform Init\",\"status\":\"success\"},{\"node_id\":\"ex-000605-n5\",\"name\":\"Terraform Plan\",\"status\":\"failed\"}]},{\"node_id\":\"ex-000605-n6\",\"name\":\"Approval\",\"status\":\"skipped\",\"children\":[{\"node_id\":\"ex-000605-n7\",\"name\":\"Manual approval\",\"status\":\"skipped\"}]},{\"node_id\":\"ex-000605-n8\",\"name\":\"Apply\",\"status\":\"skipped\",\"children\":[{\"node_id\":\"ex-000605-n9\",\"name\":\"Terraform Apply\",\"status\":\"skipped\"}]}]},\"failed_leaves\":[{\"node_id\":\"ex-000605-n5\",\"name\":\"Terraform Plan\",\"error_summary\":\"An error occurred (ThrottlingException) when calling the DescribeInstances operation (reached max retries: 2): Rate exceeded\"}]}",
+            "is_error": false,
+            "tool_use_id": "toolu_015A1y8ynwKrPekQLqeKsPYx",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"tool_call_id\":\"toolu_01CFqZ6rpivEAxtRRyt3Y692\",\"execution_id\":\"ex-000605\",\"pipeline\":\"infra-db\",\"step\":\"Terraform Plan\",\"node_id\":\"ex-000605-n5\",\"signature\":\"tf_state_lock\",\"deterministic_match\":true,\"layer\":\"L4\",\"classification\":\"platform\",\"tier0_rule_exists\":false,\"all_signatures\":[{\"id\":\"tf_state_lock\",\"layer\":\"L4\",\"classification\":\"platform\",\"tier0_rule_exists\":false},{\"id\":\"aws_throttling\",\"layer\":\"L4\",\"classification\":\"transient\",\"tier0_rule_exists\":true},{\"id\":\"exit_code_nonzero\",\"layer\":\"L4\",\"classification\":\"unknown\",\"tier0_rule_exists\":false}],\"fingerprint\":\"6b6e90c293867a62\"}",
+            "is_error": false,
+            "tool_use_id": "toolu_01CFqZ6rpivEAxtRRyt3Y692",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "I have good initial information. The execution failed at the \"Terraform Plan\" step with a ThrottlingException from AWS. The signature classifier reports it as \"tf_state_lock\" (platform-related), though there's also an \"aws_throttling\" signature available with a Tier 0 rule. Let me gather more details on the error logs and check for fleet correlation.",
+            "type": "text"
+          },
+          {
+            "id": "toolu_01Xkqj4d8s7S2B62FNS84yrL",
+            "input": {
+              "execution_id": "ex-000605",
+              "node_id": "ex-000605-n5"
+            },
+            "name": "get_step_logs",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_018c9wGPYsc9CqLprA27amzW",
+            "input": {
+              "execution_id": "ex-000605"
+            },
+            "name": "fleet_correlate",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_014NvF4BAaCUWToCkoA2cUY5",
+            "input": {
+              "execution_id": "ex-000605"
+            },
+            "name": "flake_history",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "{\"tool_call_id\":\"toolu_01Xkqj4d8s7S2B62FNS84yrL\",\"execution_id\":\"ex-000605\",\"node_id\":\"ex-000605-n5\",\"step\":\"Terraform Plan\",\"error_block_count\":3,\"blocks\":[{\"rank\":90,\"signature\":\"tf_state_lock\",\"line\":6,\"count\":1},{\"rank\":50,\"signature\":\"aws_throttling\",\"line\":5,\"count\":1},{\"rank\":10,\"signature\":\"exit_code_nonzero\",\"line\":25,\"count\":1}],\"text\":\"[block rank=90 signature=tf_state_lock line=6]\\n\\u2577\\n\\u2502 Error: Error acquiring the state lock\\n\\u2502\\n\\u2502 Error message: ConditionalCheckFailedException: The conditional request failed\\n\\u2502 Lock Info:\\n\\u2502   ID:        16621842-4ab5-a694-5733-c2f500cc1e0a\\n\\u2502   Path:      acme-tfstate/infra-db/terraform.tfstate\\n\\u2502   Operation: OperationTypePlan\\n\\u2502   Who:       runner@fv-az137-71\\n\\u2502   Version:   1.5.7\\n\\u2502   Created:   2026-09-20 01:43:19.545539703 +0000 UTC\\n\\u2502   Info:\\n\\u2502\\n\\u2502\\n\\u2502 Terraform acquires a state lock to protect the state from being written\\n\\u2502 by multiple users at the same time. Please resolve the issue above and try\\n\\u2502 again. For most commands, you can disable locking with the \\\"-lock=false\\\"\\n\\u2502 flag, but this is not recommended.\\n\\u2575\\n[block rank=50 signature=aws_throttling line=5]\\nAn error occurred (ThrottlingException) when calling the DescribeInstances operation (reached max retries: 2): Rate exceeded\\n[block rank=10 signature=exit_code_nonzero line=25]\\n##[error]Process completed with exit code 1.\\n\",\"budget_chars\":4000,\"truncated\":false}",
+            "is_error": false,
+            "tool_use_id": "toolu_01Xkqj4d8s7S2B62FNS84yrL",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"tool_call_id\":\"toolu_018c9wGPYsc9CqLprA27amzW\",\"execution_id\":\"ex-000605\",\"window_minutes\":30,\"fleet_wide\":false,\"executions_affected\":0,\"shared_dimension\":\"\",\"dimensions\":[{\"dimension\":\"connector\",\"value\":\"aws-prod\",\"executions\":[\"ex-000605\"],\"count\":1,\"pipelines\":[\"infra-db\"],\"window_executions\":1},{\"dimension\":\"infra_def\",\"value\":\"tf-db\",\"executions\":[\"ex-000605\"],\"count\":1,\"pipelines\":[\"infra-db\"],\"window_executions\":1},{\"dimension\":\"template\",\"value\":\"terraform-plan@v2.0.0\",\"executions\":[\"ex-000605\"],\"count\":1,\"pipelines\":[\"infra-db\"],\"window_executions\":3},{\"dimension\":\"runner_pool\",\"value\":\"pool-large\",\"executions\":[\"ex-000605\"],\"count\":1,\"pipelines\":[\"infra-db\"],\"window_executions\":3}],\"signature\":\"tf_state_lock\"}",
+            "is_error": false,
+            "tool_use_id": "toolu_018c9wGPYsc9CqLprA27amzW",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"tool_call_id\":\"toolu_014NvF4BAaCUWToCkoA2cUY5\",\"execution_id\":\"ex-000605\",\"fingerprint\":\"6b6e90c293867a62\",\"signature\":\"tf_state_lock\",\"prior_failures\":0,\"fail_then_pass_episodes\":[],\"precedent\":false}",
+            "is_error": false,
+            "tool_use_id": "toolu_014NvF4BAaCUWToCkoA2cUY5",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "system": "You are DriftGate's investigator, acting like an on-call platform engineer for a failed CI pipeline execution. You only read; you never change anything. Everything you propose is re-checked by deterministic code that can refuse it, and you cannot override that.\n\nHow to work\n- Start with the cheapest tools: get_execution and classify_signature. Use fleet_correlate and flake_history only when their answer could change your decision (many executions share a ref, or a re-run is on the table); a code-level fix does not need them. Use the medium-cost tools (get_step_logs, read_repo_file) when the cheap ones leave the cause open. You have at most 8 tool calls and every call counts, including one that fails on a wrong path, so name the files you need from the logs and read each one once. submit_report is free.\n- The first error in a log is often not the operative one. Read all error blocks before you decide.\n- Cite evidence by tool call id. Every tool result carries its id in a `tool_call_id` field; copy that value exactly into the evidence item's `source` (not the tool's name). Items without a valid id are deleted before anyone sees them.\n- Fleet-wide failures (many executions on a shared connector, template or runner pool) are not yours to fix: report them and do not propose a remediation.\n- Governance outcomes (approval rejected or expired) and user aborts are normal and never remediated.\n\nProposing a remediation (optional)\nPropose one only when the evidence supports a specific action from this catalog, with its tier. `action` must be one of these identifiers exactly, never a description (put the explanation in `rationale`):\n  Tier 0: rerun_failed_job, rerun_workflow, clear_stale_cache\n  Tier 1: recycle_runner, refresh_connector_token, reschedule_pod, bump_pool_capacity\n  Tier 2: force_unlock_state\n  Tier 3: regenerate_lockfile, pin_provider_version, revert_template_bump, fix_undefined_variable, fix_secret_scope, fix_requirement_pin\n- Tier 0 re-runs are only ever allowed by deterministic code when the failure has a deterministic signature match AND either a fail-then-pass history (flake_history) or a Tier 0 known-transient rule (classify_signature). If those are not both satisfied, do not propose Tier 0.\n- Tier 2 is only ever allowed when the lock holder is provably dead; you cannot prove that.\n- Tier 3 is a code change delivered as a pull request that a human merges. Name the files to change in `paths` (relative paths inside the repository) and put the change itself in `diff`: a unified diff (a/ and b/ paths, hunks) against those files as read at the failing commit, minimal and limited to the named files. When it spans several files, list additions before removals. Never delete files, and never put credentials in a diff. An independent reviewer sees only the diff, the files and your hypothesis. A Tier 3 proposal with an empty `diff` is rejected outright, so describing the change in `rationale` or `params` is not enough: read the file with read_repo_file, then write the edit itself as a unified diff in `diff`. Copy every context line and every removed line from the file exactly as read, character for character: a context line that differs from the file makes the whole diff fail to apply, and a line whose value must change is a `-` and `+` pair, never a context line. Leading spaces are part of a line, so keep each line's exact indentation. Use at most one context line above and one below each change, and only as many as you need to make the place unambiguous: every extra context line is another chance to mistype the file. For example:\n--- a/path/file\n+++ b/path/file\n@@ -3,3 +3,3 @@\n context line\n-old line\n+new line\n context line\n- Your confidence is recorded. It is never sufficient for any tier. State it honestly.\n- If you cannot support an action, propose none and say why in escalation_reason: escalating is a good outcome.\n\nFinishing\nFinish by calling submit_report exactly once with your classification, layer (L0-L6), confidence, hypothesis, cited evidence, and optional remediation. If you cannot reach a conclusion, call it with abstain=true.",
+    "tools": [
+      {
+        "description": "Get an execution: status, pipeline, start/finish time, the stage/step tree, the failed leaf steps with their error summary, and refs (connector, template@version, runner_pool, infra_def, commit). Cheap. Call this first.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "get_execution"
+      },
+      {
+        "description": "Deterministic signature match on the failed step: signature id, layer, classification, whether a Tier 0 known-transient rule exists, and the failure fingerprint. A bare non-zero exit code is reported as exit_code_nonzero with deterministic_match=false: it names no cause. You may confirm or overturn the layer with evidence. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "classify_signature"
+      },
+      {
+        "description": "Find other executions failing with the same signature within 30 minutes of this one that share a connector, template version, runner pool or infra definition. fleet_wide=true means 3+ executions across 2+ pipelines share a dimension, which points at the platform rather than at one pipeline's code. Gives the blast radius. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "fleet_correlate"
+      },
+      {
+        "description": "Fail-then-pass history for this execution's fingerprint (same signature, pipeline and step): earlier failures that were followed by a passing retry. precedent=true is one of the two conditions for Tier 0 (the other is a Tier 0 known-transient rule from classify_signature). Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "flake_history"
+      },
+      {
+        "description": "Error blocks from the failed step's log only (never the whole log), with ANSI codes stripped, repeated spinner/retry lines collapsed and credentials redacted. Returns ALL error blocks ranked most operative first: the first error in a log is often not the cause, so read the ranking and the later blocks. Output is capped at 4000 characters by default. Medium cost.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            },
+            "max_chars": {
+              "maximum": 8000,
+              "minimum": 200,
+              "type": "integer"
+            },
+            "node_id": {
+              "description": "A failed leaf step; defaults to the first failed leaf.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "get_step_logs"
+      },
+      {
+        "description": "Read one file (workflow YAML, lockfile, terraform, config) from a repo at a ref. repo is the pipeline name; ref is the execution's refs.commit (a sha or 'main'). path is relative to the repository root: a GitHub Actions workflow file lives at .github/workflows/<name>.yml, not at the root. A path that does not exist still costs a tool call. Size-capped; secrets redacted. Medium cost.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "max_bytes": {
+              "maximum": 20000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "path",
+            "ref"
+          ],
+          "type": "object"
+        },
+        "name": "read_repo_file"
+      },
+      {
+        "description": "Prior remediation attempts for a fingerprint (or one attempt by id) with their verification result. Only meaningful during re-investigation after a fix did not hold. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "attempt_id": {
+              "type": "string"
+            },
+            "fingerprint": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "get_remediation_attempt"
+      },
+      {
+        "description": "Finish the investigation with your report. Call it exactly once. Evidence must cite tool call ids from this investigation. Propose a remediation only if the evidence supports one; otherwise leave it out and give an escalation_reason.",
+        "input_schema": {
+          "properties": {
+            "abstain": {
+              "type": "boolean"
+            },
+            "classification": {
+              "enum": [
+                "platform",
+                "user",
+                "transient",
+                "governance",
+                "unknown"
+              ]
+            },
+            "confidence": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "escalation_reason": {
+              "type": "string"
+            },
+            "evidence": {
+              "items": {
+                "properties": {
+                  "finding": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "description": "The id of a tool call you made in this investigation.",
+                    "type": "string"
+                  },
+                  "supports": {
+                    "description": "What the finding supports (e.g. the hypothesis).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "finding",
+                  "supports"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "hypothesis": {
+              "type": "string"
+            },
+            "layer": {
+              "enum": [
+                "L0",
+                "L1",
+                "L2",
+                "L3",
+                "L4",
+                "L5",
+                "L6"
+              ]
+            },
+            "remediation": {
+              "properties": {
+                "action": {
+                  "description": "Exactly one catalog action identifier, in the tier you also give.",
+                  "enum": [
+                    "rerun_failed_job",
+                    "rerun_workflow",
+                    "clear_stale_cache",
+                    "recycle_runner",
+                    "refresh_connector_token",
+                    "reschedule_pod",
+                    "bump_pool_capacity",
+                    "force_unlock_state",
+                    "regenerate_lockfile",
+                    "pin_provider_version",
+                    "revert_template_bump",
+                    "fix_undefined_variable",
+                    "fix_secret_scope",
+                    "fix_requirement_pin"
+                  ]
+                },
+                "diff": {
+                  "description": "Required for Tier 3: the unified diff (---/+++/@@ hunks) of the change.",
+                  "type": "string"
+                },
+                "params": {
+                  "type": "object"
+                },
+                "paths": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "reversible": {
+                  "type": "boolean"
+                },
+                "tier": {
+                  "enum": [
+                    0,
+                    1,
+                    2,
+                    3
+                  ]
+                }
+              },
+              "required": [
+                "tier",
+                "action",
+                "rationale",
+                "reversible"
+              ],
+              "type": "object"
+            },
+            "suspected_change": {
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "basis": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "ref",
+                "at",
+                "basis"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "classification",
+            "layer",
+            "confidence",
+            "hypothesis",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        "name": "submit_report"
+      }
+    ]
+  },
+  "response": {
+    "stop_reason": "max_tokens",
+    "text": "Excellent. Now I have a clearer picture. The error logs show multiple issues:\n\n1. **Primary error (rank 90)**: `tf_state_lock` - Terraform state lock acquisition failed with `ConditionalCheckFailedException`. The lock was created at 01:43:19 by another runner.\n2. **Secondary error (rank 50)**: `aws_throttling` - AWS API throttling exception on DescribeInstances operation.\n3. **Tertiary error (rank 10)**: Non-zero exit code.\n\n**Key observations:**\n- This is NOT a fleet-wide issue (only 1 execution affected in the window)\n- There is NO fail-then-pass history (precedent=false)\n- The classify_signature marked it as \"tf_state_lock\" (platform, L4) but there's also an \"aws_throttling\" signature with a Tier 0 rule available\n\nThe core issue is a Terraform state lock conflict. The lock was held by another runner process (\"runner@fv-az137-71\") that appears to still be holding it. This is typically caused by:\n1. A previous run that crashed or hung without releasing the lock\n2. Concurrent runs attempting to plan/apply to the same state\n\nThe AWS throttling appears to be a secondary symptom of the retry attempts to acquire the lock.\n\nSince there is no Tier 0 rule for the deterministically matched \"tf_state_lock\" signature and no fail-then-pass history, a Tier 0 rerun is not justified. However, the lock situation suggests this could be resolved by:\n- Clearing the stale lock (Tier 0 action: `clear_stale_cache`)\n- Or re-running the workflow (Tier 0 action: `rerun_workflow`)\n\nLet me check if there's more context about the lock age and whether force_unlock_state would be appropriate. The lock was created at 01:43:19 and the error occurred around 01:44:43 (about 84 seconds apart), so it's a relatively recent lock - possibly from a concurrent execution.\n\nGiven the evidence:\n- **Classification**: This is a **transient** issue (state lock conflict that will resolve when the holder finishes/times out)\n- **Layer**: L4 (Infrastructure platform)\n- **Confidence**: High (0.85) - the error is explicit and clearly a state lock issue\n- **Hypothesis**: A concurrent or incomplete Terraform operation is holding the state lock, preventing this plan from acquiring it.\n\nHowever, since this is classified as a Terraform state lock issue (not the transient aws_throttling), and there's no Tier 0 rule for it, I cannot propose a Tier 0 rerun without precedent. The appropriate action would be to either:\n1. Force unlock the state (Tier 2 - but requires proving the lock holder is dead)\n2. Re-run the workflow (Tier 0 - but typically needs transient precedent)\n\nSince there's no evidence the lock holder is dead, and this appears to be a legitimate concurrency conflict rather than a purely transient AWS issue, I should escalate this rather than propose an action.",
+    "tool_calls": [
+      {
+        "id": "toolu_01SfVRNyphYtSPD8oLTMM33p",
+        "input": {
+          "classification": "transient",
+          "confidence": 0.85,
+          "evidence": [
+            {
+              "finding": "Execution ex-000605 failed in the Terraform Plan step with error summary: 'An error occurred (ThrottlingException) when calling the DescribeInstances operation (reached max retries: 2): Rate exceeded'",
+              "source": "toolu_015A1y8ynwKrPekQLqeKsPYx",
+              "supports": "The failure occurred during Terraform operations against AWS infrastructure"
+            },
+            {
+              "finding": "Primary error block (rank 90) shows 'Error acquiring the state lock' with ConditionalCheckFailedException. Lock info shows ID 16621842-4ab5-a694-5733-c2f500cc1e0a, created at 2026-09-20 01:43:19, held by runner@fv-az137-71 for operation OperationTypePlan. Secondary error (rank 50) shows AWS ThrottlingException on DescribeInstances with max retries exceeded.",
+              "source": "toolu_01Xkqj4d8s7S2B62FNS84yrL",
+              "supports": "The state lock is held by another runner and the Terraform operation cannot proceed; AWS throttling is a consequence of retry attempts"
+            },
+            {
+              "finding": "classify_signature returned multiple signature matches: tf_state_lock (platform, L4, no Tier 0 rule), aws_throttling (transient, L4, Tier 0 rule exists), and exit_code_nonzero (unknown). Deterministic match is tf_state_lock.",
+              "source": "toolu_01CFqZ6rpivEAxtRRyt3Y692",
+              "supports": "The signature classifier identifies this as a state lock issue on the platform layer, but notes the transient aws_throttling signature also applies"
+            },
+            {
+              "finding": "fleet_correlate returned fleet_wide=false with no other executions in the 30-minute window sharing this failure signature on the same connector, template, runner pool or infra_def",
+              "source": "toolu_018c9wGPYsc9CqLprA27amzW",
+              "supports": "This is not a platform-wide issue affecting multiple pipelines or runners"
+            },
+            {
+              "finding": "flake_history shows precedent=false with 0 prior failures and no fail-then-pass episodes for fingerprint 6b6e90c293867a62",
+              "source": "toolu_014NvF4BAaCUWToCkoA2cUY5",
+              "supports": "There is no historical pattern of this failure self-healing on retry, so a Tier 0 rerun action is not justified by precedent"
+            }
+          ],
+          "hypothesis": "A concurrent or incomplete Terraform operation is holding the state lock on the acme-tfstate/infra-db/terraform.tfstate file, preventing this execution from acquiring the lock needed for the plan operation.",
+          "layer": "L4"
+        },
+        "name": "submit_report"
+      }
+    ],
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 5268,
+      "output_tokens": 1500
+    }
+  }
+}

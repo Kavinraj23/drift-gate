@@ -305,17 +305,17 @@
   },
   "response": {
     "stop_reason": "tool_use",
-    "text": "I'll investigate the failed CI execution ex-000908. Let me start by gathering information about the execution and its failure.",
+    "text": "I'll investigate the failed CI execution ex-000908 starting with the cheapest tools.",
     "tool_calls": [
       {
-        "id": "toolu_01RDPXfFcuJFLRz6WpAvis1P",
+        "id": "toolu_014WvQeT4LCjEfS4whsLgtXQ",
         "input": {
           "execution_id": "ex-000908"
         },
         "name": "get_execution"
       },
       {
-        "id": "toolu_01DmY73FSc8uMHU87AK5qKYx",
+        "id": "toolu_011g5insgu6sew5NcEJ5gmSq",
         "input": {
           "execution_id": "ex-000908"
         },
@@ -326,7 +326,7 @@
       "cache_creation_tokens": 0,
       "cache_read_tokens": 0,
       "input_tokens": 3218,
-      "output_tokens": 125
+      "output_tokens": 119
     }
   }
 }

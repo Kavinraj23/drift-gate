@@ -266,3 +266,13 @@ def test_report_module_cannot_reach_the_network_or_the_sdk() -> None:
     src = (ROOT / "src" / "driftgate" / "eval" / "report.py").read_text(encoding="utf-8")
     assert not re.search(r"^\s*(import|from)\s+(anthropic|requests|urllib|socket|dotenv)", src, re.M)
     assert "load_config" not in src and ".env" not in src.replace("`.env`", "")
+
+
+def test_a_report_with_recorded_fixtures_does_not_call_the_agent_scripted() -> None:
+    from driftgate.eval.report import HONESTY, REPLAY_HONESTY, offline_honesty
+
+    assert offline_honesty(["fake (no fixture)", "none", "replay"]) is REPLAY_HONESTY
+    assert (
+        "REAL model's recorded responses" in REPLAY_HONESTY and "NOTHING about how a real model" not in REPLAY_HONESTY
+    )
+    assert offline_honesty(["fake", "none"]) is HONESTY  # no fixtures: still the scripted-model warning

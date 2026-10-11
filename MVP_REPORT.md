@@ -1,6 +1,6 @@
 # DriftGate MVP 1: report
 
-**Status (2026-10-11): feature-complete and live-verified on the playground; real-model eval numbers (M9b) are the one open item.** Latest work is on branch `mvp1/m8b-live-playground` (pushed, two commits ahead of `main`, fast-forwardable); `main` has M0 to M8a plus the `e2e-live` code. Real API spend to date: $0.6876 of the $2.50 lifetime cap (live runs $0.6648, matching the Anthropic Console credit drop of about $0.66, plus the $0.0228 first `record` run). Note: `tasks.py data` and `mvp-check` used to delete the spend ledger and the live audit log; fixed on 2026-10-11 and the ledger restored with a labelled carry-over row (see `PROGRESS.md`), but the live audit trail of the M8b runs is lost. No test or offline target makes a network call.
+**Status (2026-10-11): feature-complete, live-verified on the playground, and evaluated with a real model on 31 recorded scenarios; the only M9b item left is an optional second live pass (`eval-live`), which the remaining budget no longer covers.** Latest work is on branch `mvp1/m8b-live-playground` (pushed, two commits ahead of `main`, fast-forwardable); `main` has M0 to M8a plus the `e2e-live` code. Real API spend to date: $1.8775 of the $2.50 lifetime cap (live playground runs $0.6648, matching the Anthropic Console credit drop of about $0.66; `record --all` about $0.88; an accidental duplicate run about $0.31; the first `record` smoke test $0.0228). Note: `tasks.py data` and `mvp-check` used to delete the spend ledger and the live audit log; fixed on 2026-10-11 and the ledger restored with a labelled carry-over row (see `PROGRESS.md`), but the live audit trail of the M8b runs is lost. No test or offline target makes a network call.
 
 ## Live verification (M8b, 2026-10-10 to 2026-10-11)
 
@@ -30,9 +30,45 @@ Offline items below are deterministic; the live items are in the section above.
 - **Guardrails:** `.claude/settings.json` rules and hooks (hardened against `bash -c`, `env`, `cmd /c`, `$(...)`); these blocked a subagent's attempt to run `record`.
 - **Counts:** lint clean, 1282 tests passing, 1 skipped (real-symlink test; symlinks are not permitted on this Windows account, and a simulated-escape test runs instead).
 
-### What the numbers do and do not mean
+### Real-model results (M9b `record`, 2026-10-11)
 
-The offline agent is a **scripted model that is correct by construction**. The eval table validates the pipeline, the gates and the metric code. It says nothing about how a real model performs. Real agent numbers need your `record` and `eval-live` runs. The baseline column is real. The synthetic dataset's error text is mostly recalled from well-known real outputs: four catalog entries are verified against real output with sources, the rest are not byte-verified.
+`python tasks.py record --all` ran all 31 model-using synthetic scenarios against Haiku 4.5 (investigator and reviewer). `python tasks.py eval` then replays those recordings against the deterministic baseline. `eval-live` (a second, independent live pass) has **not** been run: the budget no longer covers it (see below).
+
+**First complete run, pass@1: 27 of 31 scenarios matched their label.** The four misses:
+
+| Scenario | Set | Fault | What the real model did |
+| --- | --- | --- | --- |
+| sc-01 | dev | lockfile mismatch | used all tool calls without reporting |
+| sc-23 | dev | lockfile mismatch | diff did not apply (stopped by the diff check) |
+| sc-27 | held-out | lockfile mismatch | proposed no remediation |
+| sc-25 | held-out | provider pin | diff touched an unrelated file (stopped by the diff check) |
+
+Three of the four are lockfile cases, the same weakness seen live. Every miss was an escalation: no wrong action reached any target (false remediation 0 on both sets).
+
+**Disclosure about sc-01.** The same `record --all` command was submitted twice by accident; the duplicate was stopped partway, but it had already re-recorded sc-01, and that recording passed. Replay therefore shows sc-01 passing (3 mismatches in `e2e`, not 4). The 27/31 above is the first complete run; the replay table is slightly kinder. The duplicate also cost about $0.31.
+
+Replay table (`data/eval/report.md`; dev n=24, held-out n=9, so held-out cells are too small to read as rates; one recorded sample per scenario, not a success rate):
+
+| metric | baseline / dev | agent / dev | baseline / held-out | agent / held-out |
+| --- | --- | --- | --- | --- |
+| False remediation | 0/24 | 0/24 | 0/9 | 0/9 |
+| Remediation success (verified / attempted) | n/a | 8/8 | n/a | 3/3 |
+| Remediation recall | 3/9 (33%) | 8/9 (89%) | 2/5 (40%) | 3/5 (60%) |
+| Escalation precision | 15/21 (71%) | 15/16 (94%) | 4/7 (57%) | 4/6 (67%) |
+| Classification accuracy | 23/24 (96%) | **20/24 (83%)** | 9/9 | 9/9 |
+| Layer accuracy | 24/24 | 24/24 | 9/9 | 9/9 |
+| Tool efficiency (cheap tools only) | 18/18 | 3/23 (13%) | 6/6 | 3/7 |
+| Mean cost per case | $0 | $0.0267 | $0 | $0.0236 |
+
+What this says: the real agent fixes far more of the cases that need a diff than the baseline (recall 89% against 33% on dev) without a single wrong action, and escalates more precisely. It also classifies **worse** than the deterministic baseline on dev (83% against 96%), and it uses far more tools. The recovery-after-a-failed-attempt figure (1 of 5) comes from the scripted loop drills, not a real model. The seeded bad-diff reviewer test is scripted, so a real reviewer's catch rate on bad diffs is still unmeasured.
+
+Held-out outcomes (sc-25, sc-27) were **not** used to tune any prompt, and none will be: tuning on them would contaminate the held-out set, and any prompt or tool-schema change invalidates the recorded fixtures.
+
+Spend: the ledger stands at $1.8775 of $2.50 lifetime ($0.6225 left). Live playground runs $0.6648, first `record` smoke test $0.0228, `record --all` about $0.88, duplicate about $0.31. An incident along the way (the spend ledger being wiped by `tasks.py data`) is described in `PROGRESS.md`; it is fixed and the ledger restored.
+
+### Earlier offline results with the scripted agent (kept for reference)
+
+In the earlier all-fake mode the agent is a **scripted model that is correct by construction**. The eval table validates the pipeline, the gates and the metric code. It says nothing about how a real model performs. Real agent numbers need your `record` and `eval-live` runs. The baseline column is real. The synthetic dataset's error text is mostly recalled from well-known real outputs: four catalog entries are verified against real output with sources, the rest are not byte-verified.
 
 Headline offline results (dev set, n=24; held-out n=9 is too small to read as rates):
 
@@ -73,13 +109,13 @@ eval table + README (M9a)                           M9a        pass
 | Real Tier 0 and Tier 3 on GitHub Actions | Done | Live on the playground: Tier 0 re-run verified green, three Tier 3 PRs opened unmerged with green CI, governance closed with no model call. |
 | PR reviewer agent | Partial | A real reviewer approved the three correct diffs and failed closed when its shared budget was spent. Its catch rate on bad diffs is still unmeasured against a real model (M9b). |
 | Verification and re-investigation loop | Done | Offline drills for the wrong-first-fix path; live verification (`verified=True`) on the throttle re-run and on the three PRs' CI. A live wrong-first-fix recovery has not occurred. |
-| Agent-vs-baseline eval on synthetic data | Partial | Harness done and offline numbers printed. The agent column is still scripted until M9b (`record`, then `eval-live`). |
+| Agent-vs-baseline eval on synthetic data | Done (one recorded sample per scenario) | Real Haiku recordings of 31 scenarios replayed against the baseline: 27/31 matched on the first run, 0 false remediations, recall 89% vs 33% on dev, but classification 83% vs the baseline's 96%. No second live pass and no run-to-run variance. |
 
 ## Needs human, in order
 
 Done since the first version of this report: Console workspace and key; flaky-test label (relabelled as escalation, invariant 3); abort-ceiling N (kept at 2); the playground (created, pushed, all six scenarios run live, PRs #2 to #4 reviewed); redaction hardening (21 new corpus cases, 9 false-positive guards; still regex-only); four error-catalog entries verified against real output.
 
-1. **M9b, in this order, before changing any agent prompt or tool schema** (recorded fixtures are keyed on them): `python tasks.py record --yes-spend` for one scenario; then on a fresh daily cap `python tasks.py record --all --yes-spend --cap-usd 0.90`; then `python tasks.py e2e` on replay; then, on another day, `python tasks.py eval-live`. The estimate (`record --estimate`) is $0.49 plain and $0.73 with margin for all 31 model-using scenarios; the daily cap is $1.00 and only $0.3352 remained on 2026-10-11, so record and eval-live cannot share a day. Remaining lifetime budget is $1.8352 of $2.50.
+1. **M9b:** `record --all` and the replay `eval` are done (see Real-model results). Optional: a second, independent live pass with `eval-live`. It needs about $0.5 to $0.7 plus its $0.25 reserve against $0.6225 remaining, so it can only run partially, or after you raise the $2.50 project budget (your decision; I did not). Do not change any agent prompt or tool schema before deciding, because that invalidates the recorded fixtures.
 2. Confirm real `claude-sonnet-5-5` prices and rate limits in `src/driftgate/llm/config.py` if Sonnet is used for more than a few demo cases. The Haiku-only estimate and the observed spend agree with the Console.
 3. Error catalog: entries still not byte-verified (`npm_ci_lock_out_of_sync`, `tf_undeclared_variable`, `tf_provider_constraints`, the state-lock block, `kubectl describe` indentation) and the missing real governance, CI-hosted lock and reusable-workflow samples. Full list in `BLOCKERS.md`.
 4. Decisions logged in `BLOCKERS.md`: whether to reserve tool calls for the reviewer (the shared 8-call budget can starve it; changing it changes the PRD budget rule); one `baseline/<name>` tag per scenario versus the PRD's single tag; the open reviewer follow-ups (tighten `_agent_ref`, allow-list redirect hosts, whether workflow-editing PRs may have CI auto-dispatched, whether a revision gets a reserved budget slice).

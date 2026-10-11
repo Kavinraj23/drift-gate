@@ -1,0 +1,477 @@
+{
+  "fingerprint": "88a8278480e61498",
+  "fixture_version": 1,
+  "key": "05648e30ccd7cca51d1ca0062c4c5a4f8fb983f48f70f2a7aa8e519f7f04d09b",
+  "request": {
+    "max_tokens": 1500,
+    "messages": [
+      {
+        "content": "Investigate failed CI execution ex-000868. Gather evidence with the read-only tools, then finish with submit_report.",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "I'll investigate the failed CI execution ex-000868. Let me start with the cheapest tools to understand the failure.",
+            "type": "text"
+          },
+          {
+            "id": "toolu_016LQPZAp1jvbztYWuxR2Hfk",
+            "input": {
+              "execution_id": "ex-000868"
+            },
+            "name": "get_execution",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_01E6k9sPQXq87n37mkiwsDGz",
+            "input": {
+              "execution_id": "ex-000868"
+            },
+            "name": "classify_signature",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "{\"tool_call_id\":\"toolu_016LQPZAp1jvbztYWuxR2Hfk\",\"execution_id\":\"ex-000868\",\"pipeline\":\"infra-network\",\"status\":\"failed\",\"started_at\":\"2026-09-25T06:58:09Z\",\"finished_at\":\"2026-09-25T06:59:56Z\",\"refs\":{\"connector\":\"aws-prod\",\"template\":\"terraform-plan@v2.0.0\",\"runner_pool\":\"pool-large\",\"infra_def\":\"tf-network\",\"commit\":\"16e3c3b49f32096559a409b250993a4503f9af24\"},\"tree\":{\"node_id\":\"ex-000868-n0\",\"name\":\"infra-network\",\"status\":\"failed\",\"children\":[{\"node_id\":\"ex-000868-n1\",\"name\":\"Plan\",\"status\":\"failed\",\"children\":[{\"node_id\":\"ex-000868-n2\",\"name\":\"Checkout\",\"status\":\"success\"},{\"node_id\":\"ex-000868-n3\",\"name\":\"Configure AWS credentials\",\"status\":\"success\"},{\"node_id\":\"ex-000868-n4\",\"name\":\"Terraform Init\",\"status\":\"success\"},{\"node_id\":\"ex-000868-n5\",\"name\":\"Terraform Plan\",\"status\":\"failed\"}]},{\"node_id\":\"ex-000868-n6\",\"name\":\"Approval\",\"status\":\"skipped\",\"children\":[{\"node_id\":\"ex-000868-n7\",\"name\":\"Manual approval\",\"status\":\"skipped\"}]},{\"node_id\":\"ex-000868-n8\",\"name\":\"Apply\",\"status\":\"skipped\",\"children\":[{\"node_id\":\"ex-000868-n9\",\"name\":\"Terraform Apply\",\"status\":\"skipped\"}]}]},\"failed_leaves\":[{\"node_id\":\"ex-000868-n5\",\"name\":\"Terraform Plan\",\"error_summary\":\"Error: Reference to undeclared input variable\"}]}",
+            "is_error": false,
+            "tool_use_id": "toolu_016LQPZAp1jvbztYWuxR2Hfk",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"tool_call_id\":\"toolu_01E6k9sPQXq87n37mkiwsDGz\",\"execution_id\":\"ex-000868\",\"pipeline\":\"infra-network\",\"step\":\"Terraform Plan\",\"node_id\":\"ex-000868-n5\",\"signature\":\"tf_undeclared_variable\",\"deterministic_match\":true,\"layer\":\"L3\",\"classification\":\"user\",\"tier0_rule_exists\":false,\"all_signatures\":[{\"id\":\"tf_undeclared_variable\",\"layer\":\"L3\",\"classification\":\"user\",\"tier0_rule_exists\":false},{\"id\":\"exit_code_nonzero\",\"layer\":\"L4\",\"classification\":\"unknown\",\"tier0_rule_exists\":false}],\"fingerprint\":\"5bc41944e163e345\"}",
+            "is_error": false,
+            "tool_use_id": "toolu_01E6k9sPQXq87n37mkiwsDGz",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "Good. The execution failed in the \"Terraform Plan\" step with a deterministic signature: \"Reference to undeclared input variable\" (tf_undeclared_variable). This is classified as a user error at L3, with no Tier 0 transient rule.\n\nLet me get the step logs to see which variable is undeclared and get the actual error details:",
+            "type": "text"
+          },
+          {
+            "id": "toolu_01T395xnrC4Ye7vsP2T5gKbx",
+            "input": {
+              "execution_id": "ex-000868",
+              "node_id": "ex-000868-n5"
+            },
+            "name": "get_step_logs",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "{\"tool_call_id\":\"toolu_01T395xnrC4Ye7vsP2T5gKbx\",\"execution_id\":\"ex-000868\",\"node_id\":\"ex-000868-n5\",\"step\":\"Terraform Plan\",\"error_block_count\":2,\"blocks\":[{\"rank\":70,\"signature\":\"tf_undeclared_variable\",\"line\":5,\"count\":1},{\"rank\":10,\"signature\":\"exit_code_nonzero\",\"line\":13,\"count\":1}],\"text\":\"[block rank=70 signature=tf_undeclared_variable line=5]\\n\\u2577\\n\\u2502 Error: Reference to undeclared input variable\\n\\u2502\\n\\u2502   on main.tf line 10, in resource \\\"aws_s3_bucket\\\" \\\"main\\\":\\n\\u2502   10:     CostCenter  = var.cost_center\\n\\u2502\\n\\u2502 An input variable with the name \\\"cost_center\\\" has not been declared. This variable can be declared with a variable \\\"cost_center\\\" {} block.\\n\\u2575\\n[block rank=10 signature=exit_code_nonzero line=13]\\n##[error]Process completed with exit code 1.\\n\",\"budget_chars\":4000,\"truncated\":false}",
+            "is_error": false,
+            "tool_use_id": "toolu_01T395xnrC4Ye7vsP2T5gKbx",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "Perfect. The error is clear: in main.tf line 10, there's a reference to `var.cost_center` which has not been declared as an input variable. Now let me check the Terraform files to understand the issue. I need to read the main.tf and variables.tf files from the repository at the commit that was used.",
+            "type": "text"
+          },
+          {
+            "id": "toolu_01Q5JAmC7kBAyhi6AwS4zNcB",
+            "input": {
+              "path": "main.tf",
+              "ref": "16e3c3b49f32096559a409b250993a4503f9af24",
+              "repo": "infra-network"
+            },
+            "name": "read_repo_file",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_014mRMWCM8wP8fryPkPh4C3e",
+            "input": {
+              "path": "variables.tf",
+              "ref": "16e3c3b49f32096559a409b250993a4503f9af24",
+              "repo": "infra-network"
+            },
+            "name": "read_repo_file",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "{\"tool_call_id\":\"toolu_01Q5JAmC7kBAyhi6AwS4zNcB\",\"repo\":\"infra-network\",\"path\":\"main.tf\",\"ref\":\"16e3c3b49f32096559a409b250993a4503f9af24\",\"content\":\"provider \\\"aws\\\" {\\n  region = var.region\\n}\\n\\nresource \\\"aws_s3_bucket\\\" \\\"main\\\" {\\n  bucket = \\\"acme-infra-network-${var.environment}\\\"\\n\\n  tags = {\\n    Environment = var.environment\\n    CostCenter  = var.cost_center\\n  }\\n}\\n\",\"truncated\":false,\"max_bytes\":6000}",
+            "is_error": false,
+            "tool_use_id": "toolu_01Q5JAmC7kBAyhi6AwS4zNcB",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"tool_call_id\":\"toolu_014mRMWCM8wP8fryPkPh4C3e\",\"repo\":\"infra-network\",\"path\":\"variables.tf\",\"ref\":\"16e3c3b49f32096559a409b250993a4503f9af24\",\"content\":\"variable \\\"region\\\" {\\n  type    = string\\n  default = \\\"us-east-1\\\"\\n}\\n\\nvariable \\\"environment\\\" {\\n  type = string\\n}\\n\",\"truncated\":false,\"max_bytes\":6000}",
+            "is_error": false,
+            "tool_use_id": "toolu_014mRMWCM8wP8fryPkPh4C3e",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "system": "You are DriftGate's investigator, acting like an on-call platform engineer for a failed CI pipeline execution. You only read; you never change anything. Everything you propose is re-checked by deterministic code that can refuse it, and you cannot override that.\n\nHow to work\n- Start with the cheapest tools: get_execution and classify_signature. Use fleet_correlate and flake_history only when their answer could change your decision (many executions share a ref, or a re-run is on the table); a code-level fix does not need them. Use the medium-cost tools (get_step_logs, read_repo_file) when the cheap ones leave the cause open. You have at most 8 tool calls and every call counts, including one that fails on a wrong path, so name the files you need from the logs and read each one once. submit_report is free.\n- The first error in a log is often not the operative one. Read all error blocks before you decide.\n- Cite evidence by tool call id. Every tool result carries its id in a `tool_call_id` field; copy that value exactly into the evidence item's `source` (not the tool's name). Items without a valid id are deleted before anyone sees them.\n- Fleet-wide failures (many executions on a shared connector, template or runner pool) are not yours to fix: report them and do not propose a remediation.\n- Governance outcomes (approval rejected or expired) and user aborts are normal and never remediated.\n\nProposing a remediation (optional)\nPropose one only when the evidence supports a specific action from this catalog, with its tier. `action` must be one of these identifiers exactly, never a description (put the explanation in `rationale`):\n  Tier 0: rerun_failed_job, rerun_workflow, clear_stale_cache\n  Tier 1: recycle_runner, refresh_connector_token, reschedule_pod, bump_pool_capacity\n  Tier 2: force_unlock_state\n  Tier 3: regenerate_lockfile, pin_provider_version, revert_template_bump, fix_undefined_variable, fix_secret_scope, fix_requirement_pin\n- Tier 0 re-runs are only ever allowed by deterministic code when the failure has a deterministic signature match AND either a fail-then-pass history (flake_history) or a Tier 0 known-transient rule (classify_signature). If those are not both satisfied, do not propose Tier 0.\n- Tier 2 is only ever allowed when the lock holder is provably dead; you cannot prove that.\n- Tier 3 is a code change delivered as a pull request that a human merges. Name the files to change in `paths` (relative paths inside the repository) and put the change itself in `diff`: a unified diff (a/ and b/ paths, hunks) against those files as read at the failing commit, minimal and limited to the named files. When it spans several files, list additions before removals. Never delete files, and never put credentials in a diff. An independent reviewer sees only the diff, the files and your hypothesis. A Tier 3 proposal with an empty `diff` is rejected outright, so describing the change in `rationale` or `params` is not enough: read the file with read_repo_file, then write the edit itself as a unified diff in `diff`. Copy every context line and every removed line from the file exactly as read, character for character: a context line that differs from the file makes the whole diff fail to apply, and a line whose value must change is a `-` and `+` pair, never a context line. Leading spaces are part of a line, so keep each line's exact indentation. Use at most one context line above and one below each change, and only as many as you need to make the place unambiguous: every extra context line is another chance to mistype the file. For example:\n--- a/path/file\n+++ b/path/file\n@@ -3,3 +3,3 @@\n context line\n-old line\n+new line\n context line\n- Your confidence is recorded. It is never sufficient for any tier. State it honestly.\n- If you cannot support an action, propose none and say why in escalation_reason: escalating is a good outcome.\n\nFinishing\nFinish by calling submit_report exactly once with your classification, layer (L0-L6), confidence, hypothesis, cited evidence, and optional remediation. If you cannot reach a conclusion, call it with abstain=true.",
+    "tools": [
+      {
+        "description": "Get an execution: status, pipeline, start/finish time, the stage/step tree, the failed leaf steps with their error summary, and refs (connector, template@version, runner_pool, infra_def, commit). Cheap. Call this first.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "get_execution"
+      },
+      {
+        "description": "Deterministic signature match on the failed step: signature id, layer, classification, whether a Tier 0 known-transient rule exists, and the failure fingerprint. A bare non-zero exit code is reported as exit_code_nonzero with deterministic_match=false: it names no cause. You may confirm or overturn the layer with evidence. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "classify_signature"
+      },
+      {
+        "description": "Find other executions failing with the same signature within 30 minutes of this one that share a connector, template version, runner pool or infra definition. fleet_wide=true means 3+ executions across 2+ pipelines share a dimension, which points at the platform rather than at one pipeline's code. Gives the blast radius. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "fleet_correlate"
+      },
+      {
+        "description": "Fail-then-pass history for this execution's fingerprint (same signature, pipeline and step): earlier failures that were followed by a passing retry. precedent=true is one of the two conditions for Tier 0 (the other is a Tier 0 known-transient rule from classify_signature). Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "flake_history"
+      },
+      {
+        "description": "Error blocks from the failed step's log only (never the whole log), with ANSI codes stripped, repeated spinner/retry lines collapsed and credentials redacted. Returns ALL error blocks ranked most operative first: the first error in a log is often not the cause, so read the ranking and the later blocks. Output is capped at 4000 characters by default. Medium cost.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            },
+            "max_chars": {
+              "maximum": 8000,
+              "minimum": 200,
+              "type": "integer"
+            },
+            "node_id": {
+              "description": "A failed leaf step; defaults to the first failed leaf.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "get_step_logs"
+      },
+      {
+        "description": "Read one file (workflow YAML, lockfile, terraform, config) from a repo at a ref. repo is the pipeline name; ref is the execution's refs.commit (a sha or 'main'). path is relative to the repository root: a GitHub Actions workflow file lives at .github/workflows/<name>.yml, not at the root. A path that does not exist still costs a tool call. Size-capped; secrets redacted. Medium cost.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "max_bytes": {
+              "maximum": 20000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "path",
+            "ref"
+          ],
+          "type": "object"
+        },
+        "name": "read_repo_file"
+      },
+      {
+        "description": "Prior remediation attempts for a fingerprint (or one attempt by id) with their verification result. Only meaningful during re-investigation after a fix did not hold. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "attempt_id": {
+              "type": "string"
+            },
+            "fingerprint": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "get_remediation_attempt"
+      },
+      {
+        "description": "Finish the investigation with your report. Call it exactly once. Evidence must cite tool call ids from this investigation. Propose a remediation only if the evidence supports one; otherwise leave it out and give an escalation_reason.",
+        "input_schema": {
+          "properties": {
+            "abstain": {
+              "type": "boolean"
+            },
+            "classification": {
+              "enum": [
+                "platform",
+                "user",
+                "transient",
+                "governance",
+                "unknown"
+              ]
+            },
+            "confidence": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "escalation_reason": {
+              "type": "string"
+            },
+            "evidence": {
+              "items": {
+                "properties": {
+                  "finding": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "description": "The id of a tool call you made in this investigation.",
+                    "type": "string"
+                  },
+                  "supports": {
+                    "description": "What the finding supports (e.g. the hypothesis).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "finding",
+                  "supports"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "hypothesis": {
+              "type": "string"
+            },
+            "layer": {
+              "enum": [
+                "L0",
+                "L1",
+                "L2",
+                "L3",
+                "L4",
+                "L5",
+                "L6"
+              ]
+            },
+            "remediation": {
+              "properties": {
+                "action": {
+                  "description": "Exactly one catalog action identifier, in the tier you also give.",
+                  "enum": [
+                    "rerun_failed_job",
+                    "rerun_workflow",
+                    "clear_stale_cache",
+                    "recycle_runner",
+                    "refresh_connector_token",
+                    "reschedule_pod",
+                    "bump_pool_capacity",
+                    "force_unlock_state",
+                    "regenerate_lockfile",
+                    "pin_provider_version",
+                    "revert_template_bump",
+                    "fix_undefined_variable",
+                    "fix_secret_scope",
+                    "fix_requirement_pin"
+                  ]
+                },
+                "diff": {
+                  "description": "Required for Tier 3: the unified diff (---/+++/@@ hunks) of the change.",
+                  "type": "string"
+                },
+                "params": {
+                  "type": "object"
+                },
+                "paths": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "reversible": {
+                  "type": "boolean"
+                },
+                "tier": {
+                  "enum": [
+                    0,
+                    1,
+                    2,
+                    3
+                  ]
+                }
+              },
+              "required": [
+                "tier",
+                "action",
+                "rationale",
+                "reversible"
+              ],
+              "type": "object"
+            },
+            "suspected_change": {
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "basis": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "ref",
+                "at",
+                "basis"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "classification",
+            "layer",
+            "confidence",
+            "hypothesis",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        "name": "submit_report"
+      }
+    ]
+  },
+  "response": {
+    "stop_reason": "tool_use",
+    "text": "Excellent! I now have all the evidence needed. The issue is clear:\n\n**Root Cause**: In `main.tf` line 10, the Terraform code references `var.cost_center`, but this variable is not declared in `variables.tf`. The `variables.tf` file only declares `region` and `environment` variables, but is missing the `cost_center` variable declaration.\n\n**Classification**: This is a user error (L3) - the variable reference in the resource definition is not matched by a corresponding variable declaration. This is a straightforward missing variable declaration in the Terraform code.\n\nNow I'll submit my report with the remediation.",
+    "tool_calls": [
+      {
+        "id": "toolu_01DJfBauZk8t4oDYWkR8ppe6",
+        "input": {
+          "classification": "user",
+          "confidence": 0.99,
+          "evidence": [
+            {
+              "finding": "Deterministic signature match on 'tf_undeclared_variable' with L3 classification and user error, no Tier 0 transient rule exists",
+              "source": "toolu_01E6k9sPQXq87n37mkiwsDGz",
+              "supports": "This is a code-level configuration error, not a transient platform issue"
+            },
+            {
+              "finding": "Error message shows: 'An input variable with the name \"cost_center\" has not been declared' on main.tf line 10, in the aws_s3_bucket resource where var.cost_center is referenced in tags",
+              "source": "toolu_01T395xnrC4Ye7vsP2T5gKbx",
+              "supports": "The undeclared variable is specifically 'cost_center' referenced at line 10 in the resource tags"
+            },
+            {
+              "finding": "main.tf contains 'CostCenter = var.cost_center' at line 10 in the S3 bucket resource tags",
+              "source": "toolu_01Q5JAmC7kBAyhi6AwS4zNcB",
+              "supports": "Confirms the variable reference exists in the code"
+            },
+            {
+              "finding": "variables.tf only declares 'region' and 'environment' variables; 'cost_center' variable is not declared",
+              "source": "toolu_014mRMWCM8wP8fryPkPh4C3e",
+              "supports": "Confirms the missing variable declaration is the root cause"
+            }
+          ],
+          "hypothesis": "The Terraform configuration in main.tf references an undeclared input variable 'cost_center'. The variables.tf file is missing the variable declaration for 'cost_center' that is used in the S3 bucket's tags.",
+          "layer": "L3",
+          "remediation": {
+            "action": "fix_undefined_variable",
+            "diff": "--- a/variables.tf\n+++ b/variables.tf\n@@ -6,3 +6,7 @@\n variable \"environment\" {\n   type = string\n }\n+\n+variable \"cost_center\" {\n+  type = string\n+}\n",
+            "paths": [
+              "variables.tf"
+            ],
+            "rationale": "The S3 bucket resource in main.tf references var.cost_center at line 10, but this variable is not declared in variables.tf. Adding the missing variable declaration will resolve the Terraform plan failure.",
+            "reversible": true,
+            "tier": 3
+          }
+        },
+        "name": "submit_report"
+      }
+    ],
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 5172,
+      "output_tokens": 903
+    }
+  }
+}

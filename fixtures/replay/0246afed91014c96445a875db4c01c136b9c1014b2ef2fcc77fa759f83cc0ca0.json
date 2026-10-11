@@ -1,0 +1,463 @@
+{
+  "fingerprint": "88a8278480e61498",
+  "fixture_version": 1,
+  "key": "0246afed91014c96445a875db4c01c136b9c1014b2ef2fcc77fa759f83cc0ca0",
+  "request": {
+    "max_tokens": 1500,
+    "messages": [
+      {
+        "content": "Investigate failed CI execution ex-000638. Gather evidence with the read-only tools, then finish with submit_report.",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "I'll investigate the failed CI execution ex-000638 by gathering evidence through the available read-only tools.",
+            "type": "text"
+          },
+          {
+            "id": "toolu_01SEaScCx9Rj5eoqzREhtpbu",
+            "input": {
+              "execution_id": "ex-000638"
+            },
+            "name": "get_execution",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_01Vq3ShUhWKQZAKmt4LBXtbk",
+            "input": {
+              "execution_id": "ex-000638"
+            },
+            "name": "classify_signature",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "{\"tool_call_id\":\"toolu_01SEaScCx9Rj5eoqzREhtpbu\",\"execution_id\":\"ex-000638\",\"pipeline\":\"infra-observability\",\"status\":\"failed\",\"started_at\":\"2026-09-20T17:46:45Z\",\"finished_at\":\"2026-09-20T17:49:19Z\",\"refs\":{\"connector\":\"aws-shared\",\"template\":\"terraform-plan@v2.0.0\",\"runner_pool\":\"pool-large\",\"infra_def\":\"tf-obs\",\"commit\":\"main\"},\"tree\":{\"node_id\":\"ex-000638-n0\",\"name\":\"infra-observability\",\"status\":\"failed\",\"children\":[{\"node_id\":\"ex-000638-n1\",\"name\":\"Plan\",\"status\":\"failed\",\"children\":[{\"node_id\":\"ex-000638-n2\",\"name\":\"Checkout\",\"status\":\"success\"},{\"node_id\":\"ex-000638-n3\",\"name\":\"Configure AWS credentials\",\"status\":\"failed\"},{\"node_id\":\"ex-000638-n4\",\"name\":\"Terraform Init\",\"status\":\"skipped\"},{\"node_id\":\"ex-000638-n5\",\"name\":\"Terraform Plan\",\"status\":\"skipped\"}]},{\"node_id\":\"ex-000638-n6\",\"name\":\"Approval\",\"status\":\"skipped\",\"children\":[{\"node_id\":\"ex-000638-n7\",\"name\":\"Manual approval\",\"status\":\"skipped\"}]},{\"node_id\":\"ex-000638-n8\",\"name\":\"Apply\",\"status\":\"skipped\",\"children\":[{\"node_id\":\"ex-000638-n9\",\"name\":\"Terraform Apply\",\"status\":\"skipped\"}]}]},\"failed_leaves\":[{\"node_id\":\"ex-000638-n3\",\"name\":\"Configure AWS credentials\",\"error_summary\":\"An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired\"}]}",
+            "is_error": false,
+            "tool_use_id": "toolu_01SEaScCx9Rj5eoqzREhtpbu",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"tool_call_id\":\"toolu_01Vq3ShUhWKQZAKmt4LBXtbk\",\"execution_id\":\"ex-000638\",\"pipeline\":\"infra-observability\",\"step\":\"Configure AWS credentials\",\"node_id\":\"ex-000638-n3\",\"signature\":\"aws_expired_token\",\"deterministic_match\":true,\"layer\":\"L2\",\"classification\":\"platform\",\"tier0_rule_exists\":false,\"all_signatures\":[{\"id\":\"aws_expired_token\",\"layer\":\"L2\",\"classification\":\"platform\",\"tier0_rule_exists\":false},{\"id\":\"exit_code_nonzero\",\"layer\":\"L4\",\"classification\":\"unknown\",\"tier0_rule_exists\":false}],\"fingerprint\":\"7aa9334e67354acd\"}",
+            "is_error": false,
+            "tool_use_id": "toolu_01Vq3ShUhWKQZAKmt4LBXtbk",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "Good initial findings. The execution failed in the \"Configure AWS credentials\" step with an expired security token. This is classified as a platform issue (L2). Let me gather more information about fleet correlation and flake history to understand the scope of this issue.",
+            "type": "text"
+          },
+          {
+            "id": "toolu_01LbzsRg3N1FMVMBhoUidCHj",
+            "input": {
+              "execution_id": "ex-000638"
+            },
+            "name": "fleet_correlate",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_011uH5p2jrju4NSGypnTEm9W",
+            "input": {
+              "execution_id": "ex-000638"
+            },
+            "name": "flake_history",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_013hS2C8k3DzPbCEfESuhoA4",
+            "input": {
+              "execution_id": "ex-000638",
+              "node_id": "ex-000638-n3"
+            },
+            "name": "get_step_logs",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "{\"tool_call_id\":\"toolu_01LbzsRg3N1FMVMBhoUidCHj\",\"execution_id\":\"ex-000638\",\"window_minutes\":30,\"fleet_wide\":false,\"executions_affected\":0,\"shared_dimension\":\"\",\"dimensions\":[{\"dimension\":\"infra_def\",\"value\":\"tf-obs\",\"executions\":[\"ex-000638\"],\"count\":1,\"pipelines\":[\"infra-observability\"],\"window_executions\":1},{\"dimension\":\"connector\",\"value\":\"aws-shared\",\"executions\":[\"ex-000638\"],\"count\":1,\"pipelines\":[\"infra-observability\"],\"window_executions\":2},{\"dimension\":\"template\",\"value\":\"terraform-plan@v2.0.0\",\"executions\":[\"ex-000638\"],\"count\":1,\"pipelines\":[\"infra-observability\"],\"window_executions\":2},{\"dimension\":\"runner_pool\",\"value\":\"pool-large\",\"executions\":[\"ex-000638\"],\"count\":1,\"pipelines\":[\"infra-observability\"],\"window_executions\":2}],\"signature\":\"aws_expired_token\"}",
+            "is_error": false,
+            "tool_use_id": "toolu_01LbzsRg3N1FMVMBhoUidCHj",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"tool_call_id\":\"toolu_011uH5p2jrju4NSGypnTEm9W\",\"execution_id\":\"ex-000638\",\"fingerprint\":\"7aa9334e67354acd\",\"signature\":\"aws_expired_token\",\"prior_failures\":0,\"fail_then_pass_episodes\":[],\"precedent\":false}",
+            "is_error": false,
+            "tool_use_id": "toolu_011uH5p2jrju4NSGypnTEm9W",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"tool_call_id\":\"toolu_013hS2C8k3DzPbCEfESuhoA4\",\"execution_id\":\"ex-000638\",\"node_id\":\"ex-000638-n3\",\"step\":\"Configure AWS credentials\",\"error_block_count\":1,\"blocks\":[{\"rank\":80,\"signature\":\"aws_expired_token\",\"line\":5,\"count\":1}],\"text\":\"[block rank=80 signature=aws_expired_token line=5]\\nAn error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired\\n##[error]Process completed with exit code 254.\\n\",\"budget_chars\":4000,\"truncated\":false}",
+            "is_error": false,
+            "tool_use_id": "toolu_013hS2C8k3DzPbCEfESuhoA4",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "system": "You are DriftGate's investigator, acting like an on-call platform engineer for a failed CI pipeline execution. You only read; you never change anything. Everything you propose is re-checked by deterministic code that can refuse it, and you cannot override that.\n\nHow to work\n- Start with the cheapest tools: get_execution and classify_signature. Use fleet_correlate and flake_history only when their answer could change your decision (many executions share a ref, or a re-run is on the table); a code-level fix does not need them. Use the medium-cost tools (get_step_logs, read_repo_file) when the cheap ones leave the cause open. You have at most 8 tool calls and every call counts, including one that fails on a wrong path, so name the files you need from the logs and read each one once. submit_report is free.\n- The first error in a log is often not the operative one. Read all error blocks before you decide.\n- Cite evidence by tool call id. Every tool result carries its id in a `tool_call_id` field; copy that value exactly into the evidence item's `source` (not the tool's name). Items without a valid id are deleted before anyone sees them.\n- Fleet-wide failures (many executions on a shared connector, template or runner pool) are not yours to fix: report them and do not propose a remediation.\n- Governance outcomes (approval rejected or expired) and user aborts are normal and never remediated.\n\nProposing a remediation (optional)\nPropose one only when the evidence supports a specific action from this catalog, with its tier. `action` must be one of these identifiers exactly, never a description (put the explanation in `rationale`):\n  Tier 0: rerun_failed_job, rerun_workflow, clear_stale_cache\n  Tier 1: recycle_runner, refresh_connector_token, reschedule_pod, bump_pool_capacity\n  Tier 2: force_unlock_state\n  Tier 3: regenerate_lockfile, pin_provider_version, revert_template_bump, fix_undefined_variable, fix_secret_scope, fix_requirement_pin\n- Tier 0 re-runs are only ever allowed by deterministic code when the failure has a deterministic signature match AND either a fail-then-pass history (flake_history) or a Tier 0 known-transient rule (classify_signature). If those are not both satisfied, do not propose Tier 0.\n- Tier 2 is only ever allowed when the lock holder is provably dead; you cannot prove that.\n- Tier 3 is a code change delivered as a pull request that a human merges. Name the files to change in `paths` (relative paths inside the repository) and put the change itself in `diff`: a unified diff (a/ and b/ paths, hunks) against those files as read at the failing commit, minimal and limited to the named files. When it spans several files, list additions before removals. Never delete files, and never put credentials in a diff. An independent reviewer sees only the diff, the files and your hypothesis. A Tier 3 proposal with an empty `diff` is rejected outright, so describing the change in `rationale` or `params` is not enough: read the file with read_repo_file, then write the edit itself as a unified diff in `diff`. Copy every context line and every removed line from the file exactly as read, character for character: a context line that differs from the file makes the whole diff fail to apply, and a line whose value must change is a `-` and `+` pair, never a context line. Leading spaces are part of a line, so keep each line's exact indentation. Use at most one context line above and one below each change, and only as many as you need to make the place unambiguous: every extra context line is another chance to mistype the file. For example:\n--- a/path/file\n+++ b/path/file\n@@ -3,3 +3,3 @@\n context line\n-old line\n+new line\n context line\n- Your confidence is recorded. It is never sufficient for any tier. State it honestly.\n- If you cannot support an action, propose none and say why in escalation_reason: escalating is a good outcome.\n\nFinishing\nFinish by calling submit_report exactly once with your classification, layer (L0-L6), confidence, hypothesis, cited evidence, and optional remediation. If you cannot reach a conclusion, call it with abstain=true.",
+    "tools": [
+      {
+        "description": "Get an execution: status, pipeline, start/finish time, the stage/step tree, the failed leaf steps with their error summary, and refs (connector, template@version, runner_pool, infra_def, commit). Cheap. Call this first.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "get_execution"
+      },
+      {
+        "description": "Deterministic signature match on the failed step: signature id, layer, classification, whether a Tier 0 known-transient rule exists, and the failure fingerprint. A bare non-zero exit code is reported as exit_code_nonzero with deterministic_match=false: it names no cause. You may confirm or overturn the layer with evidence. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "classify_signature"
+      },
+      {
+        "description": "Find other executions failing with the same signature within 30 minutes of this one that share a connector, template version, runner pool or infra definition. fleet_wide=true means 3+ executions across 2+ pipelines share a dimension, which points at the platform rather than at one pipeline's code. Gives the blast radius. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "fleet_correlate"
+      },
+      {
+        "description": "Fail-then-pass history for this execution's fingerprint (same signature, pipeline and step): earlier failures that were followed by a passing retry. precedent=true is one of the two conditions for Tier 0 (the other is a Tier 0 known-transient rule from classify_signature). Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "flake_history"
+      },
+      {
+        "description": "Error blocks from the failed step's log only (never the whole log), with ANSI codes stripped, repeated spinner/retry lines collapsed and credentials redacted. Returns ALL error blocks ranked most operative first: the first error in a log is often not the cause, so read the ranking and the later blocks. Output is capped at 4000 characters by default. Medium cost.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "execution_id": {
+              "type": "string"
+            },
+            "max_chars": {
+              "maximum": 8000,
+              "minimum": 200,
+              "type": "integer"
+            },
+            "node_id": {
+              "description": "A failed leaf step; defaults to the first failed leaf.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id"
+          ],
+          "type": "object"
+        },
+        "name": "get_step_logs"
+      },
+      {
+        "description": "Read one file (workflow YAML, lockfile, terraform, config) from a repo at a ref. repo is the pipeline name; ref is the execution's refs.commit (a sha or 'main'). path is relative to the repository root: a GitHub Actions workflow file lives at .github/workflows/<name>.yml, not at the root. A path that does not exist still costs a tool call. Size-capped; secrets redacted. Medium cost.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "max_bytes": {
+              "maximum": 20000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "path",
+            "ref"
+          ],
+          "type": "object"
+        },
+        "name": "read_repo_file"
+      },
+      {
+        "description": "Prior remediation attempts for a fingerprint (or one attempt by id) with their verification result. Only meaningful during re-investigation after a fix did not hold. Cheap.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "attempt_id": {
+              "type": "string"
+            },
+            "fingerprint": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "get_remediation_attempt"
+      },
+      {
+        "description": "Finish the investigation with your report. Call it exactly once. Evidence must cite tool call ids from this investigation. Propose a remediation only if the evidence supports one; otherwise leave it out and give an escalation_reason.",
+        "input_schema": {
+          "properties": {
+            "abstain": {
+              "type": "boolean"
+            },
+            "classification": {
+              "enum": [
+                "platform",
+                "user",
+                "transient",
+                "governance",
+                "unknown"
+              ]
+            },
+            "confidence": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "escalation_reason": {
+              "type": "string"
+            },
+            "evidence": {
+              "items": {
+                "properties": {
+                  "finding": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "description": "The id of a tool call you made in this investigation.",
+                    "type": "string"
+                  },
+                  "supports": {
+                    "description": "What the finding supports (e.g. the hypothesis).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "finding",
+                  "supports"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "hypothesis": {
+              "type": "string"
+            },
+            "layer": {
+              "enum": [
+                "L0",
+                "L1",
+                "L2",
+                "L3",
+                "L4",
+                "L5",
+                "L6"
+              ]
+            },
+            "remediation": {
+              "properties": {
+                "action": {
+                  "description": "Exactly one catalog action identifier, in the tier you also give.",
+                  "enum": [
+                    "rerun_failed_job",
+                    "rerun_workflow",
+                    "clear_stale_cache",
+                    "recycle_runner",
+                    "refresh_connector_token",
+                    "reschedule_pod",
+                    "bump_pool_capacity",
+                    "force_unlock_state",
+                    "regenerate_lockfile",
+                    "pin_provider_version",
+                    "revert_template_bump",
+                    "fix_undefined_variable",
+                    "fix_secret_scope",
+                    "fix_requirement_pin"
+                  ]
+                },
+                "diff": {
+                  "description": "Required for Tier 3: the unified diff (---/+++/@@ hunks) of the change.",
+                  "type": "string"
+                },
+                "params": {
+                  "type": "object"
+                },
+                "paths": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "reversible": {
+                  "type": "boolean"
+                },
+                "tier": {
+                  "enum": [
+                    0,
+                    1,
+                    2,
+                    3
+                  ]
+                }
+              },
+              "required": [
+                "tier",
+                "action",
+                "rationale",
+                "reversible"
+              ],
+              "type": "object"
+            },
+            "suspected_change": {
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "basis": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "ref",
+                "at",
+                "basis"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "classification",
+            "layer",
+            "confidence",
+            "hypothesis",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        "name": "submit_report"
+      }
+    ]
+  },
+  "response": {
+    "stop_reason": "tool_use",
+    "text": "Excellent. Now I have a clear picture of the failure. Let me analyze the evidence:\n\n**Evidence Summary:**\n\n1. **Execution Details (tool_call_id: toolu_01SEaScCx9Rj5eoqzREhtpbu):**\n   - Pipeline: infra-observability\n   - Status: failed\n   - Failed step: \"Configure AWS credentials\" (ex-000638-n3)\n   - Error: Expired AWS security token\n   - Refs: connector=aws-shared, template=terraform-plan@v2.0.0, runner_pool=pool-large, infra_def=tf-obs, commit=main\n\n2. **Signature Classification (tool_call_id: toolu_01Vq3ShUhWKQZAKmt4LBXtbk):**\n   - Deterministic signature match: aws_expired_token\n   - Layer: L2\n   - Classification: platform\n   - No Tier 0 known-transient rule exists\n   - This is a platform-level issue, not a flake\n\n3. **Fleet Correlation (tool_call_id: toolu_01LbzsRg3N1FMVMBhoUidCHj):**\n   - fleet_wide: false\n   - No other executions in the 30-minute window share this failure\n   - This is isolated to this single execution\n   - No shared dimension correlation\n\n4. **Flake History (tool_call_id: toolu_011uH5p2jrju4NSGypnTEm9W):**\n   - No prior failures for this fingerprint\n   - No fail-then-pass episodes\n   - precedent: false (not a known flake)\n\n5. **Step Logs (tool_call_id: toolu_013hS2C8k3DzPbCEfESuhoA4):**\n   - Error: \"An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired\"\n   - Exit code: 254\n   - Single operative error block\n\n**Analysis:**\n\nThe failure is caused by an expired AWS security token used by the aws-shared connector. This is a platform-level issue (L2) because:\n- The token has genuinely expired and needs to be refreshed\n- It's not a transient network issue or flake\n- It's not isolated to this pipeline (it's using a shared connector)\n- The connector is responsible for providing valid credentials\n\nThis is a connector credential management issue that requires the platform team to refresh the expired token. A Tier 1 \"refresh_connector_token\" action is the appropriate remediation since the connector token needs to be refreshed by the platform team.",
+    "tool_calls": [
+      {
+        "id": "toolu_01DZ2uTGpKqxcH9uAWDNXZQa",
+        "input": {
+          "classification": "platform",
+          "confidence": 0.95,
+          "evidence": [
+            {
+              "finding": "Execution ex-000638 failed in the 'Configure AWS credentials' step with error 'The security token included in the request is expired'. The connector 'aws-shared' is used across this pipeline.",
+              "source": "toolu_01SEaScCx9Rj5eoqzREhtpbu",
+              "supports": "The failure is related to expired AWS credentials from the shared connector"
+            },
+            {
+              "finding": "Signature classification is deterministically matched to 'aws_expired_token' with layer L2 (platform) and classification 'platform'. No Tier 0 known-transient rule exists.",
+              "source": "toolu_01Vq3ShUhWKQZAKmt4LBXtbk",
+              "supports": "This is definitively a platform issue, not a transient failure or user code issue"
+            },
+            {
+              "finding": "Flake history shows no prior failures for this fingerprint and no fail-then-pass episodes (precedent: false). This is not a known flake.",
+              "source": "toolu_011uH5p2jrju4NSGypnTEm9W",
+              "supports": "The failure is not a transient flake that would self-resolve on retry"
+            },
+            {
+              "finding": "Fleet correlation shows fleet_wide: false with no other executions in a 30-minute window sharing this failure signature. Only ex-000638 failed with aws_expired_token in this period.",
+              "source": "toolu_01LbzsRg3N1FMVMBhoUidCHj",
+              "supports": "While this execution is isolated, the root cause (expired connector token) affects the aws-shared connector's ability to authenticate"
+            },
+            {
+              "finding": "Step logs show the operative error: 'An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: The security token included in the request is expired'. Single error block with rank 80.",
+              "source": "toolu_013hS2C8k3DzPbCEfESuhoA4",
+              "supports": "The root cause is confirmed as expired AWS credentials, not a secondary error"
+            }
+          ],
+          "hypothesis": "The aws-shared connector's security credentials have expired. The \"Configure AWS credentials\" step attempted to use these expired credentials to call AWS APIs (GetCallerIdentity), which failed with an ExpiredToken error. This is a platform credential management issue requiring token refresh.",
+          "layer": "L2",
+          "remediation": {
+            "action": "refresh_connector_token",
+            "params": {
+              "connector": "aws-shared"
+            },
+            "rationale": "The aws-shared connector's AWS security token has expired. The connector is used by multiple pipelines and infrastructure, so refreshing the token will restore the ability for all pipelines using this connector to authenticate with AWS. This is the appropriate platform remediation for expired credentials.",
+            "reversible": true,
+            "tier": 1
+          }
+        },
+        "name": "submit_report"
+      }
+    ],
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 4843,
+      "output_tokens": 1374
+    }
+  }
+}

@@ -1,9 +1,309 @@
 {
   "scenarios": {
-    "sc-21": {
-      "cost_usd": 0.022768,
+    "sc-01": {
+      "cost_usd": 0.040368,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 7,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-02": {
+      "cost_usd": 0.036678,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 6,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-03": {
+      "cost_usd": 0.037428,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 6,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-05": {
+      "cost_usd": 0.033084,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 5,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-06": {
+      "cost_usd": 0.017599,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 3,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-07": {
+      "cost_usd": 0.031029,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 5,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-08": {
+      "cost_usd": 0.023595,
       "fingerprint": "88a8278480e61498",
       "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-09": {
+      "cost_usd": 0.024416,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-10": {
+      "cost_usd": 0.019411,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 3,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-11": {
+      "cost_usd": 0.021866,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 3,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-12": {
+      "cost_usd": 0.019683,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 3,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-13": {
+      "cost_usd": 0.026964,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-14": {
+      "cost_usd": 0.024407,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-15": {
+      "cost_usd": 0.024661,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-16": {
+      "cost_usd": 0.029568,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 5,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-17": {
+      "cost_usd": 0.033909,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 7,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-18": {
+      "cost_usd": 0.032452,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 7,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-19": {
+      "cost_usd": 0.031161,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 6,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-20": {
+      "cost_usd": 0.018584,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 3,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-21": {
+      "cost_usd": 0.024221,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-22": {
+      "cost_usd": 0.036895,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 6,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-23": {
+      "cost_usd": 0.026998,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "MISMATCH"
+    },
+    "sc-24": {
+      "cost_usd": 0.019825,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 3,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-25": {
+      "cost_usd": 0.03222,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 5,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "MISMATCH"
+    },
+    "sc-27": {
+      "cost_usd": 0.027461,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "MISMATCH"
+    },
+    "sc-28": {
+      "cost_usd": 0.021616,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-29": {
+      "cost_usd": 0.026859,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 4,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-30": {
+      "cost_usd": 0.030334,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 6,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-31": {
+      "cost_usd": 0.028429,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 6,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-32": {
+      "cost_usd": 0.046764,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 8,
+      "models": {
+        "investigator": "claude-haiku-4-5-20251001",
+        "reviewer": "claude-haiku-4-5-20251001"
+      },
+      "status": "ok"
+    },
+    "sc-33": {
+      "cost_usd": 0.0218,
+      "fingerprint": "88a8278480e61498",
+      "model_calls": 3,
       "models": {
         "investigator": "claude-haiku-4-5-20251001",
         "reviewer": "claude-haiku-4-5-20251001"

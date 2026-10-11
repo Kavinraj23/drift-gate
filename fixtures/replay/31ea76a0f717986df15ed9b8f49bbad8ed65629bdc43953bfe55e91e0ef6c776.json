@@ -1,0 +1,137 @@
+{
+  "fingerprint": "88a8278480e61498",
+  "fixture_version": 1,
+  "key": "31ea76a0f717986df15ed9b8f49bbad8ed65629bdc43953bfe55e91e0ef6c776",
+  "request": {
+    "max_tokens": 1200,
+    "messages": [
+      {
+        "content": "Review this proposed change (review round 1).\n\nRepository: infra-network at ref 16e3c3b49f32096559a409b250993a4503f9af24 (use these as the repo and ref arguments of read_repo_file).\n\nHypothesis about the failure: The Terraform configuration in main.tf references an undeclared input variable 'cost_center'. The variables.tf file is missing the variable declaration for 'cost_center' that is used in the S3 bucket's tags.\n\nProposed unified diff:\n```diff\n--- a/variables.tf\n+++ b/variables.tf\n@@ -6,3 +6,7 @@\n variable \"environment\" {\n   type = string\n }\n+\n+variable \"cost_center\" {\n+  type = string\n+}\n```\n\nCurrent contents of variables.tf:\n```\nvariable \"region\" {\n  type    = string\n  default = \"us-east-1\"\n}\n\nvariable \"environment\" {\n  type = string\n}\n\n```",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "I'll review this proposed change by examining the files mentioned in the hypothesis and diff.",
+            "type": "text"
+          },
+          {
+            "id": "toolu_01CRf5pbkhdDrmGizEHSaJE5",
+            "input": {
+              "path": "main.tf",
+              "ref": "16e3c3b49f32096559a409b250993a4503f9af24",
+              "repo": "infra-network"
+            },
+            "name": "read_repo_file",
+            "type": "tool_use"
+          },
+          {
+            "id": "toolu_0197VG3u8oCwG2fPBNtE1Rra",
+            "input": {
+              "path": "variables.tf",
+              "ref": "16e3c3b49f32096559a409b250993a4503f9af24",
+              "repo": "infra-network"
+            },
+            "name": "read_repo_file",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "{\"repo\":\"infra-network\",\"path\":\"main.tf\",\"ref\":\"16e3c3b49f32096559a409b250993a4503f9af24\",\"content\":\"provider \\\"aws\\\" {\\n  region = var.region\\n}\\n\\nresource \\\"aws_s3_bucket\\\" \\\"main\\\" {\\n  bucket = \\\"acme-infra-network-${var.environment}\\\"\\n\\n  tags = {\\n    Environment = var.environment\\n    CostCenter  = var.cost_center\\n  }\\n}\\n\",\"truncated\":false,\"max_bytes\":6000}",
+            "is_error": false,
+            "tool_use_id": "toolu_01CRf5pbkhdDrmGizEHSaJE5",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"repo\":\"infra-network\",\"path\":\"variables.tf\",\"ref\":\"16e3c3b49f32096559a409b250993a4503f9af24\",\"content\":\"variable \\\"region\\\" {\\n  type    = string\\n  default = \\\"us-east-1\\\"\\n}\\n\\nvariable \\\"environment\\\" {\\n  type = string\\n}\\n\",\"truncated\":false,\"max_bytes\":6000}",
+            "is_error": false,
+            "tool_use_id": "toolu_0197VG3u8oCwG2fPBNtE1Rra",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "system": "You are DriftGate's pull request reviewer, a senior platform engineer reviewing a small automated fix before it becomes a pull request. You are independent: you were not part of the investigation and you do not see how the change was derived. Judge the change on its merits.\n\nYou are given the hypothesis about why a CI pipeline failed, the unified diff that is meant to fix it, and the current contents of the files it touches. You may call read_repo_file to look at other files in the repository at the same ref; you cannot change anything. Tool calls draw on a budget shared with the investigation that may already be spent, and a refused call ends the review as a rejection. Judge from the diff and the files you were given, and call read_repo_file only when a verdict is impossible without another file.\n\nCheck\n- Does the diff fix the failure the hypothesis describes, and only that failure?\n- Does it touch only files related to the failure? Reject unrelated workflow, config or documentation edits.\n- Is it minimal? Reject collateral changes, such as unrelated version bumps, reformatting or extra settings.\n- Does it avoid deleting files or dependencies to make the error go away? A lockfile must be regenerated, not deleted; a missing dependency must be declared, not removed.\n- Does it add anything that looks like a secret or credential, or touch secret handling, without that being the fix? Reject it.\n- Where several files change, are additions made before removals?\n\nVerdicts\n- approve: the change is correct, minimal and safe.\n- revise: the intent is right but the diff needs a specific correction; say exactly what to change. You may ask for revision at most once.\n- reject: the change is wrong, unsafe or unrelated; a human should look at the failure instead.\n\nFinish by calling submit_review exactly once with the verdict and short, specific comments.",
+    "tools": [
+      {
+        "description": "Read one file (workflow YAML, lockfile, terraform, config) from a repo at a ref. repo is the pipeline name; ref is the execution's refs.commit (a sha or 'main'). path is relative to the repository root: a GitHub Actions workflow file lives at .github/workflows/<name>.yml, not at the root. A path that does not exist still costs a tool call. Size-capped; secrets redacted. Medium cost.",
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "max_bytes": {
+              "maximum": 20000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "path",
+            "ref"
+          ],
+          "type": "object"
+        },
+        "name": "read_repo_file"
+      },
+      {
+        "description": "Finish the review with your verdict and comments. Call it exactly once.",
+        "input_schema": {
+          "properties": {
+            "comments": {
+              "description": "Specific, actionable comments.",
+              "type": "string"
+            },
+            "verdict": {
+              "enum": [
+                "approve",
+                "revise",
+                "reject"
+              ]
+            }
+          },
+          "required": [
+            "verdict",
+            "comments"
+          ],
+          "type": "object"
+        },
+        "name": "submit_review"
+      }
+    ]
+  },
+  "response": {
+    "stop_reason": "tool_use",
+    "text": "Now I can evaluate the proposed change:\n\n**Analysis:**\n\n1. **Does it fix the failure?** Yes. The main.tf file uses `var.cost_center` on line 9 in the S3 bucket tags, but this variable is not declared in variables.tf. The proposed diff adds the missing variable declaration.\n\n2. **Correctness of the fix:** \n   - The variable declaration syntax is correct\n   - The variable name matches the usage in main.tf (`cost_center`)\n   - The type is `string`, which is appropriate for a tag value\n   - The variable has no default value, making it required (which is appropriate since it's used in tags and not optional)\n\n3. **Minimal and scoped:**\n   - The change only adds the missing variable declaration\n   - No unrelated edits to workflows, configs, or documentation\n   - No version bumps or reformatting\n   - No deletion of files or dependencies\n   - The addition comes at the end of the file (additions before removals)\n\n4. **Safety:**\n   - No secrets or credentials are exposed\n   - No secret handling changes\n   - This is a straightforward variable declaration\n\n5. **Completeness:**\n   - The fix directly addresses the hypothesis about the missing variable declaration\n   - No additional issues appear to exist based on the files reviewed",
+    "tool_calls": [
+      {
+        "id": "toolu_01EDhnQs8c625GiZ7iope1ZN",
+        "input": {
+          "comments": "The proposed change correctly fixes the undeclared variable issue. The main.tf references var.cost_center in the S3 bucket tags but variables.tf lacks the declaration. The diff adds a properly formatted string variable declaration with no default value, making it required as intended. The change is minimal, scoped, and safe with no unrelated edits.",
+          "verdict": "approve"
+        },
+        "name": "submit_review"
+      }
+    ],
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 2002,
+      "output_tokens": 438
+    }
+  }
+}

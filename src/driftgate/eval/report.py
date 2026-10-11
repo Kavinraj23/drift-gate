@@ -347,6 +347,24 @@ HONESTY = (
 )
 
 
+REPLAY_HONESTY = (
+    "**Read this before the numbers.** For every scenario with a recorded fixture, the agent column is the REAL "
+    "model's recorded responses, replayed through the gateway: real model behaviour on a small, generated, "
+    "template-based dataset, one recorded sample per scenario from a stochastic model. It is not a success rate "
+    "over many runs, `n` is shown beside every figure, and every held-out cell is too small to read as a rate. A "
+    "scenario recorded more than once replays its latest recording, which can be a better draw than the first. The "
+    "scripted fake model still drives the loop drills and any scenario without a fixture (the model source line "
+    "says which), and the seeded bad-diff reviewer is scripted. Replay spends nothing; the recordings did cost "
+    "real money. The baseline column is the deterministic pipeline with no model calls. The synthetic dataset is "
+    "generated and its error text is partly unverified (BLOCKERS.md). No production traffic is involved."
+)
+
+
+def offline_honesty(models: list[str]) -> str:
+    """The disclaimer for a non-live report: recorded real-model fixtures are not a scripted model."""
+    return REPLAY_HONESTY if "replay" in models else HONESTY
+
+
 LIVE_HONESTY = (
     "**Read this before the numbers.** The agent column in THIS report is a REAL model ({models}) called through the "
     "gateway, on the same synthetic scenarios and the same simulated remediation target as the offline report; "
@@ -472,7 +490,13 @@ def render_markdown(data: ReportData) -> str:
             f"Mode: `live` (real model through the gateway). Agent model source: {models}."
             if live
             else f"Mode: `{data.mode}` ({mode_note}). Agent model source: {models}."
-            + (" The agent column is SCRIPTED." if mixed else "")
+            + (
+                " The agent column mixes recorded real-model responses (replay) with SCRIPTED cases."
+                if mixed and "replay" in data.models
+                else " The agent column is SCRIPTED."
+                if mixed
+                else ""
+            )
         ),
         f"Cases: {n_cases} labelled synthetic scenarios (dev and held-out reported separately).",
         *(
@@ -487,7 +511,7 @@ def render_markdown(data: ReportData) -> str:
         "",
         "## Honesty",
         "",
-        live_honesty(live) if live else HONESTY,
+        live_honesty(live) if live else offline_honesty(data.models),
         "",
         "Figures are `k/n = rate`. A trailing `*` marks n < "
         f"{SMALL_N}: too small to read as a rate. Every held-out cell is small.",
@@ -548,6 +572,18 @@ def render_markdown(data: ReportData) -> str:
             "run-to-run variance (one run), or anything about a different model.",
         ]
         return "\n".join(lines) + "\n"
+    if "replay" in data.models:
+        lines += [
+            "",
+            "## What this does and does not show",
+            "",
+            "- Shows: how the recorded real model behaved on the replayed scenarios, end to end through the same "
+            "gates, against the deterministic baseline, with the price-table cost of what it actually used.",
+            "- Does not show: run-to-run variance (one recording per scenario), generalization beyond the generator's "
+            "templates, behaviour on production logs, or a real reviewer's catch rate on seeded bad diffs (scripted). "
+            "The loop-drill rows are scripted.",
+        ]
+        return "\n".join(lines) + "\n"
     lines += [
         "",
         "## What this does and does not show",
@@ -569,7 +605,7 @@ def to_json(data: ReportData) -> dict[str, Any]:
     out: dict[str, Any] = {
         "mode": data.mode,
         "models": data.models,
-        "honesty": live_honesty(data.live) if data.live else HONESTY,
+        "honesty": live_honesty(data.live) if data.live else offline_honesty(data.models),
         "live": asdict(data.live) if data.live else None,
         "recovery": data.recovery,
         "tier3": data.tier3,

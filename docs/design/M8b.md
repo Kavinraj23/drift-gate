@@ -48,5 +48,5 @@ PRs #2 to #4 were left open and unmerged, as required.
 ## Open doubts after the live run
 - Haiku 4.5 is unreliable at writing applying unified diffs for lock files (it mislabels which lines change). The deterministic checks caught every bad diff before GitHub; the cost is retries. Sonnet fixed it in one attempt, on one sample.
 - When the investigator spends all 8 calls, only the reviewer prompt keeps the reviewer from failing closed. Reserving calls for review would change the PRD budget rule, so it is not done.
-- `record` and `eval-live` still pass the combined model label to `e2e.run_with_gateway`; the same hazard applies if their models are ever set differently.
+- Checked afterwards: `record` and `eval-live` are not affected by the combined-label bug. `e2e._run` uses the label only as a display column and builds the orchestrator without a `model=`, so the gateway picks each role's model.
 - GitHub REST fixtures other than the rejected-run ones are still hand-written stubs.

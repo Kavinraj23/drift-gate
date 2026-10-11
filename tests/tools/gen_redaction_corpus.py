@@ -447,6 +447,86 @@ add(
     ["arn:aws:s3:::bucket/key?password="],
 )
 
+# --- hardening before the first live `record`: more vendor shapes and structural forms (all FAKE) ---------------
+# These are stored in two fragments (see the end of this file) so no contiguous token-shaped string is committed:
+# repository secret scanning (push protection) cannot tell a fake in a real format from a real credential.
+N_BEFORE_HARDENING = len(cases)
+H32 = "a1b2c3d4" * 4
+H64 = "a1b2c3d4e5f60718" * 4
+AB40 = "AbCdEfGh" * 5
+B64_72 = "Y2xpZW50a2V5ZGF0" * 4  # distinct from older bases so the "never stored contiguously" test is meaningful
+add("mailgun_key", "Sending via mailgun with key-{S0}", ["key-" + H32], ["Sending via mailgun with "])
+add("twilio_api_key", "TWILIO_API_KEY_SID={S0}\nregion=us1", ["SK" + H32], ["region=us1"])
+add("digitalocean_pat", "doctl auth init --access-token {S0}", ["dop_v1_" + H64], ["doctl auth init"])
+add("shopify_token", "X-Shopify-Access-Token: {S0}", ["shpat_" + H32], ["X-Shopify-Access-Token:"])
+add(
+    "databricks_pat",
+    "DATABRICKS_HOST=https://x.cloud.databricks.com\nauth with {S0}",
+    ["dapi" + H32],
+    ["DATABRICKS_HOST="],
+)
+add("vault_service_token", "vault login {S0}", ["hvs.CAESIA" + "AbCdEfGh" * 4], ["vault login"])
+add(
+    "sentry_auth_token",
+    "sentry-cli --auth-token ignored; found {S0} in env",
+    ["sntrys_" + "eyJpYXQiOjE2" * 6],
+    ["found "],
+)
+add("linear_api_key", "LINEAR key {S0} rejected", ["lin_api_" + "AbCdEfGh" * 5], ["rejected"])
+add(
+    "postman_key",
+    "postman login --with-api-key {S0}",
+    ["PMAK-" + "a1b2c3d4e5f6a1b2c3d4e5f6" + "-" + "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5"],
+    ["postman login"],
+)
+add("doppler_token", "DOPPLER_TOKEN={S0}", ["dp.pt." + AB40], ["DOPPLER_TOKEN="])
+add("fly_token", "flyctl deploy --access-token {S0}", ["fo1_" + AB40], ["flyctl deploy"])
+add(
+    "telegram_bot_token",
+    "curl https://api.telegram.org/bot{S0}/getMe",
+    ["123456789:" + "AAEhBOweik6ad9r_" + "QXMENQjcrTu-pKb8Wg4"],
+    ["/getMe"],
+)
+add(
+    "discord_webhook",
+    "POST https://discord.com/api/webhooks/123456789012345678/{S0}",
+    ["AbCdEfGh" * 8],
+    ["discord.com/api/webhooks/123456789012345678/"],
+)
+add(
+    "teams_webhook",
+    "POST https://contoso.webhook.office.com/webhookb2/{S0}",
+    ["a1b2c3d4-e5f6-a1b2-c3d4-e5f6a1b2c3d4@b1b1b1b1/IncomingWebhook/" + H32 + "/c1c1c1c1"],
+    ["webhook.office.com/webhookb2/"],
+)
+add(
+    "kubeconfig_client_key",
+    "users:\n- name: ci\n  user:\n    client-key-data: {S0}\n    client-certificate-data: PUBLICCERTDATA",
+    [B64_72],
+    ["client-key-data:", "client-certificate-data: PUBLICCERTDATA"],
+)
+add(
+    "netrc_login_password",
+    "machine api.example.com login deploy password {S0}",
+    ["netrcfakepw7netrcfakepw7"],
+    ["machine api.example.com login deploy password"],
+)
+add("cookie_header", "Cookie: sessionid={S0}; csrftoken=abc", [H32], ["Cookie:"])
+add("set_cookie_header", "Set-Cookie: session={S0}; Path=/; HttpOnly", [H32], ["Set-Cookie:"])
+add("actions_add_mask", "::add-mask::{S0}", [H32], ["::add-mask::"])
+add(
+    "rails_master_key",
+    "RAILS_MASTER_KEY={S0}\nbundle exec rails assets:precompile",
+    [H32],
+    ["RAILS_MASTER_KEY=", "bundle exec rails"],
+)
+add(
+    "kubectl_from_literal",
+    "kubectl create secret generic db --from-literal=pw={S0}",
+    ["literalfakepw3literalfakepw3"],
+    ["kubectl create secret generic db --from-literal=pw="],
+)
+
 nofp = [
     "commit 3a4f5b6c7d8e9f001122334455667788aabbccdd",
     "HEAD is now at 0123456789abcdef0123456789abcdef01234567 fix lockfile",
@@ -471,7 +551,30 @@ nofp = [
     "git clone git@github.com:acme/app.git",
     "ssh://git@github.com:22/acme/app.git",
     "Run actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8",
+    "key-value store ready, monkey-patching disabled",
+    "SKU0123456789 shipped, SK_LIVE flag is off",
+    "pulled image registry.example.com/team/app:20240131123456 in 3.2s",
+    "Content-Type: application/json",
+    "Accept-Language: en-US and cookie settings are on the account page",
+    "client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUM=",
+    "hvs is not a word we use; see the vault docs",
+    "machine type n2-standard-4 with 16 GB memory",
+    "kubectl create configmap app --from-file=config.yaml",
 ]
+_VENDOR_PREFIXES = ("key-", "SK", "dop_v1_", "shpat_", "dapi", "hvs.", "sntrys_", "lin_api_", "PMAK-", "dp.pt.", "fo1_")
+
+
+def _fragments(s):
+    """Split right after a vendor prefix (or at the middle), so the prefix and the body never sit together."""
+    if s.startswith("123456789:"):
+        k = len("123456789:")
+    else:
+        k = next((len(p) for p in _VENDOR_PREFIXES if s.startswith(p)), len(s) // 2)
+    return [s[:k], s[k:]]
+
+
+for _case in cases[N_BEFORE_HARDENING:]:
+    _case["secrets"] = [_fragments(s) for s in _case["secrets"]]
 doc = {
     "_comment": "Every secret below is FAKE: built from repeated patterns in the correct real-world format so detectors fire. None is, or was ever, a real credential. Placeholders {S0},{S1} in a template are replaced by the matching entry in secrets.",
     "cases": cases,

@@ -136,3 +136,8 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 ## Optional lifetime-cap override (2026-10-11)
 - The user asked to run `eval-live` end to end and said it may go over budget ("it can go over budget"). `llm/config.py`: `DRIFTGATE_LIFETIME_CAP_USD` (env or `.env`) changes the gateway's lifetime cap for a run. Default stays $2.50; a malformed or non-positive value raises; a value above $10 is refused as a typo guard; the daily cap is still clamped to it. Tests in `tests/gateway/test_config_daily_cap.py`.
 - This is the owner's explicit decision, applied per run through the environment; `CLAUDE.md` and the code default still say $2.50 and were not edited. Spend so far is $1.8775 (ledger); any run past $2.50 is therefore a deliberate override.
+
+## M9b: eval-live (2026-10-11)
+- `eval-live` (held-out first, then dev) ran all 33 labelled scenarios: 26/31 model scenarios matched, 0 false remediations, cost $0.9219, mean model latency about 18.7 s per case. The same four scenarios (sc-01, sc-23, sc-25, sc-27) missed in both the `record` pass and this one; sc-30 (undefined variable) missed here only, with no evidence submitted. Written to `data/eval/report-live.md` (offline report untouched). Details and caveats in MVP_REPORT.md and docs/design/M9b.md.
+- Lifetime spend is now $2.7995, $0.30 over the $2.50 budget, by the owner's explicit decision through `DRIFTGATE_LIFETIME_CAP_USD`. `CLAUDE.md` still says $2.50.
+- Open for the sign-off: reviewer subagent pass over the M9b changes (daily/lifetime cap overrides, ledger-preserving writer, report disclaimer) and the TASKS.md tick.

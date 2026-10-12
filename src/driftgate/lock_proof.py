@@ -6,7 +6,8 @@ none of it comes from the model. The proof holds only when ALL of these are true
 - the failed log names exactly one lock id;
 - the lock table has an entry for that id, and the entry names its holder as an execution id;
 - that execution exists in the source and its status is terminal (the holder's execution is over);
-- the table does not mark the holder alive.
+- the table does not mark the holder alive;
+- the holder is not the failing execution itself (a run cannot be holding the lock it just failed to take).
 
 If any source says the holder is still running the status is `running` (a hard refusal in the gate). Anything
 missing, unknown or contradictory is `unknown` (a downgrade to escalation). The proof is re-derived at execution
@@ -58,7 +59,12 @@ def _unknown(lock_id: str | None, reason: str, holder: str | None = None) -> Hol
     return HolderProof(lock_id, "unknown", False, holder, reason)
 
 
-def derive_holder_proof(lock_id: str | None, locks: LockTable | None, source: ExecutionSource) -> HolderProof:
+def derive_holder_proof(
+    lock_id: str | None,
+    locks: LockTable | None,
+    source: ExecutionSource,
+    failing_execution_id: str | None = None,
+) -> HolderProof:
     if not lock_id:
         return _unknown(None, "no unambiguous lock id in the failed log")
     if locks is None:
@@ -68,6 +74,9 @@ def derive_holder_proof(lock_id: str | None, locks: LockTable | None, source: Ex
         return _unknown(lock_id, "the lock is not in the lock table")
     if not entry.holder:
         return _unknown(lock_id, "the lock entry names no holder execution")
+    if failing_execution_id is not None and entry.holder == failing_execution_id:
+        # The failed run cannot be the process that is holding the lock it failed to take: contradictory data.
+        return _unknown(lock_id, "the lock holder is the failing execution itself: contradictory", entry.holder)
     try:
         holder = source.get_execution(entry.holder)
     except SourceError:

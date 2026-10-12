@@ -8,13 +8,21 @@ The rules this module exists to keep:
   no approval can raise a tier or turn a refused or downgraded decision into an allowed one.
 - Anything not clearly allowed fails closed: an expired, denied, cancelled or already executed request never runs,
   a gate refusal cancels the request, and a missing gate factory refuses.
+- Approving is gated too. `approve` runs the same gate from fresh facts and refuses early (`GateRefused`) when the
+  gate would not allow the action right now (kill switch off, abort ceiling, Tier 2 holder alive or unproven, rate
+  limit). An early refusal is audited and leaves the request untouched: it stays pending (the condition may be
+  temporary; if it is not, the request expires on its own window) and no decision is recorded. `deny` is exempt from
+  the gate: denial is the safe direction, so anyone, including the requester, may deny. An approval can never raise
+  a tier or turn a refused/downgraded decision into an allowed one: the gate result is only ever used to say no, and
+  `execute` runs the full gate again regardless of what happened at approval time.
 - The tier, action and execution id come from the immutable request row, never from the stored payload.
 - Execution is stubbed: the only target is the synthetic one, and nothing here can reach live infrastructure.
 
 Audit vocabulary (the kinds are pinned, so everything is an existing kind plus a `stage` field):
 `proposal`/`approval_requested` (written by the orchestrator), `proposal`/`approval_decision`,
 `rejected`/`approval_refused` (an approve/deny that was refused), `rejected`/`approval_denied`,
-`expired`/`approval`, `gate_decision`/`approval_recheck`, `rejected`/`approval_execute_refused`,
+`expired`/`approval`, `gate_decision`/`approval_precheck` (at approve time) and `approval_recheck` (at execute),
+`rejected`/`approval_refused` with error `GateRefused`, `rejected`/`approval_execute_refused`,
 then `execution` (`dry_run`, `execute`), `verification`/`result` and `failed`, each carrying `request_id`.
 """
 
@@ -29,6 +37,7 @@ from driftgate.approvals import (
     ApprovalStore,
     Expired,
     NotOpen,
+    normalize_identity,
 )
 from driftgate.audit import AuditLog, record_decision
 from driftgate.domain import (
@@ -38,9 +47,15 @@ from driftgate.domain import (
     RemediationTarget,
     VerificationResult,
 )
-from driftgate.gates import RATE_LIMIT_WINDOW_S, GateDecision, RateLimiter, SafetyGate
+from driftgate.gates import RATE_LIMIT_WINDOW_S, GateDecision, RateLimiter
+from driftgate.lock_proof import HolderProof
 from driftgate.orchestrator import GateFactory, Orchestrator
 from driftgate.remediation_catalog import is_catalog_action
+
+
+class GateRefused(ApprovalError):
+    """The safety gate would not allow this action right now, so the approval was refused and nothing changed."""
+
 
 EXECUTED = "executed"
 ESCALATED = "escalated"
@@ -63,21 +78,46 @@ class ApprovalExecution:
 
 
 class ApprovalService:
-    """approve / deny / expire-check with audit. The store enforces the rules; this records what happened."""
+    """approve / deny / expire-check with audit. The store enforces the rules; this records what happened.
 
-    def __init__(self, store: ApprovalStore, audit: AuditLog, clock: Clock) -> None:
+    `orchestrator` supplies the gate inputs and the gate factory for the approve-time gate check. It is required:
+    a service that could approve without consulting the gate would be a way around it."""
+
+    def __init__(self, store: ApprovalStore, audit: AuditLog, clock: Clock, *, orchestrator: Orchestrator) -> None:
         self._store = store
         self._audit = audit
         self._clock = clock
+        self._orchestrator = orchestrator
 
     def approve(self, request_id: int, approver: str) -> ApprovalRequest:
         return self._decide(request_id, approver, "approve")
 
     def deny(self, request_id: int, approver: str) -> ApprovalRequest:
-        return self._decide(request_id, approver, "deny")
+        return self._decide(request_id, approver, "deny")  # exempt from the gate: denial is the safe direction
+
+    def _gate_precheck(self, request_id: int, approver: str) -> None:
+        """Raise `GateRefused` if the gate would not allow the request now. Only runs when the approval could
+        otherwise be recorded; every other refusal (expired, not pending, self-approval, repeat) is the store's."""
+        try:
+            req = self._store.get(request_id)
+            who = normalize_identity(approver)
+        except ApprovalError:
+            return  # the store reports it
+        if (
+            req.status != "pending"
+            or self._clock() >= req.expires_at
+            or who == req.requested_by
+            or any(d.approver == who for d in self._store.decisions(request_id))
+        ):
+            return
+        verdict = _evaluate(self._orchestrator, self._audit, req, self._clock, "approval_precheck")
+        if not verdict.ok:
+            raise GateRefused(f"the gate would not allow this action now, so it cannot be approved: {verdict.reason}")
 
     def _decide(self, request_id: int, approver: str, decision: str) -> ApprovalRequest:
         try:
+            if decision == "approve":
+                self._gate_precheck(request_id, approver)
             req = self._store.decide(request_id, approver, decision)
         except ApprovalError as e:
             self._audit_refusal(request_id, approver, decision, e)
@@ -121,21 +161,14 @@ class ApprovalService:
             stage="approval_refused",
             request_id=req.id,
             decision=decision,
-            approver=approver.strip().casefold(),
+            approver=ascii(approver)[:80],  # as typed, escaped: it may not be a valid identity
             error=type(error).__name__,
             reason=str(error),
         )
 
     def _audit_expired(self, req: ApprovalRequest) -> None:
-        self._audit.append(
-            "expired",
-            req.fingerprint,
-            req.execution_id,
-            stage="approval",
-            request_id=req.id,
-            tier=req.tier,
-            expires_at=req.expires_at,
-            reason="approval window closed before the remediation was approved and executed: escalated to a human",
+        _audit_expired(
+            self._audit, req, "approval window closed before the remediation was approved and executed: escalated"
         )
 
     def expire_check(self) -> list[ApprovalRequest]:
@@ -144,6 +177,19 @@ class ApprovalService:
         for req in expired:
             self._audit_expired(req)
         return expired
+
+
+def _audit_expired(audit: AuditLog, req: ApprovalRequest, reason: str) -> None:
+    audit.append(
+        "expired",
+        req.fingerprint,
+        req.execution_id,
+        stage="approval",
+        request_id=req.id,
+        tier=req.tier,
+        expires_at=req.expires_at,
+        reason=reason + " to a human",
+    )
 
 
 def _refuse(
@@ -197,16 +243,7 @@ def execute_approved(
 
     if req.status in ("pending", "approved") and clock() >= req.expires_at:
         for expired in store.expire_due():
-            audit.append(
-                "expired",
-                expired.fingerprint,
-                expired.execution_id,
-                stage="approval",
-                request_id=expired.id,
-                tier=expired.tier,
-                expires_at=expired.expires_at,
-                reason="approval window closed before execution: escalated to a human",
-            )
+            _audit_expired(audit, expired, "approval window closed before execution: escalated")
         req = store.get(request_id)
     if req.status != "approved":
         have = len(store.approvers(req.id))
@@ -218,10 +255,49 @@ def execute_approved(
         return _refuse(audit, req, "fewer approvals than required: nothing executed", status=req.status)
     if factory is None:
         return _refuse(audit, req, "no execution-time gate available: refusing", status=req.status)
-    if not is_catalog_action(req.tier, req.action):
-        return _cancel(audit, store, req, f"action {req.action!r} is not in the Tier {req.tier} catalog")
 
-    # -- the gate, re-run from fresh facts. The tier and action are the request row's, not the payload's. --------
+    verdict = _evaluate(orchestrator, audit, req, clock, "approval_recheck", gate_factory=factory)
+    if not verdict.ok:
+        out = _cancel(audit, store, req, verdict.reason)
+        out.gate = verdict.decision
+        return out
+    decision, proof = verdict.decision, verdict.proof
+    assert decision is not None
+
+    action = decision.remediation
+    action.dry_run["execution_id"] = req.execution_id
+    if req.tier == 2:
+        assert proof is not None and proof.lock_id is not None  # allowed implies a proven holder
+        action.dry_run["lock_id"] = proof.lock_id  # the lock id derived from the log just now
+    return _run(audit, store, target, req, action, decision)
+
+
+@dataclass
+class _Verdict:
+    ok: bool
+    reason: str
+    decision: GateDecision | None = None
+    proof: HolderProof | None = None
+
+
+def _evaluate(
+    orchestrator: Orchestrator,
+    audit: AuditLog,
+    req: ApprovalRequest,
+    clock: Clock,
+    stage: str,
+    *,
+    gate_factory: GateFactory | None = None,
+) -> _Verdict:
+    """Run the request's gate from fresh facts: kill switch re-read from disk, abort ceiling, rate limit seeded from
+    the audit log, signature and blast radius re-derived, Tier 2 holder proof re-derived from the lock table. The
+    tier and action are the request row's, not the payload's. `ok` only when the gate ALLOWED the same tier. Used
+    at approve time (`approval_precheck`) and again at execute time (`approval_recheck`); it only ever says no."""
+    factory = gate_factory or orchestrator.gate_factory
+    if factory is None:
+        return _Verdict(False, "no gate available: refusing")
+    if not is_catalog_action(req.tier, req.action):
+        return _Verdict(False, f"action {req.action!r} is not in the Tier {req.tier} catalog")
     rem, facts, proof, problem = orchestrator.gate_inputs(
         req.execution_id,
         req.tier,
@@ -231,29 +307,20 @@ def execute_approved(
         _confidence(req),
     )
     if facts is None:
-        return _cancel(audit, store, req, f"gate facts could not be re-derived: {problem}")
+        return _Verdict(False, f"gate facts could not be re-derived: {problem}")
     if facts.fingerprint != req.fingerprint:
-        return _cancel(audit, store, req, "the failure fingerprint changed since the request: refusing")
+        return _Verdict(False, "the failure fingerprint changed since the request: refusing")
     limiter = RateLimiter(clock)
     _seed_rate_limiter(limiter, audit, req, clock())
-    gate: SafetyGate = factory(limiter)
-    decision = gate.decide(rem, facts)
-    record_decision(audit, decision, req.fingerprint, req.execution_id, stage="approval_recheck", request_id=req.id)
+    decision = factory(limiter).decide(rem, facts)
+    record_decision(audit, decision, req.fingerprint, req.execution_id, stage=stage, request_id=req.id)
     if proof is not None:
         audit.append(
             "proposal", req.fingerprint, req.execution_id, stage="holder_proof", request_id=req.id, **proof.as_record()
         )
     if not decision.allowed or decision.remediation.tier != req.tier:  # tier can never differ; checked anyway
-        out = _cancel(audit, store, req, f"gate {decision.decision} at execution time: {decision.reason}")
-        out.gate = decision
-        return out
-
-    action = decision.remediation
-    action.dry_run["execution_id"] = req.execution_id
-    if req.tier == 2:
-        assert proof is not None and proof.lock_id is not None  # allowed implies a proven holder
-        action.dry_run["lock_id"] = proof.lock_id  # the lock id derived from the log just now
-    return _run(audit, store, target, req, action, decision)
+        return _Verdict(False, f"gate {decision.decision}: {decision.reason}", decision, proof)
+    return _Verdict(True, "", decision, proof)
 
 
 def _confidence(req: ApprovalRequest) -> float | None:
@@ -293,7 +360,9 @@ def _run(
     try:
         store.claim_for_execution(req.id)  # atomic: only one caller can move approved -> executed
     except Expired:
-        store.expire_due()
+        # The claim itself recorded the expiry, so `expire_due()` would find nothing: audit it here, like every
+        # other expiry path.
+        _audit_expired(audit, store.get(req.id), "approval window closed before execution: escalated")
         return _cancel_result(audit, store, req, result, "approval window closed before execution", cancel=False)
     except ApprovalError as e:
         return _cancel_result(audit, store, req, result, f"could not claim the request: {e}", cancel=False)

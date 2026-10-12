@@ -480,7 +480,17 @@ def build_world(
         gate_factory=make_gate,
     )
     out = orch.handle(label.execution_id)
-    return World(orch, store, ApprovalService(store, orch.audit, clock), table, clock, kill, extra, out, lock_id)
+    return World(
+        orch,
+        store,
+        ApprovalService(store, orch.audit, clock, orchestrator=orch),
+        table,
+        clock,
+        kill,
+        extra,
+        out,
+        lock_id,
+    )
 
 
 def run_case(case: Case, label: FailureLabel, data_dir: Path, work: Path) -> CaseResult:

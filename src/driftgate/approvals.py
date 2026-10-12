@@ -4,13 +4,28 @@ SQLite (stdlib), at `state/approvals.sqlite`. This module is only the store and 
 runs nothing and never touches a `RemediationTarget`. `approval_flow` audits and executes.
 
 Identities are plain strings. The CLI is a trusted local operator interface, NOT authentication: nothing here
-proves who is typing. What the store does guarantee is bookkeeping: the same person (after case and whitespace
-normalisation) counts once, the person who triggered the run never counts as an approver, and a request moves
-only forward through its statuses.
+proves who is typing, and anyone who can write the SQLite file can forge decisions as any name. What the store does
+guarantee is bookkeeping, against honest mistakes and against a partial or buggy writer:
+
+- the same person counts once. Identities are normalised (NFKC, case-fold, collapsed spaces) and an identity that
+  contains control, format, zero-width, line/paragraph-separator or variation-selector characters, or anything
+  outside printable ASCII after normalisation, is REFUSED rather than folded. SQL CHECKs make the stored form
+  exactly the normalised form (lower-case printable ASCII, single spaces), so a direct insert of "Alice" beside
+  "alice" is rejected and UNIQUE(request_id, approver) really is per person;
+- the person who triggered the run never counts as an approver;
+- the quorum is derived from the immutable tier (`REQUIRED_APPROVALS`), never from a stored column; `required` is
+  CHECK-pinned to the tier and, with `expires_at` (bounded by the longest window), `requested_at`, `fingerprint`,
+  tier, action, execution id and requester, frozen by triggers after insert;
+- a request can only be INSERTed as `pending`, and can only become `approved` or `executed` while the decisions
+  table holds the quorum of distinct non-requester approvals and no denial (checked in SQL by trigger, and again
+  in code at claim time). A status written without those decisions is refused;
+- a request moves only forward through its statuses.
+
+None of this resists someone who edits the file with the triggers dropped (the CLI is not authentication); the real
+defence is that execution never trusts an approval alone: `approval_flow` re-runs the full gate from fresh facts.
 
 Statuses: pending -> approved | denied | expired | cancelled; approved -> executed | expired | cancelled. Every
-other status is terminal. The rules are enforced in code and again by SQLite triggers/constraints, so a direct
-write cannot reopen a closed request, add a second decision for one person, or let the requester approve.
+other status is terminal.
 
 Time: every comparison uses the injected clock. A request is expired when `now >= expires_at` (an approval at
 exactly the deadline is refused). Expiry applies to `pending` and to `approved` requests that have not been
@@ -74,13 +89,37 @@ class Expired(ApprovalError):
     """The request's deadline passed; it is now marked expired and can never be approved or executed."""
 
 
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+_EXTRA_INVISIBLE = frozenset({0x115F, 0x1160, 0x3164, 0xFFA0})  # hangul fillers render as nothing
+
+
+def _is_invisible(ch: str) -> bool:
+    cp = ord(ch)
+    return (
+        unicodedata.category(ch) in _INVISIBLE_CATEGORIES
+        or 0x180B <= cp <= 0x180F  # mongolian variation selectors
+        or 0xFE00 <= cp <= 0xFE0F  # variation selectors
+        or 0xE0100 <= cp <= 0xE01EF  # variation selectors supplement
+        or cp in _EXTRA_INVISIBLE
+    )
+
+
 def normalize_identity(raw: str) -> str:
-    """Case-fold, collapse whitespace and unicode-normalise. An empty identity is refused."""
+    """The one canonical form of an identity, or `IdentityError`. Invisible characters (control, format, zero-width,
+    separators, variation selectors) are refused, not stripped: "alice\u200b" must not become a second person.
+    Then NFKC, case-fold, collapse spaces; the result must be non-empty printable ASCII (what the SQL CHECKs
+    enforce)."""
     if not isinstance(raw, str):
         raise IdentityError("identity must be a string")
-    norm = " ".join(unicodedata.normalize("NFKC", raw).split()).casefold()
+    if any(_is_invisible(c) for c in raw):
+        raise IdentityError("identity contains control, zero-width or other invisible characters: refused")
+    norm = unicodedata.normalize("NFKC", raw)
+    norm = unicodedata.normalize("NFKC", norm.casefold())
+    norm = " ".join(norm.split())
     if not norm:
         raise IdentityError("an identity is required (empty identities are refused)")
+    if any(_is_invisible(c) for c in norm) or not all(" " <= c <= "~" for c in norm):
+        raise IdentityError("identity must be printable ASCII after normalisation: refused")
     return norm
 
 
@@ -116,11 +155,13 @@ CREATE TABLE IF NOT EXISTS requests (
     fingerprint TEXT NOT NULL,
     tier INTEGER NOT NULL CHECK (tier IN (1, 2)),
     action TEXT NOT NULL,
-    requested_by TEXT NOT NULL CHECK (length(requested_by) > 0),
+    requested_by TEXT NOT NULL CHECK (length(requested_by) > 0 AND requested_by = lower(requested_by)
+        AND requested_by = trim(requested_by) AND requested_by NOT LIKE '%  %'
+        AND requested_by NOT GLOB '*[^ -~]*'),
     requested_at REAL NOT NULL,
-    expires_at REAL NOT NULL,
+    expires_at REAL NOT NULL CHECK (expires_at > requested_at AND expires_at <= requested_at + 3600),
     status TEXT NOT NULL CHECK (status IN ('pending','approved','denied','expired','executed','cancelled')),
-    required INTEGER NOT NULL CHECK (required >= 1),
+    required INTEGER NOT NULL CHECK (required = CASE tier WHEN 1 THEN 1 ELSE 2 END),
     payload TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
     gate_seq INTEGER
@@ -128,20 +169,32 @@ CREATE TABLE IF NOT EXISTS requests (
 CREATE TABLE IF NOT EXISTS decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id INTEGER NOT NULL REFERENCES requests(id),
-    approver TEXT NOT NULL CHECK (length(approver) > 0),
+    approver TEXT NOT NULL CHECK (length(approver) > 0 AND approver = lower(approver)
+        AND approver = trim(approver) AND approver NOT LIKE '%  %' AND approver NOT GLOB '*[^ -~]*'),
     decision TEXT NOT NULL CHECK (decision IN ('approve','deny')),
     at REAL NOT NULL,
     UNIQUE (request_id, approver)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_request ON requests (execution_id, action)
     WHERE status IN ('pending', 'approved');
+CREATE TRIGGER IF NOT EXISTS requests_insert_pending_only BEFORE INSERT ON requests
+WHEN NEW.status != 'pending'
+BEGIN SELECT RAISE(ABORT, 'a request can only be created pending'); END;
 CREATE TRIGGER IF NOT EXISTS requests_forward_only BEFORE UPDATE OF status ON requests
 WHEN NEW.status != OLD.status AND NOT (
     (OLD.status = 'pending' AND NEW.status IN ('approved','denied','expired','cancelled'))
     OR (OLD.status = 'approved' AND NEW.status IN ('executed','expired','cancelled')))
 BEGIN SELECT RAISE(ABORT, 'illegal status transition'); END;
+CREATE TRIGGER IF NOT EXISTS requests_approved_needs_decisions BEFORE UPDATE OF status ON requests
+WHEN ((OLD.status = 'pending' AND NEW.status = 'approved') OR (OLD.status = 'approved' AND NEW.status = 'executed'))
+    AND (
+    EXISTS (SELECT 1 FROM decisions WHERE request_id = OLD.id AND decision = 'deny')
+    OR (SELECT count(*) FROM decisions
+        WHERE request_id = OLD.id AND decision = 'approve' AND approver != OLD.requested_by)
+       < (CASE OLD.tier WHEN 1 THEN 1 ELSE 2 END))
+BEGIN SELECT RAISE(ABORT, 'approved/executed needs the approvals that justify it'); END;
 CREATE TRIGGER IF NOT EXISTS requests_identity_frozen
-BEFORE UPDATE OF requested_by, tier, action, execution_id ON requests
+BEFORE UPDATE OF requested_by, tier, action, execution_id, fingerprint, requested_at, expires_at, required ON requests
 BEGIN SELECT RAISE(ABORT, 'request identity is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS decisions_only_while_pending BEFORE INSERT ON decisions
 WHEN (SELECT status FROM requests WHERE id = NEW.request_id) != 'pending'
@@ -167,7 +220,7 @@ def _request(row: sqlite3.Row) -> ApprovalRequest:
         requested_at=row["requested_at"],
         expires_at=row["expires_at"],
         status=row["status"],
-        required=row["required"],
+        required=REQUIRED_APPROVALS[row["tier"]],  # from the immutable tier; the stored column is never trusted
         payload=json.loads(row["payload"]),
         note=row["note"],
         gate_seq=row["gate_seq"],
@@ -224,7 +277,20 @@ class ApprovalStore:
         return [Decision(r["request_id"], r["approver"], r["decision"], r["at"]) for r in rows]
 
     def approvers(self, request_id: int) -> list[str]:
-        return [d.approver for d in self.decisions(request_id) if d.decision == "approve"]
+        """Distinct approvers in the normalised form, excluding the requester. A stored identity that does not
+        normalise is not counted (fail closed)."""
+        requester = self.get(request_id).requested_by
+        seen: list[str] = []
+        for d in self.decisions(request_id):
+            if d.decision != "approve":
+                continue
+            try:
+                who = normalize_identity(d.approver)
+            except IdentityError:
+                continue
+            if who != requester and who not in seen:
+                seen.append(who)
+        return seen
 
     # -- writes ------------------------------------------------------------------------------
     def create(

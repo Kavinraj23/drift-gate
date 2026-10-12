@@ -4,6 +4,14 @@ SYNTHETIC TARGET ONLY. Execution is simulated against the synthetic lock table; 
 infrastructure or GitHub. Identities (`--as`) are plain strings typed by the operator: this is a trusted local
 operator interface, NOT authentication. It prevents accidents (the same name twice, the trigger approving their own
 run), not impersonation. A real approval channel needs real authentication first.
+
+Trust model for the gate. The inputs that decide whether an approved action may run are PINNED to the repository's
+own files and no command-line option can change them: the kill switch (`config/kill_switch.json`), the policy and
+abort ceiling (`config/policy.json`), the audit log that seeds the rate limit (`state/audit.jsonl`), the simulated
+lock table (`state/locks.json`) and the dataset (`data/`). The only path an operator may choose is `--state-dir`,
+and it selects nothing but where `approvals.sqlite` lives (a demo can keep a separate approvals database). Unknown
+options are rejected, not ignored (abbreviations too). Tests inject paths through `CliInputs`, a library argument of
+`main()`, never from the command line.
 """
 
 from __future__ import annotations
@@ -12,15 +20,15 @@ import argparse
 import sys
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from driftgate.adapters.synthetic import load_lock_table, save_lock_table
+from driftgate.adapters.synthetic import LockTable, load_lock_table, save_lock_table
 from driftgate.approval_flow import ApprovalService, execute_approved
 from driftgate.approvals import ApprovalError, ApprovalRequest, ApprovalStore
-from driftgate.audit import AuditLog
 from driftgate.gates import DEFAULT_KILL_SWITCH_PATH
-from driftgate.orchestrator import build_synthetic_orchestrator, make_synthetic_target
+from driftgate.orchestrator import Orchestrator, build_synthetic_orchestrator, make_synthetic_target
 from driftgate.policy import DEFAULT_POLICY_PATH
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,20 +38,39 @@ BANNER = "[synthetic target only: actions are simulated. Identities are unauthen
 Clock = Callable[[], float]
 
 
+@dataclass(frozen=True)
+class CliInputs:
+    """Where the gate's inputs live. The defaults are the repository's own files. This is a library argument for
+    tests and embedding; there is deliberately no command-line way to build one."""
+
+    data_dir: Path = ROOT / "data"
+    kill_switch_path: Path = DEFAULT_KILL_SWITCH_PATH
+    policy_path: Path = DEFAULT_POLICY_PATH
+    audit_path: Path = DEFAULT_STATE_DIR / "audit.jsonl"
+    locks_path: Path = DEFAULT_STATE_DIR / "locks.json"
+
+
+class _StrictParser(argparse.ArgumentParser):
+    """Sub-command parsers also refuse abbreviations: an unknown option is an error, never a near match."""
+
+    def __init__(self, **kw: object) -> None:
+        super().__init__(allow_abbrev=False, **kw)  # type: ignore[arg-type]
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python tasks.py approvals",
         description="Approve, deny, expire and execute Tier 1/2 remediations. " + BANNER,
+        allow_abbrev=False,
     )
-    p.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR, help="holds approvals.sqlite and audit.jsonl")
-    p.add_argument("--data", type=Path, default=ROOT / "data", help="synthetic dataset (execution source)")
     p.add_argument(
-        "--locks", type=Path, default=None, help="simulated lock table JSON (default <state-dir>/locks.json)"
+        "--state-dir",
+        type=Path,
+        default=DEFAULT_STATE_DIR,
+        help="where approvals.sqlite lives. Selects nothing else: the kill switch, policy, audit log, lock table and "
+        "dataset are fixed to the repository's own files",
     )
-    p.add_argument("--audit", type=Path, default=None, help="audit log (default <state-dir>/audit.jsonl)")
-    p.add_argument("--kill-switch", type=Path, default=DEFAULT_KILL_SWITCH_PATH)
-    p.add_argument("--policy", type=Path, default=DEFAULT_POLICY_PATH)
-    sub = p.add_subparsers(dest="command", required=True)
+    sub = p.add_subparsers(dest="command", required=True, parser_class=_StrictParser)
     lst = sub.add_parser("list", help="list requests")
     lst.add_argument("--status", default=None)
     show = sub.add_parser("show", help="show one request with its decisions")
@@ -69,23 +96,25 @@ def _no_model(_execution_id: str, _budget: object) -> object:
     raise RuntimeError("the approvals CLI never calls a model")
 
 
-def main(argv: Sequence[str] | None = None, *, clock: Clock = time.time, out: TextIO | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    clock: Clock = time.time,
+    out: TextIO | None = None,
+    inputs: CliInputs | None = None,
+) -> int:
     stream = out or sys.stdout
     args = _parser().parse_args(list(argv) if argv is not None else None)
+    pinned = inputs or CliInputs()
 
     def say(text: str = "") -> None:
         print(text, file=stream)
 
     say(BANNER)
-    state: Path = args.state_dir
-    audit_path: Path = args.audit or state / "audit.jsonl"
-    locks_path: Path = args.locks or state / "locks.json"
-    store = ApprovalStore(state / "approvals.sqlite", clock)
+    store = ApprovalStore(args.state_dir / "approvals.sqlite", clock)
     try:
-        audit = AuditLog(audit_path, clock)
-        service = ApprovalService(store, audit, clock)
         try:
-            return _run(args, store, service, audit_path, locks_path, clock, say)
+            return _run(args, store, pinned, clock, say)
         except ApprovalError as e:
             say(f"refused: {e}")
             return 1
@@ -93,14 +122,24 @@ def main(argv: Sequence[str] | None = None, *, clock: Clock = time.time, out: Te
         store.close()
 
 
+def _build(store: ApprovalStore, pinned: CliInputs, clock: Clock) -> tuple[Orchestrator, LockTable]:
+    locks = load_lock_table(pinned.locks_path)
+    orch = build_synthetic_orchestrator(
+        pinned.data_dir,
+        _no_model,  # type: ignore[arg-type]
+        audit_path=pinned.audit_path,
+        clock=clock,
+        kill_switch_path=pinned.kill_switch_path,
+        policy_path=pinned.policy_path,
+        target=make_synthetic_target(lock_table=locks),
+        approvals=store,
+        locks=locks,
+    )
+    return orch, locks
+
+
 def _run(
-    args: argparse.Namespace,
-    store: ApprovalStore,
-    service: ApprovalService,
-    audit_path: Path,
-    locks_path: Path,
-    clock: Clock,
-    say: Callable[[str], None],
+    args: argparse.Namespace, store: ApprovalStore, pinned: CliInputs, clock: Clock, say: Callable[[str], None]
 ) -> int:
     cmd = args.command
     if cmd == "list":
@@ -118,6 +157,12 @@ def _run(
         if r.note:
             say(f"  note: {r.note}")
         return 0
+    try:
+        orch, locks = _build(store, pinned, clock)
+    except (OSError, ValueError, KeyError, TypeError) as e:  # a malformed lock table, policy or switch: fail closed
+        say(f"refused: the gate inputs could not be loaded: {type(e).__name__}: {e}")
+        return 1
+    service = ApprovalService(store, orch.audit, clock, orchestrator=orch)
     if cmd in ("approve", "deny"):
         r = service.approve(args.id, args.identity) if cmd == "approve" else service.deny(args.id, args.identity)
         have = len(store.approvers(r.id))
@@ -132,23 +177,10 @@ def _run(
         say(f"{len(expired)} request(s) expired")
         return 0
     if cmd == "execute":
-        locks = load_lock_table(locks_path)
-        target = make_synthetic_target(lock_table=locks)
-        orch = build_synthetic_orchestrator(
-            args.data,
-            _no_model,  # type: ignore[arg-type]
-            audit_path=audit_path,
-            clock=clock,
-            kill_switch_path=args.kill_switch,
-            policy_path=args.policy,
-            target=target,
-            approvals=store,
-            locks=locks,
-        )
         res = execute_approved(orch, store, args.id, clock=clock)
         say(f"request {res.request_id}: {res.kind} ({res.status}): {res.reason}")
         if res.kind == "executed":
-            save_lock_table(locks, locks_path)  # the simulated world after the unlock
+            save_lock_table(locks, pinned.locks_path)  # the simulated world after the unlock
             return 0
         return 1
     return 2  # unreachable: argparse requires a command

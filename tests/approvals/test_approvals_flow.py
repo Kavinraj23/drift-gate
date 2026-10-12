@@ -186,8 +186,10 @@ def test_two_approvals_cannot_stand_in_for_a_missing_holder_proof(
 ) -> None:
     w = make_world(tier2_label, Holder(in_table=False))  # no proof at request time: no request
     rid = force_request(w, tier2_label, action="force_unlock_state", tier=2)
-    w.service.approve(rid, "alice")
-    w.service.approve(rid, "bob")
+    # The approve-time gate would (rightly) refuse these approvals now, so they are written to the store directly:
+    # this test is about execute re-checking the gate even when an approved request exists anyway.
+    w.store.approve(rid, "alice")
+    w.store.approve(rid, "bob")
     res = execute_approved(w.orch, w.store, rid, clock=w.clock)
     assert res.kind == "escalated" and res.gate is not None and res.gate.decision == "downgraded"
     assert w.store.get(rid).status == "cancelled" and w.orch.target.executed == []  # type: ignore[attr-defined]
@@ -199,7 +201,7 @@ def test_an_approval_cannot_override_the_abort_ceiling(
     fleet = next(s for s in tier12_scenarios(truth) if s.correct_tier == 1 and s.fleet_wide)
     w = make_world(tier1_label)
     rid = force_request(w, fleet, action=str(fleet.correct_action), tier=1)
-    w.service.approve(rid, "alice")
+    w.store.approve(rid, "alice")  # directly: the approve-time gate would refuse it (see the test above)
     res = execute_approved(w.orch, w.store, rid, clock=w.clock)
     assert res.gate is not None and res.gate.decision == "downgraded" and "fleet-wide" in res.reason
     assert w.store.get(rid).status == "cancelled" and w.orch.target.executed == []  # type: ignore[attr-defined]
@@ -354,7 +356,7 @@ def test_a_pending_request_survives_a_restart_and_can_then_be_approved_and_execu
         assert [r.id for r in reopened.list("pending")] == [rid]
         from driftgate.approval_flow import ApprovalService
 
-        ApprovalService(reopened, w.orch.audit, w.clock).approve(rid, "alice")  # type: ignore[arg-type]
+        ApprovalService(reopened, w.orch.audit, w.clock, orchestrator=w.orch).approve(rid, "alice")  # type: ignore[arg-type]
         res = execute_approved(w.orch, reopened, rid, clock=w.clock)  # type: ignore[arg-type]
         assert res.kind == "executed"
     finally:

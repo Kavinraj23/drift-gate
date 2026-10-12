@@ -130,7 +130,8 @@ def eval_tier12() -> int:
 def approvals(extra: list[str]) -> int:
     """Tier 1/2 approvals CLI (synthetic target only): list | show | approve | deny | expire-check | execute."""
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
-    cmd = [PY, "-m", "driftgate.approvals_cli", "--data", str(ROOT / "data"), *extra]
+    # Nothing is injected and nothing can be overridden: the CLI pins the gate inputs and rejects unknown options.
+    cmd = [PY, "-m", "driftgate.approvals_cli", *extra]
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 

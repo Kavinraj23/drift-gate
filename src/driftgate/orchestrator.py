@@ -804,7 +804,7 @@ class Orchestrator:
             found = extract_lock_id(text)
             if found:
                 ids.add(found)
-        return derive_holder_proof(next(iter(ids)) if len(ids) == 1 else None, self._locks, self._source)
+        return derive_holder_proof(next(iter(ids)) if len(ids) == 1 else None, self._locks, self._source, execution_id)
 
     def gate_inputs(
         self, execution_id: str, tier: int, action: str, rationale: str, reversible: bool, confidence: float | None

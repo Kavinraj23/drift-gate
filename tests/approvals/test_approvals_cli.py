@@ -11,7 +11,7 @@ import pytest
 
 from driftgate.adapters.synthetic import LockEntry, LockTable, save_lock_table
 from driftgate.approvals import TIER1_TIMEOUT_S
-from driftgate.approvals_cli import BANNER, main
+from driftgate.approvals_cli import BANNER, CliInputs, main
 from driftgate.eval.ground_truth import FailureLabel
 from driftgate.eval.tier12_cases import Holder, World
 
@@ -25,11 +25,14 @@ class Cli:
 
     def run(self, *args: str) -> tuple[int, str]:
         out = io.StringIO()
-        code = main(
-            ["--state-dir", str(self.state), "--data", str(self.data), "--kill-switch", str(self.w.kill_switch), *args],
-            clock=self.w.clock,
-            out=out,
+        # Paths are injected through the library argument only: the command line has no way to name them.
+        inputs = CliInputs(
+            data_dir=self.data,
+            kill_switch_path=self.w.kill_switch,
+            audit_path=self.state / "audit.jsonl",
+            locks_path=self.state / "locks.json",
         )
+        code = main(["--state-dir", str(self.state), *args], clock=self.w.clock, out=out, inputs=inputs)
         return code, out.getvalue()
 
 

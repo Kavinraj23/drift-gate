@@ -25,8 +25,9 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from driftgate.adapters.synthetic import SimulatedOutcome, SyntheticSource, SyntheticTarget
+from driftgate.adapters.synthetic import LockTable, SimulatedOutcome, SyntheticSource, SyntheticTarget
 from driftgate.agents.investigator import Investigation, Investigator, Proposal
+from driftgate.approvals import ApprovalError, ApprovalStore, normalize_identity
 from driftgate.audit import AuditLog, record_decision
 from driftgate.domain import (
     BlastRadius,
@@ -38,11 +39,21 @@ from driftgate.domain import (
     Report,
     Review,
     RunStats,
+    SourceError,
 )
-from driftgate.gates import DEFAULT_KILL_SWITCH_PATH, GateDecision, GateFacts, KillSwitch, RateLimiter, SafetyGate
+from driftgate.gates import (
+    DEFAULT_KILL_SWITCH_PATH,
+    TIER_GATE,
+    GateDecision,
+    GateFacts,
+    KillSwitch,
+    RateLimiter,
+    SafetyGate,
+)
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.config import InvestigationLimits
 from driftgate.llm.types import ModelClient
+from driftgate.lock_proof import HolderProof, derive_holder_proof, extract_lock_id
 from driftgate.policy import DEFAULT_POLICY_PATH, load_policy
 from driftgate.prefilter import prefilter
 from driftgate.redaction import redact
@@ -61,7 +72,7 @@ from driftgate.tier3 import (
 )
 from driftgate.tools import OPTIONAL_TOOLS, ToolContext, ToolResult, dispatch
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
-from driftgate.tools.base import FailureAnalyzer
+from driftgate.tools.base import RAW_LOG_CAP, FailureAnalyzer
 from driftgate.tools.fleet_correlate import FLEET_MIN_EXECUTIONS
 from driftgate.tools.similar_history import key_excerpt
 
@@ -75,7 +86,10 @@ BRANCH_PREFIX = "driftgate/"
 # Outcome kinds.
 CLOSED = "closed"  # the pre-filter closed it; no model call
 EXECUTED = "executed"  # Tier 0 passed the gate, dry run and execution
-AWAITING_APPROVAL = "awaiting_approval"  # Tier 1/2 passed the gate and dry run; approval is outside the MVP
+#: Tier 1/2 passed the gate and the dry run. With an approval store wired (N4) a pending approval request exists and
+#: nothing executes until it is approved AND the gate re-allows it at execution time; without one (MVP 1) it simply
+#: stops here. Either way it is "awaiting a human", never an execution.
+AWAITING_APPROVAL = "awaiting_approval"
 PR_PROPOSED = "pr_proposed"  # Tier 3 passed the gate; a human reviews and merges
 ESCALATED = "escalated"
 
@@ -83,6 +97,8 @@ ModelFactory = Callable[[str, InvestigationBudget], ModelClient]
 Tier3Review = Callable[[Investigation, Remediation], Review | None]
 AfterExecution = Callable[["Outcome"], None]
 Precheck = Callable[[Investigation], str]  # M7: a non-empty return refuses the re-investigation's proposal
+TriggeredBy = Callable[[str], str | None]  # N4: execution id -> who triggered that run (None if unknown)
+GateFactory = Callable[[RateLimiter], SafetyGate]  # N4: a fresh gate (kill switch, policy re-read) for execution time
 
 
 @dataclass
@@ -112,6 +128,11 @@ class Outcome:
     #: True only when a pull request really exists on a provider (a non-simulated record). A simulated target, or no
     #: PR-capable target, leaves this False and the outcome is a PR *proposal* (kind `pr_proposed`) only.
     pr_opened: bool = False
+    #: N4: the pending approval request opened for a Tier 1/2 proposal (None without an approval store), and the
+    #: holder-death proof the gate was given for a Tier 2 proposal.
+    approval_id: int | None = None
+    holder_proof: HolderProof | None = None
+    gate_audit_seq: int | None = None  # audit seq of this outcome's gate decision
 
     @property
     def model_calls(self) -> int:
@@ -158,6 +179,10 @@ class Orchestrator:
         history: HistoryIndex | None = None,
         optional_tools: frozenset[str] = frozenset(),
         offer_similar_history: bool = False,
+        approvals: ApprovalStore | None = None,
+        triggered_by: TriggeredBy | None = None,
+        locks: LockTable | None = None,
+        gate_factory: GateFactory | None = None,
     ) -> None:
         # `offer_similar_history=True` is kept as an alias for `"similar_history" in optional_tools`.
         enabled = frozenset(optional_tools) | ({"similar_history"} if offer_similar_history else frozenset())
@@ -185,6 +210,11 @@ class Orchestrator:
         # (`build_github_orchestrator`) never set it: with no independent reviewer, Tier 3 escalates.
         self._allow_unreviewed_tier3 = allow_unreviewed_tier3
         self._distinct: dict[str, int] = {}
+        # N4. Without a store, a Tier 1/2 proposal that passes the gate stops at AWAITING_APPROVAL exactly as in MVP 1.
+        self._approvals = approvals
+        self._triggered_by = triggered_by
+        self._locks = locks  # the simulated lock table: the only source of holder liveness (never the model)
+        self._gate_factory = gate_factory
 
     # -- public ------------------------------------------------------------------------------
     @property
@@ -194,6 +224,14 @@ class Orchestrator:
     @property
     def target(self) -> RemediationTarget:
         return self._target
+
+    @property
+    def approvals(self) -> ApprovalStore | None:
+        return self._approvals
+
+    @property
+    def gate_factory(self) -> GateFactory | None:
+        return self._gate_factory
 
     @property
     def kill_switch(self) -> KillSwitch:
@@ -329,11 +367,15 @@ class Orchestrator:
             report.remediation = replace(proposal.remediation, gate_decision="refused")
             return self._escalate(out, fingerprint, invalid, "validation")
 
-        facts = self._gate_facts(execution_id, proposal, analysis, fleet, fingerprint, report, gate_results)
+        proof = self._holder_proof(execution_id) if proposal.remediation.tier == 2 else None
+        if proof is not None:
+            out.holder_proof = proof
+            self._audit.append("proposal", fingerprint, execution_id, stage="holder_proof", **proof.as_record())
+        facts = self._gate_facts(execution_id, proposal, analysis, fleet, fingerprint, report, gate_results, proof)
         self._audit_proposal(inv, fingerprint, facts)
         decision = self._gate.decide(proposal.remediation, facts)
         out.gate = decision
-        record_decision(self._audit, decision, fingerprint, execution_id)
+        out.gate_audit_seq = record_decision(self._audit, decision, fingerprint, execution_id).seq
         report.remediation = decision.remediation
         if not decision.allowed:
             return self._escalate(out, fingerprint, decision.reason, "gate")
@@ -351,6 +393,10 @@ class Orchestrator:
             return self._propose_pr(out, proposal, rem, fingerprint)
 
         rem.dry_run["execution_id"] = eid  # set by code, so a target never relies on a model-supplied id
+        if rem.tier == 2:  # the lock id is the one derived from the log, never the model's
+            rem.dry_run.pop("lock_id", None)
+            if out.holder_proof is not None and out.holder_proof.lock_id:
+                rem.dry_run["lock_id"] = out.holder_proof.lock_id
         dry = self._target.dry_run(rem)
         out.dry_run = dry
         self._audit.append(
@@ -361,10 +407,8 @@ class Orchestrator:
             self._audit.append("failed", fingerprint, eid, stage="dry_run", description=dry.description)
             return self._escalate(out, fingerprint, f"dry run failed: {dry.description}", None)
         if rem.tier != 0:
-            # Tier 1/2: gated, dry-run and audited with stubbed execution; the approval step is outside the MVP.
-            out.kind = AWAITING_APPROVAL
-            out.reason = f"awaiting {rem.gate} (dry run ok)"
-            return self._after(out)
+            # Tier 1/2: gated, dry-run and audited with stubbed execution. Execution needs human approval.
+            return self._await_approval(out, proposal, rem, fingerprint)
 
         result = self._target.execute(rem)
         out.execution = result
@@ -388,6 +432,56 @@ class Orchestrator:
             return self._escalate(out, fingerprint, f"execution failed: {result.description}", None)
         out.kind = EXECUTED
         out.reason = result.description
+        return self._after(out)
+
+    def _await_approval(self, out: Outcome, proposal: Proposal, rem: Remediation, fingerprint: str) -> Outcome:
+        """Open a pending approval request, or (no store wired) just stop. Never executes anything."""
+        eid = out.execution_id
+        if self._approvals is None:
+            out.kind = AWAITING_APPROVAL
+            out.reason = f"awaiting {rem.gate} (dry run ok)"
+            return self._after(out)
+        who = self._triggered_by(eid) if self._triggered_by is not None else None
+        try:
+            normalize_identity(who or "")
+            assert who is not None
+            request = self._approvals.create(
+                execution_id=eid,
+                fingerprint=fingerprint,
+                tier=rem.tier,
+                action=rem.action,
+                requested_by=who,
+                payload={
+                    "rationale": rem.rationale,
+                    "reversible": rem.reversible,
+                    "agent_confidence": out.report.confidence,  # recorded only; no decision reads it
+                    "holder_proof": out.holder_proof.as_record() if out.holder_proof else None,
+                    "dry_run": rem.dry_run.get("dry_run"),
+                },
+                gate_seq=out.gate_audit_seq,
+            )
+        except ApprovalError as e:
+            # Fail closed: without a known trigger the self-approval rule cannot be applied, so no request is opened.
+            self._audit.append("rejected", fingerprint, eid, stage="approval_request", reason=str(e))
+            return self._escalate(out, fingerprint, f"approval request refused: {e}", None)
+        out.approval_id = request.id
+        self._audit.append(
+            "proposal",
+            fingerprint,
+            eid,
+            stage="approval_requested",
+            request_id=request.id,
+            tier=rem.tier,
+            action=rem.action,
+            required_approvals=request.required,
+            expires_at=request.expires_at,
+            requested_by=request.requested_by,
+        )
+        out.kind = AWAITING_APPROVAL
+        out.reason = (
+            f"awaiting {rem.gate}: approval request {request.id} needs {request.required} "
+            f"approval(s) before {request.expires_at:.0f}; nothing executes without them"
+        )
         return self._after(out)
 
     def _propose_pr(self, out: Outcome, proposal: Proposal, rem: Remediation, fingerprint: str) -> Outcome:
@@ -649,6 +743,7 @@ class Orchestrator:
         fingerprint: str,
         report: Report,
         gate_results: list[ToolResult],
+        proof: HolderProof | None = None,
     ) -> GateFacts:
         rem = proposal.remediation
         ex = self._source.get_execution(execution_id)
@@ -671,7 +766,7 @@ class Orchestrator:
             if value and value != "none":
                 shared, proposed, total = (f"{dim}:{value}",), 1, self._count_distinct(dim)
         elif rem.tier == 2:
-            lock_id = proposal.params.get("lock_id")
+            lock_id = proof.lock_id if proof is not None else None  # from the log, not from the model
             shared = (f"state_lock:{lock_id}",) if lock_id else ()
             proposed, total = 1, self._count_distinct("infra_def")
         else:
@@ -688,11 +783,44 @@ class Orchestrator:
             resource_set_total=total,
             proposed_set_size=proposed,
             prior_tier0_failed=any(a.tier == 0 and a.verification.get("verified") is False for a in history),
-            lock_holder=None,  # no lock table is reachable from here, so holder death is never proven
-            holder_death_proof=False,
-            dry_run_ok=False,  # nothing runs before the gate
+            # Tier 2: holder liveness comes only from the lock table and the execution source (lock_proof). With no
+            # table wired, or no proof, the gate sees "unknown" and downgrades. Nothing else sets these.
+            lock_holder=proof.status if proof is not None else None,
+            holder_death_proof=proof.proven if proof is not None else False,
+            # The mandatory Tier 2 dry run is the deterministic unlock plan (lock found, holder identified and dead).
+            # The target's own dry run only happens after the gate allows (invariant 1).
+            dry_run_ok=proof.proven if proof is not None else False,
             agent_confidence=report.confidence,
         )
+
+    def _holder_proof(self, execution_id: str) -> HolderProof:
+        """Tier 2 holder-death proof, derived from the failed step's log, the lock table and the source."""
+        ids: set[str] = set()
+        for leaf in self._source.get_failed_leaf_nodes(execution_id):
+            try:
+                text = self._source.get_step_logs(execution_id, leaf.node_id, RAW_LOG_CAP).text
+            except SourceError:
+                continue
+            found = extract_lock_id(text)
+            if found:
+                ids.add(found)
+        return derive_holder_proof(next(iter(ids)) if len(ids) == 1 else None, self._locks, self._source)
+
+    def gate_inputs(
+        self, execution_id: str, tier: int, action: str, rationale: str, reversible: bool, confidence: float | None
+    ) -> tuple[Remediation, GateFacts | None, HolderProof | None, str]:
+        """Fresh deterministic gate facts for an approved request at execution time (N4). Returns the proposal as the
+        gate should see it, its facts, the Tier 2 proof, and a non-empty problem string if facts cannot be derived.
+        Nothing is trusted from the request time: signature, blast radius, lock id and holder liveness are re-read."""
+        gate_results, analysis, fleet, problem = self._deterministic_facts(execution_id)
+        rem = Remediation(tier, action, rationale, reversible, TIER_GATE.get(tier, ""), "allowed", {})
+        if problem or analysis is None or fleet is None:
+            return rem, None, None, problem or "facts unavailable"
+        proof = self._holder_proof(execution_id) if tier == 2 else None
+        fingerprint = str(analysis["fingerprint"])
+        report = Report(execution_id, fingerprint, "unknown", "L0", confidence or 0.0, "")
+        facts = self._gate_facts(execution_id, Proposal(rem), analysis, fleet, fingerprint, report, gate_results, proof)
+        return rem, facts, proof, ""
 
     @staticmethod
     def _validate(proposal: Proposal) -> str:
@@ -800,10 +928,13 @@ def _count_leaves(node: Any) -> int:
     return sum(_count_leaves(c) for c in node.children)
 
 
-def make_synthetic_target(data_dir: Path | str, *, verified: bool = True) -> RemediationTarget:
+def make_synthetic_target(
+    data_dir: Path | str | None = None, *, verified: bool = True, lock_table: LockTable | None = None
+) -> SyntheticTarget:
     """A synthetic target backed by the dataset's follow-ups. `verified=False` makes every verification fail, the
-    way a re-run that does not hold would. The one place outside `adapters/` that constructs the target."""
-    return SyntheticTarget(default=SimulatedOutcome(verified=verified), data_dir=data_dir)
+    way a re-run that does not hold would. `lock_table` is the simulated state-lock table Tier 2 acts on. The one
+    place outside `adapters/` that constructs the target."""
+    return SyntheticTarget(default=SimulatedOutcome(verified=verified), data_dir=data_dir, lock_table=lock_table)
 
 
 def _ceiling(explicit: int | None, policy_path: Path | str) -> int:
@@ -830,6 +961,9 @@ def build_synthetic_orchestrator(
     history: HistoryIndex | None = None,
     optional_tools: frozenset[str] = frozenset(),
     offer_similar_history: bool = False,
+    approvals: ApprovalStore | None = None,
+    triggered_by: TriggeredBy | None = None,
+    locks: LockTable | None = None,
 ) -> Orchestrator:
     """Wire the synthetic sandbox: SyntheticSource + SyntheticTarget, a fresh rate limiter, audit log and gate.
 
@@ -838,9 +972,10 @@ def build_synthetic_orchestrator(
     count target calls (the M5 tests) keep their exact behaviour; `eval/e2e.py` turns it on.
     """
     gate = SafetyGate(KillSwitch(kill_switch_path), RateLimiter(clock), _ceiling(abort_ceiling, policy_path))
+    target = target or SyntheticTarget(data_dir=data_dir if verification else None)
     orch = Orchestrator(
         SyntheticSource(data_dir),
-        target or SyntheticTarget(data_dir=data_dir if verification else None),
+        target,
         gate,
         AuditLog(audit_path, clock),
         model_factory,
@@ -852,6 +987,13 @@ def build_synthetic_orchestrator(
         history=history,
         optional_tools=optional_tools,
         offer_similar_history=offer_similar_history,
+        approvals=approvals,
+        triggered_by=triggered_by,
+        # The simulated lock table is shared with the target, so the proof and the unlock see one world.
+        locks=locks if locks is not None else (target.locks if approvals is not None else None),
+        gate_factory=lambda limiter: SafetyGate(
+            KillSwitch(kill_switch_path), limiter, _ceiling(abort_ceiling, policy_path)
+        ),
     )
     if verification and after_execution is None:
         from driftgate.verify import install_verification  # local import: verify depends on this module

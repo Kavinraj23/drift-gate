@@ -36,7 +36,7 @@ Every milestone also needs: `python tasks.py lint` and `python tasks.py test` gr
 - [x] **M8a GitHub Actions adapter + playground workflow files.** Deps: M6, M7. Accept: `python -m pytest -q tests/github` against recorded/stubbed HTTP; scenario workflows present under `playground/`. Autonomous.
 - [x] **M8b Live playground.** Deps: M8a. Create repo, push scenario branches, `python tasks.py playground-reset`, `python tasks.py e2e-live`. **Human-only.**
 - [x] **M9a Eval harness, offline report, README, demo script.** Deps: M5, M6, M7. Accept: `python tasks.py eval` prints the metrics table. Autonomous.
-- [ ] **M9b Live numbers.** Deps: M9a, recorded fixtures. `python tasks.py record`, `python tasks.py eval-live`. **Human-only.**
+- [x] **M9b Live numbers.** Deps: M9a, recorded fixtures. `python tasks.py record`, `python tasks.py eval-live`. **Human-only.**
 
 Parallel-safe pairs: M1 ‖ M2, M3 ‖ M4, M6 ‖ M7.
 

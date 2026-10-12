@@ -1,6 +1,6 @@
 # DriftGate MVP 1: report
 
-**Status (2026-10-11): feature-complete, live-verified on the playground, and evaluated with a real model twice on all 33 scenarios (a recorded pass and an independent live pass).** Latest work is on branch `mvp1/m8b-live-playground` (pushed, two commits ahead of `main`, fast-forwardable); `main` has M0 to M8a plus the `e2e-live` code. Real API spend to date: $2.7995, which is $0.30 over the original $2.50 budget by the owner's explicit decision (live playground runs $0.6648; first `record` smoke test $0.0228; `record --all` about $0.88; an accidental duplicate run about $0.31; the `eval-live` pass $0.9219). Note: `tasks.py data` and `mvp-check` used to delete the spend ledger and the live audit log; fixed on 2026-10-11 and the ledger restored with a labelled carry-over row (see `PROGRESS.md`), but the live audit trail of the M8b runs is lost. No test or offline target makes a network call.
+**Status (2026-10-11): feature-complete, live-verified on the playground, and evaluated with a real model twice on all 33 scenarios (a recorded pass and an independent live pass).** Latest work is on branch `mvp1/m8b-live-playground`, ahead of `main` and fast-forwardable (pushing is the human's step; check `git status` for what has reached the remote); `main` has M0 to M8a plus the `e2e-live` code. Real API spend to date: $2.7995, which is $0.30 over the original $2.50 budget by the owner's explicit decision (live playground runs $0.6648; first `record` smoke test $0.0228; `record --all` about $0.88; an accidental duplicate run about $0.31; the `eval-live` pass $0.9219). Note: `tasks.py data` and `mvp-check` used to delete the spend ledger and the live audit log; fixed on 2026-10-11 and the ledger restored with a labelled carry-over row (see `PROGRESS.md`), but the live audit trail of the M8b runs is lost. No test or offline target makes a network call.
 
 ## Live verification (M8b, 2026-10-10 to 2026-10-11)
 
@@ -21,7 +21,7 @@ PRs #2 to #4 were left open, unmerged. Each scenario was run once to a match, wi
 
 Offline items below are deterministic; the live items are in the section above.
 
-- **Pipeline end to end:** pre-filter, investigator tool-use loop, deterministic gate facts, SafetyGate, SyntheticTarget execution, audit log, verification, one re-investigation. Verified by `python tasks.py e2e`: 38 scenarios (33 labelled plus 5 loop drills), 35 ok, 3 known label conflicts, 0 mismatches.
+- **Pipeline end to end:** pre-filter, investigator tool-use loop, deterministic gate facts, SafetyGate, SyntheticTarget execution, audit log, verification, one re-investigation. Verified by `python tasks.py e2e`: 38 scenarios (33 labelled plus 5 loop drills). With the scripted model: 35 ok, 3 known label conflicts, 0 mismatches. With the recorded real-model fixtures replayed: 35 ok, 3 mismatches (sc-23, sc-25, sc-27).
 - **Safety spine:** gate can only downgrade (property test over random incoming decisions), kill switch re-read on every decision and fail-closed, abort ceiling, 2-per-fingerprint-per-hour rate limit, Tier 0 eligibility paths, Tier 2 never executes, one shared investigation budget per case (8 tool calls, 40k tokens, 1 re-investigation, 1 revision), evidence integrity enforced in code (uncited evidence dropped; unique tool-call ids).
 - **Tier 3:** deterministic diff checks plus an independent reviewer that sees only the diff, target files and hypothesis. PR record is never merged, `driftgate/` branch prefix enforced.
 - **LLM gateway:** rate limits, SQLite spend ledger ($2.50 lifetime, $1.00 daily), retries, prompt-cache markers, record/replay fixtures. Verified against a stub SDK client and live (the real SDK was exercised in the `e2e-live` runs; ledger and Console agree on spend).
@@ -47,7 +47,7 @@ Three of the four are lockfile cases, the same weakness seen live. Every miss wa
 
 **Disclosure about sc-01.** The same `record --all` command was submitted twice by accident; the duplicate was stopped partway, but it had already re-recorded sc-01, and that recording passed. Replay therefore shows sc-01 passing (3 mismatches in `e2e`, not 4). The 27/31 above is the first complete run; the replay table is slightly kinder. The duplicate also cost about $0.31.
 
-Replay table (`data/eval/report.md`; dev n=24, held-out n=9, so held-out cells are too small to read as rates; one recorded sample per scenario, not a success rate):
+Replay table (`docs/results/report-replay.md`, a copy of `data/eval/report.md`; "verified" on synthetic Tier 3 cases is a file-path CI simulation; dev n=24, held-out n=9, so held-out cells are too small to read as rates; one recorded sample per scenario, not a success rate):
 
 | metric | baseline / dev | agent / dev | baseline / held-out | agent / held-out |
 | --- | --- | --- | --- | --- |
@@ -62,13 +62,13 @@ Replay table (`data/eval/report.md`; dev n=24, held-out n=9, so held-out cells a
 
 What this says: the real agent fixes far more of the cases that need a diff than the baseline (recall 89% against 33% on dev) without a single wrong action, and escalates more precisely. It also classifies **worse** than the deterministic baseline on dev (83% against 96%), and it uses far more tools. The recovery-after-a-failed-attempt figure (1 of 5) comes from the scripted loop drills, not a real model. The seeded bad-diff reviewer test is scripted, so a real reviewer's catch rate on bad diffs is still unmeasured.
 
-Held-out outcomes (sc-25, sc-27) were **not** used to tune any prompt, and none will be: tuning on them would contaminate the held-out set, and any prompt or tool-schema change invalidates the recorded fixtures.
+Held-out outcomes (sc-25, sc-27) were **not** used to tune any prompt, and none will be. One caveat: the prompt fixes made during the M8b playground runs came from the lockfile, provider-pin and undefined-variable cases, which are the same fault families as the held-out sc-25 and sc-27, and the generator's held-out set is unexamined scenarios, not unseen families. So the held-out numbers are not a clean generalization test. Tuning on them would make that worse: tuning on them would contaminate the held-out set, and any prompt or tool-schema change invalidates the recorded fixtures.
 
 Spend at this point was $1.8775 of $2.50 (before the live pass below). An incident along the way (the spend ledger being wiped by `tasks.py data`) is described in `PROGRESS.md`; it is fixed and the ledger restored.
 
 ### Second, independent live pass (M9b `eval-live`, 2026-10-11)
 
-`python tasks.py eval-live` ran all 33 labelled scenarios again against Haiku 4.5, held-out first, with nothing skipped for budget. It wrote `data/eval/report-live.md` and left the offline report alone. It cost $0.9219 and took the lifetime ledger to **$2.7995, which is $0.30 over the original $2.50 budget**. That overspend was the owner's explicit decision, applied through `DRIFTGATE_LIFETIME_CAP_USD`; the code default and `CLAUDE.md` still say $2.50.
+`python tasks.py eval-live` ran all 33 labelled scenarios again against Haiku 4.5, held-out first, with nothing skipped for budget. It wrote `data/eval/report-live.md` (copied to `docs/results/report-live.md` and `.json`, because `tasks.py data` and `mvp-check` wipe `data/eval/`) and left the offline report alone. It cost $0.9219 and took the lifetime ledger to **$2.7995, which is $0.30 over the original $2.50 budget**. That overspend was the owner's explicit decision, applied through `DRIFTGATE_LIFETIME_CAP_USD`; the code default and `CLAUDE.md` still say $2.50.
 
 **Pass@1 of the live pass: 26 of 31 model scenarios matched** (the two governance cases close in the pre-filter with no model call). Compared with the first `record` run (27 of 31):
 

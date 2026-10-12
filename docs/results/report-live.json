@@ -1,0 +1,326 @@
+{
+  "bad_diff_drills": {},
+  "honesty": "**Read this before the numbers.** The agent column in THIS report is a REAL model (investigator: claude-haiku-4-5-20251001, reviewer: claude-haiku-4-5-20251001) called through the gateway, on the same synthetic scenarios and the same simulated remediation target as the offline report; nothing was run against production. It is not a scripted model, so these numbers, unlike the offline ones, say something about the model: but only on this small, generated, template-based dataset, with `n` shown beside every figure. A trailing `*` marks n < 10, which is too small to read as a rate; every held-out cell is small. Cost, tokens and latency are measured from each response's `usage` and wall clock, and spend was recorded in the persistent ledger ($0.9219, reserve $0.25 kept). A single run is one sample from a stochastic model. The baseline column is the deterministic pipeline with no model calls. Known label conflicts (BLOCKERS.md) still count as misses in the first table. Scenarios the budget did not reach are listed as not run and are absent from every n. This file never replaces the offline `report.md`.",
+  "live": {
+    "models": {
+      "investigator": "claude-haiku-4-5-20251001",
+      "reviewer": "claude-haiku-4-5-20251001"
+    },
+    "not_run": [],
+    "ran": [
+      "sc-20",
+      "sc-22",
+      "sc-24",
+      "sc-25",
+      "sc-26",
+      "sc-27",
+      "sc-29",
+      "sc-31",
+      "sc-33",
+      "sc-01",
+      "sc-02",
+      "sc-03",
+      "sc-04",
+      "sc-05",
+      "sc-06",
+      "sc-07",
+      "sc-08",
+      "sc-09",
+      "sc-10",
+      "sc-11",
+      "sc-12",
+      "sc-13",
+      "sc-14",
+      "sc-15",
+      "sc-16",
+      "sc-17",
+      "sc-18",
+      "sc-19",
+      "sc-21",
+      "sc-23",
+      "sc-28",
+      "sc-30",
+      "sc-32"
+    ],
+    "reserve_usd": 0.25,
+    "spent_usd": 0.9219159999999998,
+    "total_input_tokens": 648851,
+    "total_output_tokens": 54613
+  },
+  "loop_drills": [],
+  "metrics": {
+    "agent/dev": {
+      "classification_accuracy": {
+        "denominator": 24,
+        "numerator": 19,
+        "value": 0.7916666666666666
+      },
+      "correct_action_share": {
+        "denominator": 6,
+        "numerator": 6,
+        "value": 1.0
+      },
+      "escalation_precision": {
+        "denominator": 18,
+        "numerator": 15,
+        "value": 0.8333333333333334
+      },
+      "false_on_escalate_close": {
+        "denominator": 15,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "false_remediation": {
+        "denominator": 24,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "false_wrong_action": {
+        "denominator": 9,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "layer_accuracy": {
+        "denominator": 24,
+        "numerator": 24,
+        "value": 1.0
+      },
+      "mean_cost_usd": 0.028587,
+      "mean_input_tokens": 20152.208333333332,
+      "mean_latency_s": 18.69374999993791,
+      "mean_model_calls": 4.333333333333333,
+      "mean_output_tokens": 1686.9583333333333,
+      "mean_tool_calls": 6.0,
+      "n": 24,
+      "remediation_recall": {
+        "denominator": 9,
+        "numerator": 6,
+        "value": 0.6666666666666666
+      },
+      "remediation_success": {
+        "denominator": 6,
+        "numerator": 6,
+        "value": 1.0
+      },
+      "tool_efficiency": {
+        "denominator": 21,
+        "numerator": 4,
+        "value": 0.19047619047619047
+      }
+    },
+    "agent/held-out": {
+      "classification_accuracy": {
+        "denominator": 9,
+        "numerator": 9,
+        "value": 1.0
+      },
+      "correct_action_share": {
+        "denominator": 3,
+        "numerator": 3,
+        "value": 1.0
+      },
+      "escalation_precision": {
+        "denominator": 6,
+        "numerator": 4,
+        "value": 0.6666666666666666
+      },
+      "false_on_escalate_close": {
+        "denominator": 4,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "false_remediation": {
+        "denominator": 9,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "false_wrong_action": {
+        "denominator": 5,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "layer_accuracy": {
+        "denominator": 9,
+        "numerator": 9,
+        "value": 1.0
+      },
+      "mean_cost_usd": 0.02620311111111111,
+      "mean_input_tokens": 18355.333333333332,
+      "mean_latency_s": 18.598888889006858,
+      "mean_model_calls": 4.111111111111111,
+      "mean_output_tokens": 1569.5555555555557,
+      "mean_tool_calls": 5.111111111111111,
+      "n": 9,
+      "remediation_recall": {
+        "denominator": 5,
+        "numerator": 3,
+        "value": 0.6
+      },
+      "remediation_success": {
+        "denominator": 3,
+        "numerator": 3,
+        "value": 1.0
+      },
+      "tool_efficiency": {
+        "denominator": 7,
+        "numerator": 1,
+        "value": 0.14285714285714285
+      }
+    },
+    "baseline/dev": {
+      "classification_accuracy": {
+        "denominator": 24,
+        "numerator": 23,
+        "value": 0.9583333333333334
+      },
+      "correct_action_share": {
+        "denominator": 3,
+        "numerator": 3,
+        "value": 1.0
+      },
+      "escalation_precision": {
+        "denominator": 21,
+        "numerator": 15,
+        "value": 0.7142857142857143
+      },
+      "false_on_escalate_close": {
+        "denominator": 15,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "false_remediation": {
+        "denominator": 24,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "false_wrong_action": {
+        "denominator": 9,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "layer_accuracy": {
+        "denominator": 24,
+        "numerator": 24,
+        "value": 1.0
+      },
+      "mean_cost_usd": 0.0,
+      "mean_input_tokens": 0.0,
+      "mean_latency_s": 0.0,
+      "mean_model_calls": 0.0,
+      "mean_output_tokens": 0.0,
+      "mean_tool_calls": 2.1666666666666665,
+      "n": 24,
+      "remediation_recall": {
+        "denominator": 9,
+        "numerator": 3,
+        "value": 0.3333333333333333
+      },
+      "remediation_success": null,
+      "tool_efficiency": {
+        "denominator": 18,
+        "numerator": 18,
+        "value": 1.0
+      }
+    },
+    "baseline/held-out": {
+      "classification_accuracy": {
+        "denominator": 9,
+        "numerator": 9,
+        "value": 1.0
+      },
+      "correct_action_share": {
+        "denominator": 2,
+        "numerator": 2,
+        "value": 1.0
+      },
+      "escalation_precision": {
+        "denominator": 7,
+        "numerator": 4,
+        "value": 0.5714285714285714
+      },
+      "false_on_escalate_close": {
+        "denominator": 4,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "false_remediation": {
+        "denominator": 9,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "false_wrong_action": {
+        "denominator": 5,
+        "numerator": 0,
+        "value": 0.0
+      },
+      "layer_accuracy": {
+        "denominator": 9,
+        "numerator": 9,
+        "value": 1.0
+      },
+      "mean_cost_usd": 0.0,
+      "mean_input_tokens": 0.0,
+      "mean_latency_s": 0.0,
+      "mean_model_calls": 0.0,
+      "mean_output_tokens": 0.0,
+      "mean_tool_calls": 1.8888888888888888,
+      "n": 9,
+      "remediation_recall": {
+        "denominator": 5,
+        "numerator": 2,
+        "value": 0.4
+      },
+      "remediation_success": null,
+      "tool_efficiency": {
+        "denominator": 6,
+        "numerator": 6,
+        "value": 1.0
+      }
+    }
+  },
+  "mode": "live",
+  "models": [
+    "claude-haiku-4-5-20251001",
+    "none"
+  ],
+  "recovery": {
+    "cases": 33,
+    "correct_escalation_after_attempt": {
+      "denominator": 0,
+      "numerator": 0,
+      "value": null
+    },
+    "drills_run": 0,
+    "not_recovered": {
+      "denominator": 0,
+      "numerator": 0,
+      "value": null
+    },
+    "recovered_by_verified_fix": {
+      "denominator": 0,
+      "numerator": 0,
+      "value": null
+    },
+    "success": {
+      "denominator": 9,
+      "numerator": 9,
+      "value": 1.0
+    },
+    "wrong_first_fix_stopped_by_gate": {
+      "denominator": 2,
+      "numerator": 2,
+      "value": 1.0
+    }
+  },
+  "tier3": {
+    "bad_diff_catch_rate": 0.6,
+    "bad_diffs": 5,
+    "bad_diffs_caught": 3,
+    "bad_diffs_missed": 2,
+    "correct_diff_rate": 0.2857142857142857,
+    "correct_diffs": 2,
+    "correct_diffs_approved": 2,
+    "correct_diffs_rejected": 0,
+    "diffs_proposed": 7
+  }
+}

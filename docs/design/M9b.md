@@ -29,3 +29,8 @@ Lint and the full suite (1282 tests at the last full run, plus the tests added s
 - The recorded fixtures are keyed on the current prompts and tool schemas; any change to them means paying for `record` again.
 - Haiku 4.5 is the only model measured; Sonnet 5.5 fixed the lockfile case once live but was not measured here.
 - `CLAUDE.md` and the code default still say $2.50.
+
+## Reviewer follow-ups applied
+- `data/eval/` is still wiped by `tasks.py data` and `mvp-check` (only the ledger and the live audit log are preserved), so the replay and live reports are copied to `docs/results/` and committed.
+- The 191 recorded fixtures (`fixtures/replay`, 4.1 MB) are committed on purpose: they make the real-model results reproducible offline. They were added by an unintended `git add -A`, then checked for credentials and ground-truth names (none).
+- Held-out hygiene is weaker than the report first said; the caveat is now in `MVP_REPORT.md`.

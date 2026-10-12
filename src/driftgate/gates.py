@@ -107,6 +107,14 @@ class RateLimiter:
     def record(self, fingerprint: str) -> None:
         self._prune(fingerprint).append(self._clock())
 
+    def seed(self, fingerprint: str, times: Sequence[float]) -> None:
+        """Preload earlier attempts (epoch seconds) from a persisted source, e.g. the audit log, so a new process
+        starts with the window another process already used. Order does not matter."""
+        q = self._attempts[fingerprint]
+        merged = sorted([*q, *times])
+        q.clear()
+        q.extend(merged)
+
 
 class SafetyGate:
     def __init__(

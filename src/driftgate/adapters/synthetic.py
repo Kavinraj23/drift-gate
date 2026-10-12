@@ -22,10 +22,13 @@ from driftgate.domain import (
 )
 from driftgate.tier3 import BRANCH_PREFIX, PullRequest, PullRequestRecord
 
+#: "force_unlock" is the target's historical name; "force_unlock_state" is the catalog's. Both act on the lock table.
+FORCE_UNLOCK_ACTIONS = ("force_unlock", "force_unlock_state")
+
 
 @dataclass
 class LockEntry:
-    holder: str
+    holder: str  # the holder's execution id (what lock_proof resolves through the execution source)
     alive: bool
 
 
@@ -40,6 +43,26 @@ class LockTable:
         if entry is None:
             return "none"
         return "running" if entry.alive else "dead"
+
+    def to_json(self) -> dict[str, Any]:
+        return {k: {"holder": e.holder, "alive": e.alive} for k, e in sorted(self.locks.items())}
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> LockTable:
+        return cls({str(k): LockEntry(str(v["holder"]), bool(v["alive"])) for k, v in raw.items()})
+
+
+def load_lock_table(path: Path | str) -> LockTable:
+    """The simulated lock table of a synthetic world, kept in a JSON file so separate processes see one world.
+    A missing file is an empty table; a malformed one raises (never guessed at)."""
+    p = Path(path)
+    return LockTable.from_json(json.loads(p.read_text(encoding="utf-8"))) if p.exists() else LockTable()
+
+
+def save_lock_table(table: LockTable, path: Path | str) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(table.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 @dataclass
@@ -85,7 +108,7 @@ class SyntheticTarget:
         return self.outcomes.get(action.action, self.default)
 
     def _lock_id(self, action: Remediation) -> str | None:
-        return action.dry_run.get("lock_id") if action.action == "force_unlock" else None
+        return action.dry_run.get("lock_id") if action.action in FORCE_UNLOCK_ACTIONS else None
 
     def dry_run(self, action: Remediation) -> DryRunResult:
         self.calls.append(("dry_run", action.action))

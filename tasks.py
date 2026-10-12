@@ -16,10 +16,11 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 NOT_IMPLEMENTED: dict[str, str] = {
     # MVP 2 stubs (see TASKS.md). `holdout-fetch` is human-only (network); add it to HUMAN_ONLY when it is implemented.
     "holdout-fetch": "N1",
-    "trace-report": "N5",
 }
 LIVE_TARGETS = {"record", "eval-live", "e2e-live"}  # implemented in driftgate.eval.live; human-only
-ARG_TARGETS = {"approvals"}  # the only offline target that takes extra arguments (a sub-command and its options)
+#: The only offline targets that take extra arguments: `approvals` (a sub-command and its options) and `trace-report`
+#: (`--audit`, `--reports`, `--out`; argparse rejects anything else). Every other target still takes none.
+ARG_TARGETS = {"approvals", "trace-report"}
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
@@ -135,6 +136,13 @@ def approvals(extra: list[str]) -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def trace_report(extra: list[str]) -> int:
+    """Static HTML trace pages from an audit log, offline. No arguments: the committed sample into data/report/."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.report", *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
 def _holdout(command: str) -> int:
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
     cmd = [PY, "-m", "driftgate.eval.holdout_eval", command, "--dir", str(ROOT / "holdout")]
@@ -209,6 +217,8 @@ def main(argv: list[str]) -> int:
         return _live(target, argv[2:])
     if target == "approvals":
         return approvals(argv[2:])
+    if target == "trace-report":
+        return trace_report(argv[2:])
     if target in HANDLERS:
         return HANDLERS[target]()
     if target in NOT_IMPLEMENTED:

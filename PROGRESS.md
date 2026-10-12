@@ -216,3 +216,10 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 - `approvals show` now prints the request's audit history with gate reasons.
 - F4 and F6 logged in BLOCKERS.md as accepted limits. docs/design/N4.md has a Hardening section.
 - Existing tests: no assertion changed. New: `tests/approvals/test_approvals_hardening.py`. N4 NOT ticked.
+
+## N5: static HTML trace report (2026-10-12, branch mvp2/n5-trace-report)
+- Built: `src/driftgate/report/` (`trace.py`, `render.py`, `style.py`, `__main__.py`), `python tasks.py trace-report` (offline; no args builds the committed sample into `data/report/`; `--audit/--reports/--out` allowed for this target only, a second explicit `ARG_TARGETS` entry beside `approvals`), `fixtures/trace_sample/` with its generator `eval/trace_sample.py` (real orchestrator, scripted model: Tier 0 verified, Tier 3 PR, escalation, gate downgrade, re-investigation drill, Tier 1 approved-and-executed with a refused self-approval, Tier 1 denied). Design: `docs/design/N5.md`.
+- Security: redaction + control/bidi visibility + length cap + `html.escape` on every value; CSP meta; no JS, no external resource, no data-derived href; hostile-string, file-name and architecture tests.
+- The audit log has evidence counts only and no outcome entry: evidence text comes from the saved report JSON, the outcome is derived, and anything missing renders "not recorded" (BLOCKERS.md). No audit KIND, contract, PRD or generator change; no new dependency.
+- Existing tests: no assertion changed or relaxed. New: `tests/report/` (5 files).
+- N5 NOT ticked in TASKS.md.

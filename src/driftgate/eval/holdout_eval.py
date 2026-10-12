@@ -16,6 +16,7 @@ this report is a separate real-data column: it is never merged with the syntheti
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,6 +37,22 @@ from driftgate.tools.signatures import GENERIC_EXIT_ID, UNKNOWN, match_all
 
 RERUN = "rerun_failed_job"
 Clock = Callable[[], datetime]
+GitStatus = Callable[[Path], str | None]
+
+
+def git_labels_status(root: Path) -> str | None:
+    """`git status --porcelain` for labels.json (no network). None when git or the repository is unavailable."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--", "labels.json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
 
 
 def _correct_action(case: HoldoutCase) -> str | None:
@@ -211,7 +228,7 @@ def evaluate(root: Path, now: datetime) -> tuple[str | None, ValidationReport]:
     return render(dev, dev_m, test_m, counts), holdout.report
 
 
-def _validate_cmd(root: Path, now: datetime) -> int:
+def _validate_cmd(root: Path, now: datetime, git_status: GitStatus) -> int:
     report = validate(root, now=now)
     c = report.counts
     print(
@@ -223,6 +240,11 @@ def _validate_cmd(root: Path, now: datetime) -> int:
         print(f"INVALID: {p}")
     for q in report.unmet_quotas:
         print(f"UNMET QUOTA: {q}")
+    if c["runs"] and (git_status(root) or "").strip():
+        print(
+            "WARNING: labels.json has uncommitted changes while runs.json is non-empty. Labels must be committed "
+            "before the runs that used them; git history is the real guarantee of that."
+        )
     print("holdout-validate: " + ("ok" if report.ok else "FAILED"))
     return 0 if report.ok else 1
 
@@ -247,13 +269,17 @@ def _eval_cmd(root: Path, now: datetime) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None, *, clock: Clock | None = None) -> int:
+def main(argv: list[str] | None = None, *, clock: Clock | None = None, git_status: GitStatus | None = None) -> int:
     parser = argparse.ArgumentParser(prog="driftgate.eval.holdout_eval")
     parser.add_argument("command", choices=["validate", "eval"])
     parser.add_argument("--dir", type=Path, default=DEFAULT_DIR)
     args = parser.parse_args(argv)
     now = (clock or (lambda: datetime.now(UTC)))()
-    return _validate_cmd(args.dir, now) if args.command == "validate" else _eval_cmd(args.dir, now)
+    return (
+        _validate_cmd(args.dir, now, git_status or git_labels_status)
+        if args.command == "validate"
+        else _eval_cmd(args.dir, now)
+    )
 
 
 if __name__ == "__main__":

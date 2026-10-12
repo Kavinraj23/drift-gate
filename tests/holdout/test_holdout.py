@@ -163,7 +163,7 @@ def _unmet(cases: list[dict[str, Any]], logs: dict[str, str], tmp_path: Path) ->
 
 def test_each_quota_is_reported_separately(tmp_path: Path) -> None:
     cases, logs = full_set()
-    # Drop hc-02 (an L2 rerun in dev) so total=29, dev=9; make every remaining L1 case something else.
+    # Drop hc-02 (a dev case, layer L2) so total=29 and dev=9; every other quota stays met (7 per layer).
     kept = [c for c in cases if c["id"] != "hc-02"]
     unmet = _unmet(kept, logs, tmp_path)
     assert "total cases: 29/30" in unmet and "dev split: 9/10" in unmet
@@ -369,3 +369,101 @@ def test_eval_refuses_an_invalid_holdout(root: Path, capsys: pytest.CaptureFixtu
     (root / "logs" / "hc-01.log").write_bytes(b"tampered")
     assert he.main(["eval", "--dir", str(root)], clock=lambda: NOW) == 1
     assert "refusing to evaluate" in capsys.readouterr().out
+
+
+# -- messages about the test split carry opaque ids and counts, never label content -------------------------------
+SECRETS = ("secret-org", "secret-repo", "SECRET-JOB", "SECRET-RATIONALE", "TAMPERED-LOG-TEXT", "ghp_", "2026-13")
+
+
+def _mark(case: dict[str, Any]) -> None:
+    case["source"].update(repo="secret-org/secret-repo", job="SECRET-JOB")
+    case["rationale"] = "SECRET-RATIONALE"
+
+
+def _cli_output(cmd: str, root: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    he.main([cmd, "--dir", str(root)], clock=lambda: NOW, git_status=lambda _r: None)
+    return capsys.readouterr().out
+
+
+def _assert_sealed(out: str, case_id: str) -> None:
+    assert case_id in out  # the human can tell which stored log to fix
+    assert not [s for s in SECRETS if s in out], out
+
+
+@pytest.mark.parametrize("cmd", ["validate", "eval"])
+def test_test_split_problems_never_print_label_or_log_content(
+    cmd: str, root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cases, logs = full_set()
+    for c in cases[10:]:
+        _mark(c)
+    cases[11]["source"] = copy.deepcopy(cases[10]["source"])  # hc-11 and hc-12 share a source
+    _write(root, cases, logs)
+    out = _cli_output(cmd, root, capsys)
+    _assert_sealed(out, "hc-11")
+    assert "hc-12" in out and "duplicate source run/job" in out
+    assert "1011" not in out  # the run id
+
+    cases, logs = full_set()
+    _mark(cases[12])
+    _write(root, cases, {**logs, "hc-13": "TAMPERED-LOG-TEXT\n"})  # log hash mismatch
+    _assert_sealed(_cli_output(cmd, root, capsys), "hc-13")
+
+    leaked = EXPIRED_LOG + "GITHUB_TOKEN=ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8" + "\n"
+    cases, logs = full_set()
+    _mark(cases[13])
+    cases[13]["log_sha256"] = hd.sha256_bytes(leaked.encode("utf-8"))
+    _write(root, cases, {**logs, "hc-14": leaked})  # credential-shaped log
+    out = _cli_output(cmd, root, capsys)
+    _assert_sealed(out, "hc-14")
+    assert "changed by redaction" in out
+
+    cases, logs = full_set()
+    run = _run_for(cases[15], "2026-10-16T00:00:00Z")
+    _mark(cases[15])  # label edited after the run
+    _write(root, cases, logs, [run])
+    out = _cli_output(cmd, root, capsys)
+    _assert_sealed(out, "hc-16")
+    assert "label changed after the run" in out
+
+
+def test_dev_split_duplicate_source_may_show_detail(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cases, logs = full_set()
+    _mark(cases[0])
+    cases[1]["source"] = copy.deepcopy(cases[0]["source"])
+    _write(root, cases, logs)
+    out = _cli_output("validate", root, capsys)
+    assert "duplicate source run/job: cases hc-01, hc-02 (secret-org/secret-repo#1001 SECRET-JOB)" in out
+
+
+@pytest.mark.parametrize("field", ["labeled_at", "fetch_date", "ran_at"])
+def test_impossible_dates_are_reported_not_raised_and_not_echoed(
+    field: str, root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cases, logs = full_set()
+    runs = [_run_for(cases[10], "2026-10-16T00:00:00Z")]
+    if field == "labeled_at":
+        cases[10]["labeled_at"] = "2026-13-15T09:00:00Z"
+    elif field == "fetch_date":
+        cases[10]["source"]["fetch_date"] = "2026-13-14"
+    else:
+        runs[0]["ran_at"] = "2026-13-16T00:00:00Z"
+    _write(root, cases, logs, runs)
+    assert any("not a real date" in p for p in _problems(root))
+    for cmd in ("validate", "eval"):
+        out = _cli_output(cmd, root, capsys)  # no exception escapes
+        assert "hc-11" in out and "not a real date" in out
+        assert "2026-13" not in out and "month" not in out.lower()
+
+
+# -- label immutability warning (git is the real guarantee; this is a best-effort tripwire) ---------------------------
+def test_uncommitted_labels_warn_only_when_runs_exist(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    dirty = lambda _r: " M labels.json\n"  # noqa: E731
+    assert he.main(["validate", "--dir", str(root)], clock=lambda: NOW, git_status=dirty) == 0
+    assert "WARNING" not in capsys.readouterr().out  # no run records yet
+    cases, logs = full_set()
+    _write(root, cases, logs, [_run_for(cases[0], "2026-10-16T00:00:00Z")])
+    assert he.main(["validate", "--dir", str(root)], clock=lambda: NOW, git_status=dirty) == 0  # warns, never fails
+    assert "WARNING: labels.json has uncommitted changes" in capsys.readouterr().out
+    assert he.main(["validate", "--dir", str(root)], clock=lambda: NOW, git_status=lambda _r: "") == 0
+    assert "WARNING" not in capsys.readouterr().out

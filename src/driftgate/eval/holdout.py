@@ -143,6 +143,33 @@ def _schema_messages(validator: Draft202012Validator, doc: dict[str, Any], name:
     return out
 
 
+def _check_dates(root_name: str, raw_cases: list[dict[str, Any]], problems: list[str]) -> list[dict[str, Any]]:
+    """Cases whose timestamps are real. The schema pattern admits month 13; a bad one is reported (by opaque id only,
+    never the value: the exception text of the parser echoes it) and the case is left out."""
+    good = []
+    for raw in raw_cases:
+        try:
+            parse_ts(raw["labeled_at"])
+            date.fromisoformat(raw["source"]["fetch_date"])
+        except ValueError:
+            problems.append(f"{root_name}: {raw['id']}: labeled_at or fetch_date is not a real date")
+        else:
+            good.append(raw)
+    return good
+
+
+def _check_run_dates(raw_runs: list[dict[str, Any]], problems: list[str]) -> list[dict[str, Any]]:
+    good = []
+    for raw in raw_runs:
+        try:
+            parse_ts(raw["ran_at"])
+        except ValueError:
+            problems.append(f"runs.json: run for {raw['case_id']}: ran_at is not a real date")
+        else:
+            good.append(raw)
+    return good
+
+
 def _case(raw: dict[str, Any]) -> HoldoutCase:
     action = raw["correct_action"]
     return HoldoutCase(
@@ -243,28 +270,46 @@ def _parse(root: Path) -> tuple[list[HoldoutCase], list[RunRecord], list[str]]:
         msgs = _schema_messages(labels_v, labels, "labels.json")
         problems += msgs
         if not msgs:
-            cases = [_case(c) for c in labels["cases"]]
+            cases = [_case(c) for c in _check_dates("labels.json", labels["cases"], problems)]
     if (root / "runs.json").exists():
         run_doc = _read_json(root / "runs.json", problems)
         if run_doc is not None:
             msgs = _schema_messages(runs_v, run_doc, "runs.json")
             problems += msgs
             if not msgs:
-                runs = [_run(r) for r in run_doc["runs"]]
+                runs = [_run(r) for r in _check_run_dates(run_doc["runs"], problems)]
     return cases, runs, problems
+
+
+def _duplicate_sources(cases: list[HoldoutCase]) -> list[str]:
+    """Source identity is label content. A group touching the test split is reported by case ids only."""
+    groups: dict[tuple[str, int, str], list[HoldoutCase]] = {}
+    for c in cases:
+        s = c.raw["source"]
+        groups.setdefault((s["repo"], s["run_id"], s["job"]), []).append(c)
+    out = []
+    for (repo, run_id, job), members in sorted(groups.items()):
+        if len(members) < 2:
+            continue
+        ids = ", ".join(sorted(m.id for m in members))
+        if any(m.split == "test" for m in members):
+            out.append(f"duplicate source run/job: cases {ids}")
+        else:
+            out.append(f"duplicate source run/job: cases {ids} ({repo}#{run_id} {job})")
+    return out
 
 
 def validate(root: Path = DEFAULT_DIR, *, now: datetime) -> ValidationReport:
     cases, runs, problems = _parse(root)
     id_counts = Counter(c.id for c in cases)
     problems += [f"duplicate case id {i}" for i, n in sorted(id_counts.items()) if n > 1]
-    src_counts = Counter((c.raw["source"]["repo"], c.raw["source"]["run_id"], c.raw["source"]["job"]) for c in cases)
-    problems += [f"duplicate source run/job {r}#{i} {j}" for (r, i, j), n in sorted(src_counts.items()) if n > 1]
+    problems += _duplicate_sources(cases)
     if not problems:
         _check_logs(root, cases, problems)
         _check_label_timing(cases, now, problems)
         _check_runs(cases, runs, problems)
     unmet, counts = _quotas(cases)
+    counts["runs"] = len(runs)
     return ValidationReport(tuple(problems), tuple(unmet), counts)
 
 

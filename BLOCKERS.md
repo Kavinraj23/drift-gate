@@ -63,3 +63,9 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 - The 30 real runs, `holdout-fetch` (network, human-only), and labels do not exist; `holdout-validate` fails by design until they do. Labels must be committed before any agent run on them.
 - Ambiguity: the PRD says "Both stub" for the acceptance commands but does not say how the agent runs on stored logs offline. This milestone reads agent results from `holdout/runs.json` run records; a holdout source adapter and a record path are not built (see `docs/design/N1.md`).
 - Ambiguity: PRD says escalation runs are "at least 3" without naming layers; the schema allows L0..L6 for them.
+
+### N2 (`similar_history`) - Needs human
+- Ambiguity: "incident finish time". The PRD says the index holds incidents that "finished before the case". The synthetic eval uses the failed execution's own `finished_at`, not the moment the agent finished the report. Live, `record_incident` takes whatever time the caller passes; decide whether that should be the report completion time (later, so more conservative).
+- Ambiguity: the shipping rule's "improves" has no numbers in the PRD. `eval/retrieval_eval.py` uses at least 3 cases of recall or verified fixes, or a 10 percent drop in mean cost per case with no loss of recall or success rate, and any rise in false remediation vetoes. Constants `MIN_CASES`, `MIN_COST_DROP`; change if you disagree.
+- Ambiguity: a model could pass another execution's id to `similar_history`; it then gets history as of that execution's start (never more than the index holds). Not restricted to the case under investigation because the other tools take any execution id too.
+- Needs human: recorded real-model on/off fixtures (`record` with the tool offered) and a loader for a recorded arm in `eval-retrieval`; until then the verdict stays "stays off: no recorded evidence".

@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from driftgate.domain import ExecutionSource, SourceError
 
 from .attempts import AttemptStore
 from .signatures import GENERIC_EXIT_ID, UNKNOWN, Signature, match_all
+
+if TYPE_CHECKING:
+    from driftgate.retrieval import HistoryIndex
 
 RAW_LOG_CAP = 400_000  # characters read from the source before extraction; the budget applies after
 
@@ -91,6 +94,7 @@ class ToolContext:
 
     source: ExecutionSource
     attempts: AttemptStore = field(default_factory=AttemptStore)
+    history: HistoryIndex | None = None  # queried (never written) by similar_history, only when that tool is offered
     analyzer: FailureAnalyzer = field(init=False)
 
     def __post_init__(self) -> None:

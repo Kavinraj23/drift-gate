@@ -16,7 +16,6 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 NOT_IMPLEMENTED: dict[str, str] = {
     # MVP 2 stubs (see TASKS.md). `holdout-fetch` is human-only (network); add it to HUMAN_ONLY when it is implemented.
     "holdout-fetch": "N1",
-    "eval-retrieval": "N2",
     "approvals": "N4",
     "trace-report": "N5",
 }
@@ -98,6 +97,25 @@ def eval_() -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def eval_retrieval() -> int:
+    """similar_history on vs. off over the synthetic scenarios, offline (scripted model; plumbing, not quality)."""
+    if not (ROOT / "data" / "executions.json").exists():
+        code = data()
+        if code:
+            return code
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [
+        PY,
+        "-m",
+        "driftgate.eval.retrieval_eval",
+        "--data",
+        str(ROOT / "data"),
+        "--out",
+        str(ROOT / "data" / "eval"),
+    ]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
 def _holdout(command: str) -> int:
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
     cmd = [PY, "-m", "driftgate.eval.holdout_eval", command, "--dir", str(ROOT / "holdout")]
@@ -144,6 +162,7 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "eval": eval_,
     "holdout-validate": holdout_validate,
     "eval-holdout": eval_holdout,
+    "eval-retrieval": eval_retrieval,
     "mvp-check": mvp_check,
     "playground-reset": playground_reset,
 }

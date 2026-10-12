@@ -47,6 +47,7 @@ from driftgate.policy import DEFAULT_POLICY_PATH, load_policy
 from driftgate.prefilter import prefilter
 from driftgate.redaction import redact
 from driftgate.remediation_catalog import TIER1_DIMENSION, is_catalog_action
+from driftgate.retrieval import HistoryIndex, IncidentRecord
 from driftgate.tier3 import (
     PR_BASE_BRANCH,
     DiffCheck,
@@ -62,6 +63,7 @@ from driftgate.tools import ToolContext, ToolResult, dispatch
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
 from driftgate.tools.base import FailureAnalyzer
 from driftgate.tools.fleet_correlate import FLEET_MIN_EXECUTIONS
+from driftgate.tools.similar_history import key_excerpt
 
 #: Fallback/reference value; the orchestrator builders read N from config/policy.json (driftgate.policy).
 #: SafetyGate's abort ceiling is "blast radius over N executions". N is a human decision (BLOCKERS.md); the
@@ -153,7 +155,11 @@ class Orchestrator:
         tier3_review: Tier3Review | None = None,
         after_execution: AfterExecution | None = None,
         allow_unreviewed_tier3: bool = False,
+        history: HistoryIndex | None = None,
+        offer_similar_history: bool = False,
     ) -> None:
+        if offer_similar_history and history is None:
+            raise ValueError("offer_similar_history needs a history index")
         self._source = source
         self._target = target
         self._gate = gate
@@ -161,7 +167,10 @@ class Orchestrator:
         self._model_factory = model_factory
         self._limits = limits or InvestigationLimits()
         self.attempts = attempts or AttemptStore()
-        self._ctx = ToolContext(source, self.attempts)
+        # N2: the optional similar_history tool. OFF by default; with it off the model sees the MVP 1 tools and prompt.
+        self._history = history
+        self._optional_tools: tuple[str, ...] = ("similar_history",) if offer_similar_history else ()
+        self._ctx = ToolContext(source, self.attempts, history=history if offer_similar_history else None)
         self._model = model
         self._tier3_review = tier3_review
         self._after_execution = after_execution
@@ -186,6 +195,40 @@ class Orchestrator:
     @property
     def analyzer(self) -> FailureAnalyzer:
         return self._ctx.analyzer
+
+    def _investigator(self, execution_id: str, budget: InvestigationBudget) -> Investigator:
+        return Investigator(
+            self._model_factory(execution_id, budget),
+            self._ctx,
+            budget,
+            model=self._model,
+            optional_tools=self._optional_tools,
+        )
+
+    def record_incident(self, out: Outcome, finished_at: float) -> bool:
+        """Add a finished incident to the history index (N2). The caller states when the incident finished (epoch
+        seconds); only agent-visible report fields are stored, never a label. Returns False when no index is set or
+        the outcome has nothing to index (closed by the pre-filter, or no failed step)."""
+        if self._history is None or out.kind == CLOSED:
+            return False
+        analysis = self._ctx.analyzer.analyze(out.execution_id)
+        if analysis is None:
+            return False
+        first = out.first_round or out
+        actions = [r.report.remediation.action for r in (first, out) if r.report.remediation is not None]
+        self._history.add(
+            IncidentRecord(
+                execution_id=out.execution_id,
+                finished_at=finished_at,
+                signature=analysis.primary.id,
+                fingerprint=analysis.fingerprint,
+                excerpt=key_excerpt(self._ctx, analysis),
+                hypothesis=out.report.hypothesis,
+                action=" then ".join(dict.fromkeys(actions)) or "none",
+                outcome=_history_outcome(out),
+            )
+        )
+        return True
 
     def handle(self, execution_id: str) -> Outcome:
         ex = self._source.get_execution(execution_id)
@@ -226,7 +269,7 @@ class Orchestrator:
         precheck: Precheck | None = None,
         revisions: int = 0,
     ) -> Outcome:
-        investigator = Investigator(self._model_factory(execution_id, budget), self._ctx, budget, model=self._model)
+        investigator = self._investigator(execution_id, budget)
         if rounds >= 2 and budget.exhausted:  # the case's allowance is spent: no model call is made, fail closed
             inv = investigator.spent(execution_id, _spent_stop(budget))
         else:
@@ -437,7 +480,7 @@ class Orchestrator:
         self._audit.append("proposal", fingerprint, eid, stage="tier3_revision", feedback=review.comments)
         assert out.investigation is not None
         budget = out.investigation.budget  # the one case budget: the revision draws on what round 1 left
-        investigator = Investigator(self._model_factory(eid, budget), self._ctx, budget, model=self._model)
+        investigator = self._investigator(eid, budget)
         if budget.exhausted:  # nothing left for a revision: no model call is made, fail closed
             inv = investigator.spent(eid, _spent_stop(budget))
         else:
@@ -709,6 +752,17 @@ def _tool_trace(r: ToolResult) -> str:
     return f"{r.tool}: {path}@{str(ref)[:12]}" if isinstance(ref, str) else f"{r.tool}: {path}"
 
 
+def _history_outcome(out: Outcome) -> str:
+    """How the incident ended, from what the system itself observed (verification result), never from a label."""
+    if out.kind in (EXECUTED, PR_PROPOSED):
+        if out.verified is True:
+            return "verified"
+        return "not_verified" if out.verified is False else f"{out.kind}_unverified"
+    if out.first_attempt_failed:
+        return "escalated_after_failed_attempt"
+    return "escalated" if out.kind == ESCALATED else out.kind
+
+
 def _spent_stop(budget: InvestigationBudget) -> str:
     return "budget_tokens" if budget.tokens_exhausted else "budget_tool_calls"
 
@@ -759,6 +813,8 @@ def build_synthetic_orchestrator(
     after_execution: AfterExecution | None = None,
     allow_unreviewed_tier3: bool = False,
     verification: bool = False,
+    history: HistoryIndex | None = None,
+    offer_similar_history: bool = False,
 ) -> Orchestrator:
     """Wire the synthetic sandbox: SyntheticSource + SyntheticTarget, a fresh rate limiter, audit log and gate.
 
@@ -778,6 +834,8 @@ def build_synthetic_orchestrator(
         tier3_review=tier3_review,
         after_execution=after_execution,
         allow_unreviewed_tier3=allow_unreviewed_tier3,
+        history=history,
+        offer_similar_history=offer_similar_history,
     )
     if verification and after_execution is None:
         from driftgate.verify import install_verification  # local import: verify depends on this module

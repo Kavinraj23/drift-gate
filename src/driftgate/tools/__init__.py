@@ -16,6 +16,7 @@ from . import (
     get_remediation_attempt,
     get_step_logs,
     read_repo_file,
+    similar_history,
 )
 from .base import ToolContext, ToolResult, ToolSpec
 
@@ -28,12 +29,23 @@ TOOLS: tuple[ToolSpec, ...] = (
     read_repo_file.SPEC,
     get_remediation_attempt.SPEC,
 )
-_BY_NAME = {t.name: t for t in TOOLS}
+#: Exist but are NOT offered to the model unless a run asks for them by name. `TOOLS` (and so the default tool
+#: definitions and the replay fixtures' prompt fingerprint) must not change when they are off.
+OPTIONAL_TOOLS: tuple[ToolSpec, ...] = (similar_history.SPEC,)
+_BY_NAME = {t.name: t for t in (*TOOLS, *OPTIONAL_TOOLS)}
 
 
 def tool_definitions(names: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
     """Anthropic-format tool definitions (name, description, input_schema), in a stable order."""
     return [t.definition() for t in TOOLS if names is None or t.name in names]
+
+
+def optional_tool_definitions(names: tuple[str, ...]) -> list[dict[str, Any]]:
+    """Definitions of the requested optional tools, in registry order. A name that is not optional is an error."""
+    unknown = set(names) - {t.name for t in OPTIONAL_TOOLS}
+    if unknown:
+        raise ValueError(f"not optional tools: {sorted(unknown)}")
+    return [t.definition() for t in OPTIONAL_TOOLS if t.name in names]
 
 
 def dispatch(ctx: ToolContext, name: str, args: dict[str, Any], call_id: str) -> ToolResult:
@@ -53,4 +65,13 @@ def dispatch(ctx: ToolContext, name: str, args: dict[str, Any], call_id: str) ->
         return ToolResult(call_id, name, False, error=str(e))
 
 
-__all__ = ["TOOLS", "ToolContext", "ToolResult", "ToolSpec", "dispatch", "tool_definitions"]
+__all__ = [
+    "OPTIONAL_TOOLS",
+    "TOOLS",
+    "ToolContext",
+    "ToolResult",
+    "ToolSpec",
+    "dispatch",
+    "optional_tool_definitions",
+    "tool_definitions",
+]

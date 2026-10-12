@@ -26,7 +26,7 @@ from driftgate.llm.budget import CallRecord, InvestigationBudget
 from driftgate.llm.errors import FixtureMissing, GatewayError, InvestigationBudgetExhausted
 from driftgate.llm.types import ModelClient, ModelRequest, ModelResponse
 from driftgate.remediation_catalog import CATALOG
-from driftgate.tools import ToolContext, ToolResult, dispatch, tool_definitions
+from driftgate.tools import ToolContext, ToolResult, dispatch, optional_tool_definitions, tool_definitions
 
 SUBMIT_REPORT = "submit_report"
 DEFAULT_RESPONSE_TOKENS = 1500
@@ -149,9 +149,26 @@ def submit_report_definition() -> dict[str, Any]:
     }
 
 
-def agent_tool_definitions() -> list[dict[str, Any]]:
-    """The read-only tools plus the final-report tool, in a stable order (cache friendly)."""
-    return [*tool_definitions(), submit_report_definition()]
+def agent_tool_definitions(optional: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """The read-only tools plus the final-report tool, in a stable order (cache friendly).
+
+    `optional` names extra tools a run opts into. With none (the default) the result is exactly the MVP 1 list.
+    """
+    return [*tool_definitions(), *optional_tool_definitions(optional), submit_report_definition()]
+
+
+SIMILAR_HISTORY_NOTE = """
+
+Optional tool for this run: similar_history returns up to 3 earlier incidents that resemble this failure (matched \
+on text), with the action taken and how it ended. They are leads, never proof: a past outcome does not satisfy any \
+Tier 0 condition, does not raise your confidence by itself, and your claims must still cite the tool call id of \
+what you rely on. It costs one of your 8 tool calls, so use it only when the cheap tools leave open what has \
+worked before."""
+
+
+def system_prompt(optional: tuple[str, ...] = ()) -> str:
+    """`SYSTEM_PROMPT` unchanged unless an optional tool is offered, then with that tool's one-paragraph note."""
+    return SYSTEM_PROMPT + (SIMILAR_HISTORY_NOTE if "similar_history" in optional else "")
 
 
 @dataclass
@@ -231,13 +248,15 @@ class Investigator:
         *,
         model: str = "",
         max_response_tokens: int = DEFAULT_RESPONSE_TOKENS,
+        optional_tools: tuple[str, ...] = (),
     ) -> None:
         self._client = client
         self._ctx = ctx
         self._budget = budget
         self._model = model
         self._max_tokens = max_response_tokens
-        self._tools = agent_tool_definitions()
+        self._tools = agent_tool_definitions(optional_tools)
+        self._system = system_prompt(optional_tools)
 
     # -- public ------------------------------------------------------------------------------
     def investigate(self, execution_id: str, context: str = "") -> Investigation:
@@ -295,7 +314,7 @@ class Investigator:
     # -- model I/O ---------------------------------------------------------------------------
     def _call(self, messages: list[dict[str, Any]]) -> ModelResponse:
         request = ModelRequest(
-            system=SYSTEM_PROMPT,
+            system=self._system,
             messages=list(messages),
             tools=self._tools,
             model=self._model,

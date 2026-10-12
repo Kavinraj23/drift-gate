@@ -26,3 +26,15 @@ def test_the_override_is_clamped_to_the_lifetime_cap_and_leaves_it_alone() -> No
 def test_a_malformed_or_non_positive_override_fails_loudly(bad: str) -> None:
     with pytest.raises(ValueError, match="DRIFTGATE_DAILY_CAP_USD"):
         config_from_env({"DRIFTGATE_DAILY_CAP_USD": bad})
+
+
+def test_the_lifetime_cap_defaults_to_2_50_and_only_an_explicit_setting_changes_it() -> None:
+    assert config_from_env({}).lifetime_cap_usd == 2.50
+    cfg = config_from_env({"DRIFTGATE_LIFETIME_CAP_USD": "3.5", "DRIFTGATE_DAILY_CAP_USD": "9"})
+    assert cfg.lifetime_cap_usd == 3.5 and cfg.daily_cap_usd == 3.5  # the daily cap still cannot exceed it
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "-2", "nan", "10.01", "1000"])
+def test_a_bad_or_runaway_lifetime_override_is_refused(bad: str) -> None:
+    with pytest.raises(ValueError, match="DRIFTGATE_LIFETIME_CAP_USD"):
+        config_from_env({"DRIFTGATE_LIFETIME_CAP_USD": bad})

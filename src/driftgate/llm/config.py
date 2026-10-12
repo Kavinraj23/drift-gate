@@ -132,28 +132,51 @@ class InvestigationLimits:
     max_reinvestigations: int = 1
 
 
-def _daily_cap(env: Mapping[str, str], lifetime_cap_usd: float, default: float) -> float:
-    """Optional `DRIFTGATE_DAILY_CAP_USD`: a human's per-run pacing override. It is clamped to the lifetime cap, so it
-    can never raise total spend, and a malformed or non-positive value fails loudly rather than being ignored."""
-    raw = (env.get("DRIFTGATE_DAILY_CAP_USD") or "").strip()
+#: A typo guard for the lifetime override: a value above this is rejected, not silently honoured.
+MAX_LIFETIME_CAP_USD = 10.0
+
+
+def _usd(env: Mapping[str, str], name: str) -> float | None:
+    """An optional positive dollar amount from the env mapping; malformed or non-positive values fail loudly."""
+    raw = (env.get(name) or "").strip()
     if not raw:
-        return default
+        return None
     try:
         value = float(raw)
     except ValueError:
-        raise ValueError(f"DRIFTGATE_DAILY_CAP_USD must be a number, got {raw!r}") from None
+        raise ValueError(f"{name} must be a number, got {raw!r}") from None
     if not value > 0:  # also rejects NaN
-        raise ValueError(f"DRIFTGATE_DAILY_CAP_USD must be positive, got {raw!r}")
-    return min(value, lifetime_cap_usd)
+        raise ValueError(f"{name} must be positive, got {raw!r}")
+    return value
+
+
+def _lifetime_cap(env: Mapping[str, str], default: float) -> float:
+    """Optional `DRIFTGATE_LIFETIME_CAP_USD`: the project owner's explicit decision to change the total budget. The
+    default stays $2.50; the value is capped at `MAX_LIFETIME_CAP_USD` so a typo cannot remove the guard."""
+    value = _usd(env, "DRIFTGATE_LIFETIME_CAP_USD")
+    if value is None:
+        return default
+    if value > MAX_LIFETIME_CAP_USD:
+        raise ValueError(f"DRIFTGATE_LIFETIME_CAP_USD above ${MAX_LIFETIME_CAP_USD:.2f} is refused, got {value}")
+    return value
+
+
+def _daily_cap(env: Mapping[str, str], lifetime_cap_usd: float, default: float) -> float:
+    """Optional `DRIFTGATE_DAILY_CAP_USD`: a human's per-run pacing override. It is clamped to the lifetime cap, so it
+    can never raise total spend."""
+    value = _usd(env, "DRIFTGATE_DAILY_CAP_USD")
+    return default if value is None else min(value, lifetime_cap_usd)
 
 
 def config_from_env(env: Mapping[str, str]) -> GatewayConfig:
     """Pure: build a config from an env mapping. Never touches os.environ or files."""
     defaults = GatewayConfig()
+    lifetime = _lifetime_cap(env, defaults.lifetime_cap_usd)
     return GatewayConfig(
         investigator_model=env.get("DRIFTGATE_INVESTIGATOR_MODEL") or DEFAULT_MODEL,
         reviewer_model=env.get("DRIFTGATE_REVIEWER_MODEL") or DEFAULT_MODEL,
-        daily_cap_usd=_daily_cap(env, defaults.lifetime_cap_usd, defaults.daily_cap_usd),
+        lifetime_cap_usd=lifetime,
+        daily_cap_usd=_daily_cap(env, lifetime, defaults.daily_cap_usd),
         api_key=env.get("ANTHROPIC_API_KEY") or None,
     )
 

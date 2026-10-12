@@ -244,6 +244,80 @@ def test_only_whitelisted_fields_pass_through_even_if_the_source_adds_more() -> 
     assert "causal" not in json.dumps(item).lower() and "decoy" not in json.dumps(item).lower()
 
 
+def test_every_free_text_field_is_redacted_but_normal_ids_and_shas_are_intact() -> None:
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    normal = change(7, T0 - timedelta(minutes=9))
+    odd = {**change(8, T0 - timedelta(minutes=5)), "ref": f"feature/{secret}", "actor": f"bot-{secret}", "kind": secret}
+    out = changes_in_window(ctx_for(FakeSource([("e1", "failed", T0)], [normal, odd])), "e1")
+    assert secret not in json.dumps(out)
+    by_id = {c["change_id"]: c for c in out["changes"]}
+    assert by_id["chg-0007"]["sha"] == f"{7:040x}" and by_id["chg-0007"]["ref"] == "pipe-a"
+    assert by_id["chg-0007"]["actor"] == "dev-ana"
+    real_sha = "9fceb02d0ae598e95dc970b74767f19372d61af8"
+    row = {**change(9, T0 - timedelta(minutes=2)), "sha": real_sha}
+    got = changes_in_window(ctx_for(FakeSource([("e1", "failed", T0)], [row])), "e1")["changes"][0]
+    assert got["sha"] == real_sha and got["change_id"] == "chg-0009"
+
+
+# --- malformed source rows ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("breakage", ["no_at", "no_change_id", "bad_at", "null_at"])
+def test_a_malformed_row_is_an_ok_false_tool_result_never_an_exception(breakage: str) -> None:
+    good = change(1, T0 - timedelta(minutes=5))
+    bad = change(2, T0 - timedelta(minutes=6))
+    if breakage == "no_at":
+        del bad["at"]
+    elif breakage == "no_change_id":
+        del bad["change_id"]
+    elif breakage == "bad_at":
+        bad["at"] = "not-a-timestamp"
+    else:
+        bad["at"] = None
+    src = FakeSource([("e1", "failed", T0)], [good, bad])
+    with pytest.raises(SourceError):
+        changes_in_window(ctx_for(src), "e1")
+    res = dispatch(ctx_for(src), "changes_in_window", {"execution_id": "e1"}, "t", frozenset({"changes_in_window"}))
+    assert not res.ok and "malformed change row" in res.error
+
+
+# --- episode edges -----------------------------------------------------------------------------------------------
+
+
+class _OtherStepSource(FakeSource):
+    def get_execution(self, execution_id: str) -> Execution:
+        ex = super().get_execution(execution_id)
+        if execution_id == "e2":  # a different failure in between: another failed step name
+            leaf = Node("leaf-e2", "other-step", "failed", error_summary="Error acquiring the state lock")
+            root = Node("r", "p", "failed", children=[leaf])
+            return Execution(ex.execution_id, ex.pipeline, ex.status, ex.started_at, root=root)
+        return ex
+
+
+def test_a_failure_with_a_different_fingerprint_ends_the_episode() -> None:
+    runs = [
+        ("e1", "failed", T0 - timedelta(hours=3)),
+        ("e2", "failed", T0 - timedelta(hours=2)),  # different fingerprint
+        ("e3", "failed", T0),
+    ]
+    ctx = ctx_for(_OtherStepSource(runs, []))
+    a2, a3 = ctx.analyzer.analyze("e2"), ctx.analyzer.analyze("e3")
+    assert a2 is not None and a3 is not None and a2.fingerprint != a3.fingerprint
+    assert first_failure_time(ctx, "e3") == ("e3", T0)  # the walk stops at e2; e1 is not reached
+
+
+def test_executions_with_equal_start_times_are_not_earlier_than_each_other() -> None:
+    # Documented: only strictly earlier executions extend an episode, so two runs that start in the same second do not
+    # chain. Each is its own anchor, whichever the source lists first.
+    for runs in (
+        [("e1", "failed", T0), ("e2", "failed", T0)],
+        [("e2", "failed", T0), ("e1", "failed", T0)],
+    ):
+        ctx = ctx_for(FakeSource(runs, []))
+        assert first_failure_time(ctx, "e1") == ("e1", T0)
+        assert first_failure_time(ctx, "e2") == ("e2", T0)
+
+
 # --- the real dataset: nothing causal is agent-visible -----------------------------------------------------------
 
 

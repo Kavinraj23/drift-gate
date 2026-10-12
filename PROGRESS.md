@@ -163,3 +163,6 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 - Scripted model names no change, so offline accuracy is 0/N and blame n/a; these validate the metric code only.
 - Existing tests: no assertion changed, no golden changed (the new rows are a separate table; the README-synced MVP 1 table is untouched). Full suite: 1382 passed, 1 skipped, 1 xfailed.
 - **N3 is NOT ticked in TASKS.md.** Needs the human: `record` with the tool enabled (separate fixture set) and any `eval-live`.
+
+## N3 follow-up: reviewer minor findings (2026-10-12, branch mvp2/n3-changes)
+- Redaction extended to all free-text fields (ids and shas verified intact); malformed source rows become ok=False tool results; tests added for different-fingerprint episode break, equal start times and bad rows; dead test body in test_change_scoring.py removed; `truth` fixture kept (pre-existing MVP 1 fixture, noted in docs/design/N3.md). No existing assertion changed. N3 still NOT ticked.

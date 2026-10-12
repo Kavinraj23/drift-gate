@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from driftgate.adapters.synthetic import SyntheticSource
 from driftgate.domain import SuspectedChange
 from driftgate.eval import report as rpt
 from driftgate.eval.change_score import ChangeCase, change_case, compute_change_metrics, resolve_change
@@ -98,4 +97,3 @@ def test_report_carries_the_labelled_n3_rows_and_leaves_the_mvp1_table_alone(dat
     assert js["change_correlation"]["dev"]["agent"]["suspected_change_accuracy"]["denominator"] > 0
     # the table embedded in the README is built from the unchanged MVP 1 rows
     assert "Suspected-change" not in rpt.readme_tables(data)
-    SyntheticSource(dataset_dir)  # the report reads the timeline through the agent-visible source only

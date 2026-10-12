@@ -1,6 +1,8 @@
 """changes_in_window: commits and platform events in a window BEFORE the case's first failure (OPTIONAL tool, N3).
 
-Read-only. It returns everything the source's change timeline holds for the window, nearest the failure first and
+Read-only. A malformed source row (missing `at` or `change_id`, unparseable `at`) makes the call fail with a
+SourceError, which `dispatch` returns as an ok=False result; the row is not skipped silently. Every free-text field is
+redacted. It returns everything the source's change timeline holds for the window, nearest the failure first and
 capped. It does not know which entries are causal and which are decoys; the source only exposes agent-visible fields
 (`CHANGE_FIELDS`), so a causal marker added to the data later still could not reach the model through here.
 """
@@ -79,12 +81,23 @@ def changes_in_window(
         return {**base, "note": "execution did not fail", "changes": [], "total_in_window": 0, "truncated": False}
     first_id, first_at = anchor
     start = first_at - timedelta(minutes=window_minutes)
-    rows = [c for c in list_changes((_iso(start), _iso(first_at))) if parse_time(c["at"]) < first_at]  # strictly before
-    rows.sort(key=lambda c: (parse_time(c["at"]), str(c.get("change_id", ""))), reverse=True)  # nearest first
+    try:  # a malformed source row is a tool error (ok=False via dispatch), never an exception out of the tool
+        rows = [
+            c for c in list_changes((_iso(start), _iso(first_at))) if parse_time(c["at"]) < first_at
+        ]  # strictly before
+        for c in rows:
+            if not isinstance(c.get("change_id"), str):
+                raise KeyError("change_id")
+        rows.sort(key=lambda c: (parse_time(c["at"]), c["change_id"]), reverse=True)  # nearest first
+    except (KeyError, ValueError, TypeError, AttributeError) as e:
+        raise SourceError(f"malformed change row in the source timeline ({type(e).__name__}: {e})") from e
     out: list[dict[str, Any]] = []
     for c in rows[:MAX_CHANGES]:
         item = {k: c[k] for k in CHANGE_FIELDS if k in c}
-        item["message"] = redact(str(item.get("message", "")))
+        for k in ("change_id", "kind", "ref", "actor", "message", "sha"):  # every free-text field; ids survive intact
+            if k in item:
+                item[k] = redact(str(item[k]))
+        item.setdefault("message", "")
         item["files"] = [redact(str(f)) for f in item.get("files", [])]
         item["minutes_before_failure"] = int((first_at - parse_time(c["at"])).total_seconds() // 60)
         out.append(item)

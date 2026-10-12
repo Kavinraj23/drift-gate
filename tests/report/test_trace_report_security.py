@@ -36,7 +36,44 @@ ALLOWED_TAGS = {
     "html", "head", "meta", "title", "style", "body", "header", "h1", "h2", "h3", "nav", "a", "section",
     "p", "dl", "dt", "dd", "div", "table", "thead", "tbody", "tr", "th", "td", "blockquote", "span", "footer",
 }  # fmt: skip
+# Attribute names the generated markup actually needs, per tag (derived from render.py): anything else is a failure.
+ALLOWED_ATTRS: dict[str, set[str]] = {
+    "html": {"lang"},
+    "meta": {"charset", "name", "content", "http-equiv"},
+    "a": {"href"},
+}
+ALLOWED_ATTRS_ANY_TAG = {"id", "class"}
+ID_PATTERN = re.compile(r"[a-z0-9-]+")
+HREF_PATTERN = re.compile(r"#[a-z0-9-]+|trace-[a-z0-9._-]+-[0-9a-f]{10}\.html")
+VIEWPORT = "width=device-width,initial-scale=1"
 Make = Callable[..., AuditEntry]
+
+
+def markup_violations(page: str) -> list[str]:
+    """Everything in a page's tags and attributes that the generated markup does not need. Empty means clean."""
+    from driftgate.report.render import CSP
+
+    bad: list[str] = []
+    for tag, attr, value in inspect(page).attrs:
+        if attr not in ALLOWED_ATTRS_ANY_TAG | ALLOWED_ATTRS.get(tag, set()):
+            bad.append(f"<{tag} {attr}>")
+        elif attr == "id" and not ID_PATTERN.fullmatch(value):
+            bad.append(f"id={value!r}")
+        elif attr == "class" and not re.fullmatch(r"[a-z_ ]*", value):
+            bad.append(f"class={value!r}")
+        elif attr == "href" and not HREF_PATTERN.fullmatch(value):
+            bad.append(f"href={value!r}")
+        elif tag == "meta" and attr == "http-equiv" and value != "Content-Security-Policy":
+            bad.append(f"http-equiv={value!r}")
+        elif tag == "meta" and attr == "content" and value not in (CSP, VIEWPORT):
+            bad.append(f"meta content={value!r}")
+        elif tag == "meta" and attr == "name" and value != "viewport":
+            bad.append(f"meta name={value!r}")
+        elif tag == "meta" and attr == "charset" and value != "utf-8":
+            bad.append(f"charset={value!r}")
+        elif tag == "html" and attr == "lang" and value != "en":
+            bad.append(f"lang={value!r}")
+    return bad
 
 
 def hostile_trace(make: Make, text: str) -> tuple[list[AuditEntry], dict[str, object]]:
@@ -89,11 +126,10 @@ def test_hostile_strings_never_reach_the_page_unescaped(make: Make, text: str) -
     for name, out in pages.items():
         insp = inspect(out)
         assert set(insp.tags) <= ALLOWED_TAGS, (name, set(insp.tags) - ALLOWED_TAGS)
+        assert markup_violations(out) == [], (name, markup_violations(out))
         for tag, attr, value in insp.attrs:
             assert not attr.startswith("on"), (name, tag, attr)
             assert "javascript:" not in value.lower() and "<" not in value
-            if attr == "href":
-                assert re.fullmatch(r"#[a-z0-9-]+|trace-[A-Za-z0-9._-]+\.html", value), value
         lowered = out.lower()
         assert "<script" not in lowered and "<img" not in lowered and "<svg" not in lowered
         assert FAKE_TOKEN not in out and TOKEN_BODY not in out
@@ -141,3 +177,34 @@ def test_hostile_execution_ids_cannot_escape_the_output_directory(make: Make, tm
     assert main(["--audit", str(audit), "--out", str(out)]) == 0
     assert sorted(p.parent for p in tmp_path.rglob("*.html")) == [out, out]
     assert not (tmp_path.parent / "evil").exists()
+
+
+def test_the_sample_pages_pass_the_attribute_allow_list(sample_pages: dict[str, str]) -> None:
+    for name, out in sample_pages.items():
+        assert markup_violations(out) == [], (name, markup_violations(out))
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        '<img src="x">',
+        '<a href="#ok" onclick="x()">t</a>',
+        '<div style="background:url(x)">t</div>',
+        '<form formaction="http://x"><button>b</button></form>',
+        '<meta http-equiv="refresh" content="0;url=http://x">',
+        '<a href="javascript:alert(1)">t</a>',
+        '<a href="//evil.example/x.html">t</a>',
+        '<div id="Bad Id">t</div>',
+        '<div data-x="1">t</div>',
+        '<meta http-equiv="Content-Security-Policy" content="default-src *">',
+    ],
+)
+def test_the_attribute_allow_list_catches_hostile_markup(snippet: str) -> None:
+    assert markup_violations(f"<html lang='en'><body>{snippet}</body></html>") != []
+
+
+def test_the_attribute_allow_list_accepts_the_real_csp_meta() -> None:
+    from driftgate.report.render import CSP
+
+    page = f'<html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="{CSP}">'
+    assert markup_violations(page) == []

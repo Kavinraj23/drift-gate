@@ -69,6 +69,7 @@ OUTCOME_LABELS = {
     "verified": "Executed and verified",
     "verification_failed": "Executed, verification failed",
     "pr_proposed": "Pull request proposed (a human reviews and merges)",
+    "pr_ci_failed": "Pull request proposed, CI failed (awaiting a human)",
     "pr_verified": "Pull request proposed, verified by CI (a human still reviews and merges)",
     "awaiting_approval": "Awaiting human approval",
     "approved": "Approved, awaiting execution",
@@ -179,36 +180,100 @@ def evidence_items(trace: Trace) -> list[dict[str, Any]]:
     return [x for x in ev if isinstance(x, dict)] if isinstance(ev, list) else []
 
 
+# Every (kind, stage) the code base writes, classified once. "terminal" entries can set the displayed outcome (when
+# `_apply` recognises their payload); everything else, and ANYTHING NOT LISTED, is informational: it appears in the
+# audit trail but never changes the outcome. Refused, no-op and duplicate events are informational by decision: a
+# refused approve/deny, an execute attempt on a request that is not approved (or already executed), a re-run of the
+# gate, a skipped history read must not rewrite what the case actually did. Source of each: orchestrator.py,
+# approval_flow.py, verify.py.
+TERMINAL = "terminal"
+INFORMATIONAL = "informational"
+STAGE_EFFECT: dict[tuple[str, str], str] = {
+    # terminal: the case's state really changed
+    ("rejected", "prefilter"): TERMINAL,  # closed by the pre-filter
+    ("rejected", "approval_denied"): TERMINAL,  # the request was denied and closed
+    ("rejected", "approval_request"): TERMINAL,  # no request opened: escalated
+    ("rejected", "reinvestigation"): TERMINAL,  # orchestrator._escalate stages
+    ("rejected", "facts"): TERMINAL,
+    ("rejected", "validation"): TERMINAL,
+    ("rejected", "gate"): TERMINAL,
+    ("rejected", "review"): TERMINAL,
+    ("rejected", "diff_check"): TERMINAL,
+    ("rejected", "agent"): TERMINAL,
+    ("rejected", "verification_escalation"): TERMINAL,  # verify._hard_escalate
+    ("expired", "approval"): TERMINAL,
+    ("failed", "dry_run"): TERMINAL,
+    ("failed", "execute"): TERMINAL,
+    ("failed", "pr_proposed"): TERMINAL,
+    ("execution", "pr_proposed"): TERMINAL,
+    ("execution", "execute"): TERMINAL,  # only when ok is true
+    ("verification", "closed"): TERMINAL,
+    ("verification", "result"): TERMINAL,  # only when verified is false (true is followed by `closed`)
+    ("proposal", "approval_requested"): TERMINAL,
+    ("proposal", "approval_decision"): TERMINAL,  # only when the request became approved
+    # informational: written without changing the case's state
+    ("rejected", "approval_refused"): INFORMATIONAL,  # a refused approve/deny; the request stays as it was
+    (
+        "rejected",
+        "approval_execute_refused",
+    ): INFORMATIONAL,  # execute on a pending/executed/cancelled request, or a refusal
+    ("gate_decision", "approval_precheck"): INFORMATIONAL,
+    ("gate_decision", "approval_recheck"): INFORMATIONAL,
+    ("gate_decision", ""): INFORMATIONAL,
+    ("proposal", "agent"): INFORMATIONAL,
+    ("proposal", "gate_facts"): INFORMATIONAL,
+    ("proposal", "holder_proof"): INFORMATIONAL,
+    ("proposal", "history_skipped"): INFORMATIONAL,
+    ("proposal", "tier3_diff"): INFORMATIONAL,
+    ("proposal", "tier3_review"): INFORMATIONAL,
+    ("proposal", "tier3_revision"): INFORMATIONAL,
+    ("proposal", "reinvestigation_start"): INFORMATIONAL,
+    ("execution", "dry_run"): INFORMATIONAL,
+    ("verification", "rollback"): INFORMATIONAL,
+    ("budget_truncated", ""): INFORMATIONAL,
+}
+
+
+def changes_outcome(e: AuditEntry) -> bool:
+    """True only for a (kind, stage) the table lists as terminal. Unknown stages are informational."""
+    return STAGE_EFFECT.get((e.kind, stage_of(e)), INFORMATIONAL) == TERMINAL
+
+
 def derive_outcome(trace: Trace) -> OutcomeView:
     """The final state, from the audit entries alone (the log has no single 'outcome' entry): the last terminal event
-    wins, which is right for the two-round case where a failed first attempt is followed by a second one."""
+    wins, which is right for the two-round case where a failed first attempt is followed by a second one. Only
+    entries `STAGE_EFFECT` lists as terminal count; refused, no-op, duplicate and unknown entries never change it."""
     kind, detail = "unknown", ""
     for e in trace.entries:
+        if not changes_outcome(e):
+            continue
         st, p = stage_of(e), e.payload
         reason = str(p.get("reason", p.get("description", "")))
         if e.kind == "rejected":
-            if st == "approval_refused":
-                continue  # a refused approve/deny leaves the request pending; it is not an outcome
             if st == "prefilter":
                 kind, detail = "closed", reason
             elif st == "approval_denied":
                 kind, detail = "denied", reason
             else:
-                kind, detail = "escalated", f"{st or 'rejected'}: {reason}"
+                kind, detail = "escalated", f"{st}: {reason}"
         elif e.kind == "expired":
             kind, detail = "expired", reason
         elif e.kind == "failed":
             kind, detail = "failed", f"{st}: {reason}"
         elif e.kind == "execution" and st == "pr_proposed":
             kind, detail = "pr_proposed", f"branch {p.get('branch', NOT_RECORDED)}"
-        elif e.kind == "execution" and st == "execute" and p.get("ok") is True:
-            kind, detail = "executed", reason
+        elif e.kind == "execution" and st == "execute":
+            if p.get("ok") is True:
+                kind, detail = "executed", reason
         elif e.kind == "verification" and st == "closed":
             kind, detail = ("pr_verified" if kind == "pr_proposed" else "verified"), ""
-        elif e.kind == "verification" and st == "result" and p.get("verified") is False:
-            kind, detail = "verification_failed", reason
+        elif e.kind == "verification" and st == "result":
+            if p.get("verified") is False:
+                # A Tier 3 PR opens nothing on a target: a failed check is its CI failing, awaiting a human.
+                kind, detail = ("pr_ci_failed" if kind == "pr_proposed" else "verification_failed"), reason
         elif e.kind == "proposal" and st == "approval_requested":
             kind, detail = "awaiting_approval", f"request {p.get('request_id', '?')}"
-        elif e.kind == "proposal" and st == "approval_decision" and p.get("status") == "approved":
-            kind, detail = "approved", f"request {p.get('request_id', '?')}, not yet executed"
+        elif e.kind == "proposal" and st == "approval_decision":
+            if p.get("status") == "approved":
+                kind, detail = "approved", f"request {p.get('request_id', '?')}, not yet executed"
     return OutcomeView(kind, OUTCOME_LABELS[kind], detail)

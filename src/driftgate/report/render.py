@@ -26,6 +26,7 @@ from driftgate.report.trace import (
     OutcomeView,
     RoundView,
     Trace,
+    changes_outcome,
     derive_outcome,
     evidence_items,
     group_traces,
@@ -35,6 +36,12 @@ from driftgate.report.trace import (
 )
 
 CSP = "default-src 'none'; style-src 'unsafe-inline'"
+MARKER = "driftgate-trace-report"  # first comment of every page this tool writes: how it recognises its own files
+CAVEAT = (
+    "How to read this page: outcome labels are a reading of the audit log, not a recorded fact. Tier 1 and Tier 2 "
+    "execution goes through a stubbed target, and in synthetic scenarios verification and CI results are simulated "
+    "(a pull request's audit entry says opened=false when it was only proposed, not opened)."
+)
 MAX_VALUE_CHARS = 2000
 _PRE_REDACT_CAP = 50_000  # bound the regex work on absurdly long values; the visible cap is MAX_VALUE_CHARS
 
@@ -96,11 +103,12 @@ def fmt_ts(ts: object) -> str:
 
 
 def file_name(execution_id: str) -> str:
-    """A safe, unique file name for an execution id: redacted, sanitised, with a hash suffix when it changed."""
+    """A safe file name for an execution id: redacted, sanitised, lower-cased, and ALWAYS suffixed with a short hash of
+    the original id. The hash keeps two ids that differ only by case (NTFS and APFS are case-insensitive) or only by
+    sanitisation (`a/b` vs `a_b`) from sharing a file. The suffix is lower-case hex, so the name is stable."""
     safe = _DOTS.sub("_", _UNSAFE_NAME.sub("_", redact(execution_id[:_PRE_REDACT_CAP])))[:64].strip(".") or "unknown"
-    if safe != execution_id:
-        safe += "-" + hashlib.sha256(execution_id.encode("utf-8", "replace")).hexdigest()[:8]
-    return f"trace-{safe}.html"
+    digest = hashlib.sha256(execution_id.encode("utf-8", "replace")).hexdigest()[:10]
+    return f"trace-{safe.lower()}-{digest}.html"
 
 
 # -- small builders ---------------------------------------------------------------------------------------------------
@@ -243,7 +251,12 @@ def _evidence(trace: Trace, rs: list[RoundView], ids: dict[str, list[tuple[int, 
             status: object = Html('<span class="ok">cited</span>')
         else:
             link = key or NOT_RECORDED
-            status = Html('<span class="bad">NOT CITED: source is not a tool call of this run; dropped in code</span>')
+            if ids:
+                status = Html(
+                    '<span class="bad">NOT CITED: source is not a tool call of this run; dropped in code</span>'
+                )
+            else:
+                status = Html('<span class="warn">cannot verify citation: no tool-call record in the log</span>')
         rows.append([link, item.get("finding", NOT_RECORDED), item.get("supports", NOT_RECORDED), status])
     if trace.report is not None:
         parts.append(table(["Source (tool call)", "Finding", "Supports", "Citation"], rows))
@@ -455,9 +468,7 @@ def _outcome(trace: Trace, outcome: OutcomeView) -> Html:
     if isinstance(attempts, list) and attempts:
         pairs.append(("Prior attempts", _json(attempts)))
     parts: list[object] = [facts(pairs)]
-    stops = [
-        e for e in trace.entries if e.kind in ("rejected", "expired", "failed") and stage_of(e) != "approval_refused"
-    ]
+    stops = [e for e in trace.entries if e.kind in ("rejected", "expired", "failed") and changes_outcome(e)]
     if stops:
         parts.append(tag("h3", "Why it stopped"))
         parts.append(
@@ -531,10 +542,11 @@ SECTIONS = (
 
 def _page(title: str, body: str) -> str:
     return (
-        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+        f'<!doctype html>\n<!-- {MARKER} -->\n<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<meta http-equiv="Content-Security-Policy" content="{CSP}">'
-        f"<title>{esc(title)}</title><style>{CSS}</style></head><body>{body}"
+        f"<title>{esc(title)}</title><style>{CSS}</style></head><body>"
+        f'<p class="muted caveat">{esc(CAVEAT)}</p>{body}'
         "<footer>Static report generated from the audit log. All values are redacted and escaped; "
         "this page contains no script and loads nothing.</footer></body></html>\n"
     )

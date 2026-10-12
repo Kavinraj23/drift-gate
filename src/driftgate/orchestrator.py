@@ -709,6 +709,10 @@ class Orchestrator:
     def _audit_proposal(self, inv: Investigation, fingerprint: str, facts: GateFacts | None) -> None:
         """Without facts: the agent's output. With facts: what the gate was given for that proposal."""
         rem = inv.proposal.remediation if inv.proposal else None
+        if facts is None and inv.history_skipped:
+            self._audit.append(
+                "proposal", fingerprint, inv.report.execution_id, stage="history_skipped", reason=inv.history_skipped
+            )
         if facts is not None:
             self._audit.append(
                 "proposal",

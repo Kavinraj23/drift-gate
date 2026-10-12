@@ -30,6 +30,8 @@ from driftgate.tools import ToolContext, ToolResult, dispatch, optional_tool_def
 from driftgate.tools.changes_in_window import PROMPT_ADDENDUM as CHANGES_PROMPT_ADDENDUM
 
 SUBMIT_REPORT = "submit_report"
+#: Fixed reason written to the audit log when the case's start time could not be read (no raw source values).
+HISTORY_SKIPPED_UNBOUND = "case start time unreadable"
 DEFAULT_RESPONSE_TOKENS = 1500
 EXTRA_TURNS = 4  # turns beyond the tool-call limit: duplicate-only turns and the one nudge to report
 DEFAULT_LAYER = "L4"
@@ -200,6 +202,7 @@ class Investigation:
     evidence_dropped: int = 0
     duplicate_ids_rejected: int = 0
     model_calls: int = 0
+    history_skipped: str = ""  # fixed reason code when similar_history was enabled but could not be bound
 
     @property
     def tool_call_ids(self) -> list[str]:
@@ -275,6 +278,8 @@ class Investigator:
         ctx = self._ctx.bind_case(execution_id) if "similar_history" in self._optional else self._ctx
         messages: list[dict[str, Any]] = [{"role": "user", "content": initial_message(execution_id, context)}]
         st = _Run(execution_id, results)
+        if "similar_history" in self._optional and ctx.bound_case is None:
+            st.history_skipped = HISTORY_SKIPPED_UNBOUND  # the tool will refuse; the investigation goes on without it
         nudged = False
         for _ in range(self._budget.limits.max_tool_calls + EXTRA_TURNS):
             if self._budget.tokens_exhausted:
@@ -385,6 +390,7 @@ class Investigator:
             evidence_dropped=dropped,
             duplicate_ids_rejected=st.duplicates,
             model_calls=st.model_calls,
+            history_skipped=st.history_skipped,
         )
 
     def _partial_report(self, st: _Run, reason: str, *, truncated: bool) -> Report:
@@ -465,6 +471,7 @@ class _Run:
     results: list[ToolResult]
     model_calls: int = 0
     duplicates: int = 0
+    history_skipped: str = ""
 
 
 def _fingerprint(results: list[ToolResult]) -> str:

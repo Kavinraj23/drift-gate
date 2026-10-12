@@ -73,6 +73,7 @@ OUTCOME_LABELS = {
     "pr_verified": "Pull request proposed, verified by CI (a human still reviews and merges)",
     "awaiting_approval": "Awaiting human approval",
     "approved": "Approved, awaiting execution",
+    "approval_cancelled": "Approval cancelled: gate refused at execution (not executed)",
     "denied": "Denied by an approver",
     "expired": "Approval window expired: escalated to a human",
     "escalated": "Escalated to a human",
@@ -234,9 +235,22 @@ STAGE_EFFECT: dict[tuple[str, str], str] = {
 }
 
 
+# Entries that are informational unless their payload records that the request was CANCELLED. `approval_flow._refuse`
+# writes `status` = the request's status after the refusal; every path that cancels a request (execution-time gate
+# refusal: kill switch, abort ceiling, rate limit, holder or proof loss, fingerprint change; failed dry run) ends in
+# `_refuse`, so `status == "cancelled"` is the one recorded fact. A refusal that left the request pending, approved,
+# executed, expired or denied changed nothing and stays informational. Never decided from the reason text.
+CANCEL_RECORDING: frozenset[tuple[str, str]] = frozenset({("rejected", "approval_execute_refused")})
+
+
+def cancels_request(e: AuditEntry) -> bool:
+    return (e.kind, stage_of(e)) in CANCEL_RECORDING and e.payload.get("status") == "cancelled"
+
+
 def changes_outcome(e: AuditEntry) -> bool:
-    """True only for a (kind, stage) the table lists as terminal. Unknown stages are informational."""
-    return STAGE_EFFECT.get((e.kind, stage_of(e)), INFORMATIONAL) == TERMINAL
+    """True for a (kind, stage) the table lists as terminal, or an entry whose payload records a cancellation.
+    Unknown stages are informational."""
+    return STAGE_EFFECT.get((e.kind, stage_of(e)), INFORMATIONAL) == TERMINAL or cancels_request(e)
 
 
 def derive_outcome(trace: Trace) -> OutcomeView:
@@ -249,7 +263,9 @@ def derive_outcome(trace: Trace) -> OutcomeView:
             continue
         st, p = stage_of(e), e.payload
         reason = str(p.get("reason", p.get("description", "")))
-        if e.kind == "rejected":
+        if cancels_request(e):
+            kind, detail = "approval_cancelled", f"request {p.get('request_id', '?')}: {reason}"
+        elif e.kind == "rejected":
             if st == "prefilter":
                 kind, detail = "closed", reason
             elif st == "approval_denied":

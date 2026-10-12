@@ -32,6 +32,7 @@ RULES = (
     "background:var(--card);font-weight:600}",
     ".badge.verified,.badge.executed,.badge.pr_proposed,.badge.pr_verified,.badge.closed{color:var(--ok)}",
     ".badge.escalated,.badge.pr_ci_failed,.badge.awaiting_approval,.badge.approved,.badge.expired,.badge.denied{color:var(--warn)}",
+    ".badge.approval_cancelled{color:var(--bad);border-style:dashed}",
     ".badge.failed,.badge.verification_failed{color:var(--bad)}",
     "footer{margin-top:2rem;color:var(--muted);font-size:.8rem}",
 )

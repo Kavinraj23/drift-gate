@@ -251,3 +251,61 @@ def test_the_sample_is_pinned_to_lf_endings() -> None:
     attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
     assert "fixtures/trace_sample/* text eol=lf" in attrs
     assert b"\r\n" not in (SAMPLE / "audit.jsonl").read_bytes()
+
+
+# -- 3: a refusal that CANCELLED the request is a state change; one that left it alone is not -----------------------
+CANCELLED_LABEL = "Approval cancelled: gate refused at execution (not executed)"
+
+
+def test_a_refusal_that_cancelled_an_approved_request_is_terminal_not_awaiting_execution(make: Make) -> None:
+    entries = [requested(make), approved(make), refused_execute(make, "cancelled")]
+    out = derive_outcome(group_traces(entries)[0])
+    assert out.kind == "approval_cancelled" and out.label == CANCELLED_LABEL
+    assert "Approved, awaiting execution" not in render_trace(group_traces(entries)[0])
+
+
+def test_the_cancelled_outcome_comes_from_the_status_field_not_the_message(make: Make) -> None:
+    kept = make("rejected", "approval_execute_refused", request_id=1, status="approved", reason="request is cancelled")
+    assert outcome_of([requested(make), approved(make), kept]) == "approved"
+    odd = make("rejected", "approval_execute_refused", request_id=1, status="Cancelled", reason="x")
+    assert outcome_of([requested(make), approved(make), odd]) == "approved"
+    no_status = make("rejected", "approval_execute_refused", request_id=1, reason="cancelled")
+    assert outcome_of([requested(make), approved(make), no_status]) == "approved"
+
+
+def test_a_cancelled_request_is_not_escalated_or_executed(make: Make) -> None:
+    out = derive_outcome(group_traces([requested(make), approved(make), refused_execute(make, "cancelled")])[0])
+    assert out.kind not in ("escalated", "executed", "verified")
+    assert "Escalated" not in out.label and "Executed" not in out.label
+
+
+def test_a_dry_run_failure_then_cancel_reads_as_cancelled(make: Make) -> None:
+    entries = [
+        requested(make),
+        approved(make),
+        make("execution", "dry_run", request_id=1, ok=False, description="boom"),
+        make("failed", "dry_run", request_id=1, description="boom"),
+        refused_execute(make, "cancelled"),
+    ]
+    assert outcome_of(entries) == "approval_cancelled"
+
+
+def test_the_index_and_the_page_show_the_cancelled_label(make: Make) -> None:
+    entries = [requested(make), approved(make), refused_execute(make, "cancelled")]
+    pages = build_pages(entries)
+    assert CANCELLED_LABEL in inspect(pages["index.html"]).text
+    page = next(v for k, v in pages.items() if k != "index.html")
+    assert CANCELLED_LABEL in "".join(inspect(page).text)
+    assert 'class="badge approval_cancelled"' in page
+
+
+def test_a_cancelled_refusal_after_executed_is_not_possible_but_executed_refusals_stay_informational(
+    make: Make,
+) -> None:
+    entries = [
+        requested(make),
+        approved(make),
+        make("execution", "execute", request_id=1, ok=True, description="done"),
+        refused_execute(make, "executed"),
+    ]
+    assert outcome_of(entries) == "executed"

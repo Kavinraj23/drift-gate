@@ -16,10 +16,10 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 NOT_IMPLEMENTED: dict[str, str] = {
     # MVP 2 stubs (see TASKS.md). `holdout-fetch` is human-only (network); add it to HUMAN_ONLY when it is implemented.
     "holdout-fetch": "N1",
-    "approvals": "N4",
     "trace-report": "N5",
 }
 LIVE_TARGETS = {"record", "eval-live", "e2e-live"}  # implemented in driftgate.eval.live; human-only
+ARG_TARGETS = {"approvals"}  # the only offline target that takes extra arguments (a sub-command and its options)
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
@@ -116,6 +116,24 @@ def eval_retrieval() -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def eval_tier12() -> int:
+    """Tier 1/2 approval cases on the synthetic lock table: expected decisions from the PRD rules vs. the code."""
+    if not (ROOT / "data" / "executions.json").exists():
+        code = data()
+        if code:
+            return code
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.tier12_cases", "--data", str(ROOT / "data")]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def approvals(extra: list[str]) -> int:
+    """Tier 1/2 approvals CLI (synthetic target only): list | show | approve | deny | expire-check | execute."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.approvals_cli", "--data", str(ROOT / "data"), *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
 def _holdout(command: str) -> int:
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
     cmd = [PY, "-m", "driftgate.eval.holdout_eval", command, "--dir", str(ROOT / "holdout")]
@@ -163,6 +181,7 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "holdout-validate": holdout_validate,
     "eval-holdout": eval_holdout,
     "eval-retrieval": eval_retrieval,
+    "eval-tier12": eval_tier12,
     "mvp-check": mvp_check,
     "playground-reset": playground_reset,
 }
@@ -179,7 +198,7 @@ def main(argv: list[str]) -> int:
         print("usage: python tasks.py <target> [options]")
         return 2
     target = argv[1]
-    if len(argv) > 2 and target not in LIVE_TARGETS:
+    if len(argv) > 2 and target not in LIVE_TARGETS and target not in ARG_TARGETS:
         print("usage: python tasks.py <target>")
         return 2
     if target in HUMAN_ONLY and (ROOT / ".autonomous").exists():
@@ -187,6 +206,8 @@ def main(argv: list[str]) -> int:
         return 1
     if target in LIVE_TARGETS:
         return _live(target, argv[2:])
+    if target == "approvals":
+        return approvals(argv[2:])
     if target in HANDLERS:
         return HANDLERS[target]()
     if target in NOT_IMPLEMENTED:

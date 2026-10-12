@@ -20,6 +20,9 @@ from driftgate.retrieval import HistoryIndex, IncidentRecord
 from driftgate.tools import ToolContext, dispatch
 from driftgate.tools.similar_history import key_excerpt, start_epoch
 
+# Unified optional-tools mechanism: dispatch only runs an optional tool the run enabled.
+ON = frozenset({"similar_history"})
+
 
 @pytest.fixture
 def case(pick: Callable[..., FailureLabel], dataset_dir: Path) -> tuple[FailureLabel, SyntheticSource, float]:
@@ -53,7 +56,7 @@ def test_result_carries_the_call_id_and_only_earlier_non_self_incidents(case) ->
     idx.add(_record("same-instant", start))
     idx.add(_record("future", start + 60))
     idx.add(_record(label.execution_id, start - 10))
-    res = dispatch(_bound(source, idx, label.execution_id), "similar_history", {}, "call-7")
+    res = dispatch(_bound(source, idx, label.execution_id), "similar_history", {}, "call-7", ON)
     assert res.ok and res.source == "call-7" and res.tool == "similar_history"
     got = [m["execution_id"] for m in res.data["matches"]]
     assert set(got) == {"past-1", "past-2"}
@@ -65,7 +68,7 @@ def test_a_model_cannot_widen_the_search_by_adding_arguments(case) -> None:  # t
     label, source, _ = case
     ctx = _bound(source, HistoryIndex(), label.execution_id)
     for extra in ({"query": "x OR *"}, {"as_of": "2999-01-01T00:00:00Z"}, {"case_id": "other"}, {"execution_id": "x"}):
-        res = dispatch(ctx, "similar_history", extra, "c")
+        res = dispatch(ctx, "similar_history", extra, "c", ON)
         assert not res.ok and "invalid arguments" in res.error
 
 
@@ -74,7 +77,7 @@ def test_query_is_derived_from_the_cases_own_error_not_from_the_model(case) -> N
     idx = HistoryIndex()
     idx.add(_record("related", start - 100))
     idx.add(_record("unrelated", start - 100, signature="npm_peer_dep", excerpt="peer dependency conflict ERESOLVE"))
-    res = dispatch(_bound(source, idx, label.execution_id), "similar_history", {}, "c")
+    res = dispatch(_bound(source, idx, label.execution_id), "similar_history", {}, "c", ON)
     got = res.data["matches"]
     assert got[0]["execution_id"] == "related"
     assert all(m["bm25_score"] >= got[0]["bm25_score"] for m in got)
@@ -82,7 +85,7 @@ def test_query_is_derived_from_the_cases_own_error_not_from_the_model(case) -> N
 
 def test_not_offered_means_not_runnable(case) -> None:  # type: ignore[no-untyped-def]
     label, source, _ = case
-    res = dispatch(ToolContext(source), "similar_history", {}, "c")
+    res = dispatch(ToolContext(source), "similar_history", {}, "c", ON)
     assert not res.ok and "not enabled" in res.error
 
 
@@ -91,14 +94,14 @@ def test_output_is_redacted(case) -> None:  # type: ignore[no-untyped-def]
     idx = HistoryIndex()
     key = "AKIA" + "IOSFODNN7EXAMPLE"
     idx.add(_record("past", start - 5, hypothesis=f"rotated key {key} still in use"))
-    res = dispatch(_bound(source, idx, label.execution_id), "similar_history", {}, "c")
+    res = dispatch(_bound(source, idx, label.execution_id), "similar_history", {}, "c", ON)
     assert res.data["matches"] and key not in json.dumps(res.data)
 
 
 def test_a_successful_execution_has_nothing_to_look_up(dataset_dir: Path) -> None:
     source = SyntheticSource(dataset_dir)
     ok = next(s for s in source.list_executions(None, None) if s.status == "success")
-    res = dispatch(_bound(source, HistoryIndex(), ok.execution_id), "similar_history", {}, "c")
+    res = dispatch(_bound(source, HistoryIndex(), ok.execution_id), "similar_history", {}, "c", ON)
     assert res.ok and res.data["matches"] == []
 
 
@@ -163,7 +166,7 @@ def test_the_schema_takes_no_id_at_all(case) -> None:  # type: ignore[no-untyped
     label, source, _ = case
     ctx = _bound(source, HistoryIndex(), label.execution_id)
     for args in ({"execution_id": label.execution_id}, {"execution_id": "some-later-execution"}):
-        res = dispatch(ctx, "similar_history", args, "c")
+        res = dispatch(ctx, "similar_history", args, "c", ON)
         assert not res.ok and "invalid arguments" in res.error
 
 
@@ -173,7 +176,7 @@ def test_a_model_naming_a_later_execution_cannot_see_incidents_after_the_real_ca
     idx.add(_record("after-real-case", t_early + 10))  # finished after the real (early) case started
     ctx = _bound(source, idx, early)
     for args in ({"execution_id": late}, {}):
-        res = dispatch(ctx, "similar_history", args, "c")
+        res = dispatch(ctx, "similar_history", args, "c", ON)
         assert not res.ok or res.data["matches"] == []  # without the fix, naming `late` returned "after-real-case"
         assert not res.ok or res.data["execution_id"] == early
 
@@ -188,7 +191,7 @@ def test_a_model_naming_another_earlier_execution_cannot_unexclude_the_real_case
     idx.add(_record(late, t_late - 1, **like))  # the real case is already in the index
     idx.add(_record("ok-past", t_late - 5, **like))
     for args in ({"execution_id": early}, {}):
-        res = dispatch(ctx, "similar_history", args, "c")
+        res = dispatch(ctx, "similar_history", args, "c", ON)
         if res.ok:
             got = [m["execution_id"] for m in res.data["matches"]]
             assert late not in got and got == ["ok-past"]
@@ -199,8 +202,8 @@ def test_passing_the_real_id_is_not_accepted_either_and_the_bound_case_is_used(c
     idx = HistoryIndex()
     idx.add(_record("past", start - 10))
     ctx = _bound(source, idx, label.execution_id)
-    assert not dispatch(ctx, "similar_history", {"execution_id": label.execution_id}, "c").ok
-    ok = dispatch(ctx, "similar_history", {}, "c")
+    assert not dispatch(ctx, "similar_history", {"execution_id": label.execution_id}, "c", ON).ok
+    ok = dispatch(ctx, "similar_history", {}, "c", ON)
     assert ok.ok and ok.data["execution_id"] == label.execution_id
     assert [m["execution_id"] for m in ok.data["matches"]] == ["past"]
 
@@ -209,7 +212,7 @@ def test_an_unbound_context_refuses(case) -> None:  # type: ignore[no-untyped-de
     label, source, start = case
     idx = HistoryIndex()
     idx.add(_record("past", start - 10))
-    res = dispatch(ToolContext(source, history=idx), "similar_history", {}, "c")
+    res = dispatch(ToolContext(source, history=idx), "similar_history", {}, "c", ON)
     assert not res.ok and "not bound" in res.error and not res.data
 
 
@@ -218,7 +221,7 @@ def test_the_bound_case_already_in_the_index_is_never_returned(case) -> None:  #
     idx = HistoryIndex()
     idx.add(_record(label.execution_id, start - 1))
     idx.add(_record("past", start - 2))
-    res = dispatch(_bound(source, idx, label.execution_id), "similar_history", {}, "c")
+    res = dispatch(_bound(source, idx, label.execution_id), "similar_history", {}, "c", ON)
     assert [m["execution_id"] for m in res.data["matches"]] == ["past"]
 
 

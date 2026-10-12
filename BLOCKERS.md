@@ -69,3 +69,9 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 - Ambiguity: the shipping rule's "improves" has no numbers in the PRD. `eval/retrieval_eval.py` uses at least 3 cases of recall or verified fixes, or a 10 percent drop in mean cost per case with no loss of recall or success rate, and any rise in false remediation vetoes. Constants `MIN_CASES`, `MIN_COST_DROP`; change if you disagree.
 - RESOLVED (round 2): a model could pass another execution's id to `similar_history`. The tool now takes no arguments; the case id and start time are bound by code in `Investigator.investigate`, and an unbound context refuses.
 - Needs human: recorded real-model on/off fixtures (`record` with the tool offered) and a loader for a recorded arm in `eval-retrieval`; until then the verdict stays "stays off: no recorded evidence".
+### N3 (change correlation) - Needs human
+- Recording fixtures with `changes_in_window` enabled (`record`) and any live eval are human-only; until then no real model has used the tool and the report's N3 rows are metric-code validation only.
+- Ambiguity: the PRD does not say which timestamp "first failure" means for a recurring or retried failure. Implemented as the start of the pipeline's unbroken run of same-fingerprint failures ending at the case (see `docs/design/N3.md`).
+- Ambiguity: how `suspected_change.ref` identifies a change is unspecified. Scoring accepts `change_id`, a commit sha (7+ char prefix) or exact `(kind, ref, at)`; the prompt asks for the `change_id`.
+- Ambiguity: the PRD's `ExecutionSource` protocol has no change-listing method. Kept additive: a separate `ChangeSource` protocol in the tool module; `ExecutionSource` unchanged.
+- Ambiguity: the scored "causal" and "decoy" sets come from the generator's labels (decoys = other changes within 6h before the failure touching the pipeline's own refs). Changes in the window outside both sets count only in the blame denominator.

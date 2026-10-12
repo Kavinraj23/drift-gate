@@ -59,7 +59,7 @@ from driftgate.tier3 import (
     is_protected,
     redact_pull_request,
 )
-from driftgate.tools import ToolContext, ToolResult, dispatch
+from driftgate.tools import OPTIONAL_TOOLS, ToolContext, ToolResult, dispatch
 from driftgate.tools.attempts import AttemptStore, RemediationAttempt
 from driftgate.tools.base import FailureAnalyzer
 from driftgate.tools.fleet_correlate import FLEET_MIN_EXECUTIONS
@@ -156,10 +156,16 @@ class Orchestrator:
         after_execution: AfterExecution | None = None,
         allow_unreviewed_tier3: bool = False,
         history: HistoryIndex | None = None,
+        optional_tools: frozenset[str] = frozenset(),
         offer_similar_history: bool = False,
     ) -> None:
-        if offer_similar_history and history is None:
-            raise ValueError("offer_similar_history needs a history index")
+        # `offer_similar_history=True` is kept as an alias for `"similar_history" in optional_tools`.
+        enabled = frozenset(optional_tools) | ({"similar_history"} if offer_similar_history else frozenset())
+        unknown = enabled - {t.name for t in OPTIONAL_TOOLS}
+        if unknown:
+            raise ValueError(f"not optional tools: {sorted(unknown)}")
+        if "similar_history" in enabled and history is None:
+            raise ValueError("offering similar_history needs a history index")
         self._source = source
         self._target = target
         self._gate = gate
@@ -169,8 +175,9 @@ class Orchestrator:
         self.attempts = attempts or AttemptStore()
         # N2: the optional similar_history tool. OFF by default; with it off the model sees the MVP 1 tools and prompt.
         self._history = history
-        self._optional_tools: tuple[str, ...] = ("similar_history",) if offer_similar_history else ()
-        self._ctx = ToolContext(source, self.attempts, history=history if offer_similar_history else None)
+        # ONE per-run set of optional tools (N2 similar_history, N3 changes_in_window). Empty = MVP 1 exactly.
+        self._optional_tools = enabled
+        self._ctx = ToolContext(source, self.attempts, history=history if "similar_history" in enabled else None)
         self._model = model
         self._tier3_review = tier3_review
         self._after_execution = after_execution
@@ -817,6 +824,7 @@ def build_synthetic_orchestrator(
     allow_unreviewed_tier3: bool = False,
     verification: bool = False,
     history: HistoryIndex | None = None,
+    optional_tools: frozenset[str] = frozenset(),
     offer_similar_history: bool = False,
 ) -> Orchestrator:
     """Wire the synthetic sandbox: SyntheticSource + SyntheticTarget, a fresh rate limiter, audit log and gate.
@@ -838,6 +846,7 @@ def build_synthetic_orchestrator(
         after_execution=after_execution,
         allow_unreviewed_tier3=allow_unreviewed_tier3,
         history=history,
+        optional_tools=optional_tools,
         offer_similar_history=offer_similar_history,
     )
     if verification and after_execution is None:

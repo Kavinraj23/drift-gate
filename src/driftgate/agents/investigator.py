@@ -27,6 +27,7 @@ from driftgate.llm.errors import FixtureMissing, GatewayError, InvestigationBudg
 from driftgate.llm.types import ModelClient, ModelRequest, ModelResponse
 from driftgate.remediation_catalog import CATALOG
 from driftgate.tools import ToolContext, ToolResult, dispatch, optional_tool_definitions, tool_definitions
+from driftgate.tools.changes_in_window import PROMPT_ADDENDUM as CHANGES_PROMPT_ADDENDUM
 
 SUBMIT_REPORT = "submit_report"
 DEFAULT_RESPONSE_TOKENS = 1500
@@ -149,10 +150,11 @@ def submit_report_definition() -> dict[str, Any]:
     }
 
 
-def agent_tool_definitions(optional: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+def agent_tool_definitions(optional: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
     """The read-only tools plus the final-report tool, in a stable order (cache friendly).
 
-    `optional` names extra tools a run opts into. With none (the default) the result is exactly the MVP 1 list.
+    `optional` names the per-run optional tools (`similar_history`, `changes_in_window`). Empty, the list is exactly
+    MVP 1's, which keeps recorded replay fixtures valid; enabled ones go before `submit_report` in registry order.
     """
     return [*tool_definitions(), *optional_tool_definitions(optional), submit_report_definition()]
 
@@ -166,9 +168,15 @@ what you rely on. It costs one of your 8 tool calls, so use it only when the che
 worked before."""
 
 
-def system_prompt(optional: tuple[str, ...] = ()) -> str:
-    """`SYSTEM_PROMPT` unchanged unless an optional tool is offered, then with that tool's one-paragraph note."""
-    return SYSTEM_PROMPT + (SIMILAR_HISTORY_NOTE if "similar_history" in optional else "")
+def system_prompt(optional: frozenset[str] = frozenset()) -> str:
+    """`SYSTEM_PROMPT` unchanged unless an optional tool is enabled; then each enabled tool's addendum is appended in
+    a fixed order (similar_history, then changes_in_window), independent of set iteration order."""
+    text = SYSTEM_PROMPT
+    if "similar_history" in optional:
+        text += SIMILAR_HISTORY_NOTE
+    if "changes_in_window" in optional:
+        text += CHANGES_PROMPT_ADDENDUM
+    return text
 
 
 @dataclass
@@ -248,16 +256,16 @@ class Investigator:
         *,
         model: str = "",
         max_response_tokens: int = DEFAULT_RESPONSE_TOKENS,
-        optional_tools: tuple[str, ...] = (),
+        optional_tools: frozenset[str] = frozenset(),
     ) -> None:
         self._client = client
         self._ctx = ctx
         self._budget = budget
         self._model = model
         self._max_tokens = max_response_tokens
-        self._optional = optional_tools
-        self._tools = agent_tool_definitions(optional_tools)
-        self._system = system_prompt(optional_tools)
+        self._optional = frozenset(optional_tools)
+        self._tools = agent_tool_definitions(self._optional)
+        self._system = system_prompt(self._optional)
 
     # -- public ------------------------------------------------------------------------------
     def investigate(self, execution_id: str, context: str = "") -> Investigation:
@@ -304,7 +312,7 @@ class Investigator:
                 if not self._budget.consume_tool_call():
                     return self._truncated(st, "budget_tool_calls")
                 seen.add(call.id)
-                result = dispatch(ctx, call.name, call.input, call.id)
+                result = dispatch(ctx, call.name, call.input, call.id, self._optional)
                 results.append(result)
                 blocks.append(_tool_result_block(call.id, _render(result), not result.ok))
             messages.append({"role": "user", "content": blocks})

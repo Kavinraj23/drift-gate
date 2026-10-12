@@ -155,3 +155,11 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 - Tests: sealed-message tests through the CLI for duplicate source, log hash mismatch, credential-shaped log and label-changed-after-run; dev detail allowed; date tests; git warning tests. Isolation tests: listed paths must exist, AST-based import detection incl. relative imports, tasks.py/scripts scan (only the holdout path and module name as strings), and a subprocess import-closure test. No existing assertion was changed (the comment at test_holdout.py about hc-02 was corrected).
 - REPORTED: the import closure of `holdout_eval` includes `driftgate.llm.gateway` (via the eval package: `eval.report` imports `llm.config`/`llm.types`, and `eval/__init__` loads `e2e`). Neither `anthropic`, `requests`, `dotenv`, `httpx` nor `urllib3` is loaded (the SDK import in the gateway is lazy). That strict-xfail test documents it; it is not weakened, and fixing it means changing `eval/` imports outside this milestone's scope.
 - N1 still NOT ticked.
+
+## N3: change correlation, offline half (2026-10-12, branch mvp2/n3-changes)
+- Built: `tools/changes_in_window.py` (optional read-only tool; window before the first failure of the episode, nearest first, capped at 25, redacted, field whitelist), `OPTIONAL_TOOLS` + `dispatch(..., enabled)`, `optional_tools` setting on `Investigator` / `Orchestrator` / `build_synthetic_orchestrator` (default off), `eval/change_score.py`, and a separate "Change correlation (N3)" section plus `change_correlation` JSON key in the offline report. Design: `docs/design/N3.md`.
+- Off by default: tool definitions, system prompt and the prompt fingerprint (`88a8278480e61498`) are byte-identical to MVP 1, so existing replay fixtures still replay. Pinned by tests.
+- No causal/decoy marker is agent-visible: the generator keeps them only in `ground_truth/labels.json`; no cross-module fix was needed.
+- Scripted model names no change, so offline accuracy is 0/N and blame n/a; these validate the metric code only.
+- Existing tests: no assertion changed, no golden changed (the new rows are a separate table; the README-synced MVP 1 table is untouched). Full suite: 1382 passed, 1 skipped, 1 xfailed.
+- **N3 is NOT ticked in TASKS.md.** Needs the human: `record` with the tool enabled (separate fixture set) and any `eval-live`.

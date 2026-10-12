@@ -35,6 +35,7 @@ from typing import Any
 from driftgate.adapters.synthetic import SyntheticSource
 from driftgate.baseline import BaselineResult, run_baseline
 from driftgate.eval import e2e
+from driftgate.eval.change_score import ChangeCase, change_case, compute_change_metrics
 from driftgate.eval.e2e import MODES, ScenarioResult
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth, load_ground_truth
 from driftgate.eval.metrics import Rate, attempted_remediation, recovery_breakdown, remediation_success_rate
@@ -219,6 +220,7 @@ class ReportData:
     bad_diff_drills: dict[str, Any]
     loop_drills: list[dict[str, Any]] = field(default_factory=list)
     live: LiveInfo | None = None
+    change_cases: dict[str, list[ChangeCase]] = field(default_factory=dict)  # N3, agent only: set -> cases
 
 
 @dataclass
@@ -321,6 +323,21 @@ def build_report_from_results(
         "drills_run": len(drills),
     }
     quality = tier3_quality(_tier3_scores(scored, source))
+    timeline = source.list_changes()
+    change_cases: dict[str, list[ChangeCase]] = {s: [] for s in SETS}
+    for r in scored:
+        lab = r.label
+        assert lab is not None and r.outcome is not None
+        change_cases["held-out" if r.row.held_out else "dev"].append(
+            change_case(
+                r.row.scenario_id,
+                r.row.held_out,
+                lab.causal_change_ids,
+                lab.decoy_change_ids,
+                r.outcome.report.suspected_change,
+                timeline,
+            )
+        )
     return ReportData(
         mode=mode,
         models=sorted({r.row.model for r in scored}),
@@ -332,6 +349,7 @@ def build_report_from_results(
         ),
         loop_drills=[asdict(r.row) for r in drills],
         live=live,
+        change_cases=change_cases,
     )
 
 
@@ -438,6 +456,41 @@ def _recovery_cell(data: ReportData, key: tuple[str, str]) -> str:
     return f"{r['numerator']}/{r['denominator']} (drills, dev)" + ("*" if r["denominator"] < SMALL_N else "")
 
 
+def _change_section(data: ReportData) -> list[str]:
+    """N3 rows: kept apart from the MVP 1 metrics table, which is unchanged."""
+    ms = {s: compute_change_metrics(data.change_cases.get(s, [])) for s in SETS}
+    header = ["change correlation (N3)"] + [f"{sys_} / {s}" for s in SETS for sys_ in SYSTEMS]
+    rows = []
+    for label, attr in (
+        (
+            "Suspected-change accuracy (causal change named / cases with a true causal change)",
+            "suspected_change_accuracy",
+        ),
+        ("Decoy blame rate (decoy named / reports naming a suspected_change; lower is better)", "decoy_blame_rate"),
+    ):
+        rows.append(
+            [label]
+            + [
+                "n/a (baseline names no change)" if sys_ == "baseline" else fmt(getattr(ms[s], attr))
+                for s in SETS
+                for sys_ in SYSTEMS
+            ]
+        )
+    return [
+        "## Change correlation (N3, additional rows)",
+        "",
+        _md_table(header, rows),
+        "",
+        "These rows score the report's `suspected_change` against the labelled causal and decoy changes; they leave "
+        "every metric above unchanged. `changes_in_window` is optional and OFF by default, so a report produced "
+        "without it names no change and the accuracy row reads 0 over the cases that have a true causal change. With "
+        "the scripted model (or MVP 1 replay fixtures) these numbers validate the metric code only; they say nothing "
+        "about a real model. A named change that is neither causal nor a labelled decoy counts in the blame "
+        f"denominator only (dev {ms['dev'].named_other}, held-out {ms['held-out'].named_other}).",
+        "",
+    ]
+
+
 def _cost_table(data: ReportData) -> str:
     live = data.live is not None
     cols = _columns()
@@ -520,6 +573,7 @@ def render_markdown(data: ReportData) -> str:
         "",
         _metrics_table(data),
         "",
+        *_change_section(data),
         "Flaky-test failures (generic exit code only, no deterministic signature) are labelled escalate under "
         "invariant 3, so declining them counts as correct. They are scored like any other escalate case.",
         "",
@@ -612,6 +666,17 @@ def to_json(data: ReportData) -> dict[str, Any]:
         "bad_diff_drills": data.bad_diff_drills,
         "loop_drills": data.loop_drills,
         "metrics": {},
+        "change_correlation": {
+            s: {
+                "agent": {
+                    "suspected_change_accuracy": _rate_json(m.suspected_change_accuracy),
+                    "decoy_blame_rate": _rate_json(m.decoy_blame_rate),
+                    "named_other": m.named_other,
+                }
+            }
+            for s in SETS
+            for m in [compute_change_metrics(data.change_cases.get(s, []))]
+        },
     }
     for sys_ in SYSTEMS:
         for s in SETS:

@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 from driftgate.domain import SourceError
 
 from . import (
+    changes_in_window,
     classify_signature,
     flake_history,
     fleet_correlate,
@@ -28,7 +29,10 @@ TOOLS: tuple[ToolSpec, ...] = (
     read_repo_file.SPEC,
     get_remediation_attempt.SPEC,
 )
-_BY_NAME = {t.name: t for t in TOOLS}
+#: Optional tools: never in `TOOLS`, never offered or dispatched unless a run enables them by name.
+OPTIONAL_TOOLS: tuple[ToolSpec, ...] = (changes_in_window.SPEC,)
+_BY_NAME = {t.name: t for t in (*TOOLS, *OPTIONAL_TOOLS)}
+_OPTIONAL_NAMES = frozenset(t.name for t in OPTIONAL_TOOLS)
 
 
 def tool_definitions(names: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
@@ -36,13 +40,20 @@ def tool_definitions(names: tuple[str, ...] | None = None) -> list[dict[str, Any
     return [t.definition() for t in TOOLS if names is None or t.name in names]
 
 
-def dispatch(ctx: ToolContext, name: str, args: dict[str, Any], call_id: str) -> ToolResult:
+def optional_tool_definitions(enabled: frozenset[str]) -> list[dict[str, Any]]:
+    """Definitions of the enabled optional tools, in registry order."""
+    return [t.definition() for t in OPTIONAL_TOOLS if t.name in enabled]
+
+
+def dispatch(
+    ctx: ToolContext, name: str, args: dict[str, Any], call_id: str, enabled: frozenset[str] = frozenset()
+) -> ToolResult:
     """Run one tool call. `call_id` becomes the result's `source`, the id evidence must cite.
 
     Bad names, bad arguments and source errors come back as ok=False results rather than exceptions.
     """
     spec = _BY_NAME.get(name)
-    if spec is None:
+    if spec is None or (name in _OPTIONAL_NAMES and name not in enabled):
         return ToolResult(call_id, name, False, error=f"unknown tool: {name}")
     errors = sorted(Draft202012Validator(spec.input_schema).iter_errors(args), key=lambda e: list(e.path))
     if errors:
@@ -53,4 +64,13 @@ def dispatch(ctx: ToolContext, name: str, args: dict[str, Any], call_id: str) ->
         return ToolResult(call_id, name, False, error=str(e))
 
 
-__all__ = ["TOOLS", "ToolContext", "ToolResult", "ToolSpec", "dispatch", "tool_definitions"]
+__all__ = [
+    "OPTIONAL_TOOLS",
+    "TOOLS",
+    "ToolContext",
+    "ToolResult",
+    "ToolSpec",
+    "dispatch",
+    "optional_tool_definitions",
+    "tool_definitions",
+]

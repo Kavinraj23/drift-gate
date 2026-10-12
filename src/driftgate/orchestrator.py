@@ -153,6 +153,7 @@ class Orchestrator:
         tier3_review: Tier3Review | None = None,
         after_execution: AfterExecution | None = None,
         allow_unreviewed_tier3: bool = False,
+        optional_tools: frozenset[str] = frozenset(),
     ) -> None:
         self._source = source
         self._target = target
@@ -169,6 +170,7 @@ class Orchestrator:
         # (`build_github_orchestrator`) never set it: with no independent reviewer, Tier 3 escalates.
         self._allow_unreviewed_tier3 = allow_unreviewed_tier3
         self._distinct: dict[str, int] = {}
+        self._optional_tools = frozenset(optional_tools)  # per-run opt-in tools (N3); empty means MVP 1 exactly
 
     # -- public ------------------------------------------------------------------------------
     @property
@@ -226,7 +228,13 @@ class Orchestrator:
         precheck: Precheck | None = None,
         revisions: int = 0,
     ) -> Outcome:
-        investigator = Investigator(self._model_factory(execution_id, budget), self._ctx, budget, model=self._model)
+        investigator = Investigator(
+            self._model_factory(execution_id, budget),
+            self._ctx,
+            budget,
+            model=self._model,
+            optional_tools=self._optional_tools,
+        )
         if rounds >= 2 and budget.exhausted:  # the case's allowance is spent: no model call is made, fail closed
             inv = investigator.spent(execution_id, _spent_stop(budget))
         else:
@@ -437,7 +445,9 @@ class Orchestrator:
         self._audit.append("proposal", fingerprint, eid, stage="tier3_revision", feedback=review.comments)
         assert out.investigation is not None
         budget = out.investigation.budget  # the one case budget: the revision draws on what round 1 left
-        investigator = Investigator(self._model_factory(eid, budget), self._ctx, budget, model=self._model)
+        investigator = Investigator(
+            self._model_factory(eid, budget), self._ctx, budget, model=self._model, optional_tools=self._optional_tools
+        )
         if budget.exhausted:  # nothing left for a revision: no model call is made, fail closed
             inv = investigator.spent(eid, _spent_stop(budget))
         else:
@@ -759,6 +769,7 @@ def build_synthetic_orchestrator(
     after_execution: AfterExecution | None = None,
     allow_unreviewed_tier3: bool = False,
     verification: bool = False,
+    optional_tools: frozenset[str] = frozenset(),
 ) -> Orchestrator:
     """Wire the synthetic sandbox: SyntheticSource + SyntheticTarget, a fresh rate limiter, audit log and gate.
 
@@ -778,6 +789,7 @@ def build_synthetic_orchestrator(
         tier3_review=tier3_review,
         after_execution=after_execution,
         allow_unreviewed_tier3=allow_unreviewed_tier3,
+        optional_tools=optional_tools,
     )
     if verification and after_execution is None:
         from driftgate.verify import install_verification  # local import: verify depends on this module

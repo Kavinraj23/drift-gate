@@ -26,7 +26,8 @@ from driftgate.llm.budget import CallRecord, InvestigationBudget
 from driftgate.llm.errors import FixtureMissing, GatewayError, InvestigationBudgetExhausted
 from driftgate.llm.types import ModelClient, ModelRequest, ModelResponse
 from driftgate.remediation_catalog import CATALOG
-from driftgate.tools import ToolContext, ToolResult, dispatch, tool_definitions
+from driftgate.tools import ToolContext, ToolResult, dispatch, optional_tool_definitions, tool_definitions
+from driftgate.tools.changes_in_window import PROMPT_ADDENDUM as CHANGES_PROMPT_ADDENDUM
 
 SUBMIT_REPORT = "submit_report"
 DEFAULT_RESPONSE_TOKENS = 1500
@@ -149,9 +150,18 @@ def submit_report_definition() -> dict[str, Any]:
     }
 
 
-def agent_tool_definitions() -> list[dict[str, Any]]:
-    """The read-only tools plus the final-report tool, in a stable order (cache friendly)."""
-    return [*tool_definitions(), submit_report_definition()]
+def agent_tool_definitions(optional: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
+    """The read-only tools plus the final-report tool, in a stable order (cache friendly).
+
+    `optional` names per-run optional tools (N3 `changes_in_window`). Empty, the list is exactly MVP 1's, which keeps
+    recorded replay fixtures valid; enabled ones go before `submit_report`.
+    """
+    return [*tool_definitions(), *optional_tool_definitions(optional), submit_report_definition()]
+
+
+def system_prompt(optional: frozenset[str] = frozenset()) -> str:
+    """The investigator system prompt; byte-identical to `SYSTEM_PROMPT` unless an optional tool is enabled."""
+    return SYSTEM_PROMPT + (CHANGES_PROMPT_ADDENDUM if "changes_in_window" in optional else "")
 
 
 @dataclass
@@ -231,13 +241,16 @@ class Investigator:
         *,
         model: str = "",
         max_response_tokens: int = DEFAULT_RESPONSE_TOKENS,
+        optional_tools: frozenset[str] = frozenset(),
     ) -> None:
         self._client = client
         self._ctx = ctx
         self._budget = budget
         self._model = model
         self._max_tokens = max_response_tokens
-        self._tools = agent_tool_definitions()
+        self._optional = frozenset(optional_tools)
+        self._tools = agent_tool_definitions(self._optional)
+        self._system = system_prompt(self._optional)
 
     # -- public ------------------------------------------------------------------------------
     def investigate(self, execution_id: str, context: str = "") -> Investigation:
@@ -282,7 +295,7 @@ class Investigator:
                 if not self._budget.consume_tool_call():
                     return self._truncated(st, "budget_tool_calls")
                 seen.add(call.id)
-                result = dispatch(self._ctx, call.name, call.input, call.id)
+                result = dispatch(self._ctx, call.name, call.input, call.id, self._optional)
                 results.append(result)
                 blocks.append(_tool_result_block(call.id, _render(result), not result.ok))
             messages.append({"role": "user", "content": blocks})
@@ -295,7 +308,7 @@ class Investigator:
     # -- model I/O ---------------------------------------------------------------------------
     def _call(self, messages: list[dict[str, Any]]) -> ModelResponse:
         request = ModelRequest(
-            system=SYSTEM_PROMPT,
+            system=self._system,
             messages=list(messages),
             tools=self._tools,
             model=self._model,

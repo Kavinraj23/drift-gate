@@ -77,3 +77,11 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 - Ambiguity: the scored "causal" and "decoy" sets come from the generator's labels (decoys = other changes within 6h before the failure touching the pipeline's own refs). Changes in the window outside both sets count only in the blame denominator.
 ### Needs human / later (integration of N2 + N3)
 - When the live path that calls `Orchestrator.record_incident` is built, it must take the verification-finished time from the audit log itself (the `verification` entry's `ts`), not from a caller-supplied `completed_at`. A wrong value there could let a case see an incident that was still in progress.
+
+### N4 (Tier 1/2 approvals) - Needs human
+
+- Tier 2 approval window: the PRD gives Tier 2 no timeout. `TIER2_TIMEOUT_S` = 60 minutes (src/driftgate/approvals.py) is my assumption; an unbounded window was not acceptable. Confirm or change.
+- Tier 2 on the generated dataset: no execution records which execution holds a state lock, so the 4 labelled Tier 2 scenarios (sc-03, sc-11, sc-29, sc-33) can only be downgraded ("holder death not proven"). The allowed path is exercised on the simulated lock table of the dedicated `eval-tier12` cases. Giving the generator lock-holder data would change seeded dataset bytes and invalidate MVP 1 fixtures, so I did not. Decide whether a later dataset version should carry holders.
+- The dataset has no "who triggered this run" field. The orchestrator takes a `triggered_by` resolver; with none, no approval request is opened (fail closed). The CLI cannot create requests. Decide where the trigger identity should come from for a real source (GitHub: the run's `triggering_actor`).
+- Identities are unauthenticated strings (trusted local CLI). Fine for a local simulation; real approval (Slack) needs authentication first. See docs/design/N4.md.
+- Old note "Tier 2 (M5): ... can never execute": superseded for the simulated lock table (N4); still true for the generated scenarios.

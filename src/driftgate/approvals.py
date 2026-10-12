@@ -24,6 +24,9 @@ guarantee is bookkeeping, against honest mistakes and against a partial or buggy
 None of this resists someone who edits the file with the triggers dropped (the CLI is not authentication); the real
 defence is that execution never trusts an approval alone: `approval_flow` re-runs the full gate from fresh facts.
 
+Schema: `PRAGMA user_version` = `SCHEMA_VERSION`. A new file gets the schema; an existing file must match it
+exactly (version, tables, indexes, triggers) or the store refuses to open (`SchemaError`). There is no migration.
+
 Statuses: pending -> approved | denied | expired | cancelled; approved -> executed | expired | cancelled. Every
 other status is terminal.
 
@@ -83,6 +86,10 @@ class SelfApproval(ApprovalError):
 
 class NotOpen(ApprovalError):
     """The request is not in a status that allows this operation (denied, executed, cancelled, already approved)."""
+
+
+class SchemaError(ApprovalError):
+    """The approvals database is not the current schema. Refused, never migrated or run with the old rules."""
 
 
 class Expired(ApprovalError):
@@ -149,7 +156,7 @@ class Decision:
 
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS requests (
+CREATE TABLE requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     execution_id TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
@@ -157,7 +164,8 @@ CREATE TABLE IF NOT EXISTS requests (
     action TEXT NOT NULL,
     requested_by TEXT NOT NULL CHECK (length(requested_by) > 0 AND requested_by = lower(requested_by)
         AND requested_by = trim(requested_by) AND requested_by NOT LIKE '%  %'
-        AND requested_by NOT GLOB '*[^ -~]*'),
+        AND requested_by NOT GLOB '*[^ -~]*'
+        AND instr(requested_by, char(0)) = 0 AND length(requested_by) = length(CAST(requested_by AS BLOB))),
     requested_at REAL NOT NULL,
     expires_at REAL NOT NULL CHECK (expires_at > requested_at AND expires_at <= requested_at + 3600),
     status TEXT NOT NULL CHECK (status IN ('pending','approved','denied','expired','executed','cancelled')),
@@ -166,26 +174,27 @@ CREATE TABLE IF NOT EXISTS requests (
     note TEXT NOT NULL DEFAULT '',
     gate_seq INTEGER
 );
-CREATE TABLE IF NOT EXISTS decisions (
+CREATE TABLE decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id INTEGER NOT NULL REFERENCES requests(id),
     approver TEXT NOT NULL CHECK (length(approver) > 0 AND approver = lower(approver)
-        AND approver = trim(approver) AND approver NOT LIKE '%  %' AND approver NOT GLOB '*[^ -~]*'),
+        AND approver = trim(approver) AND approver NOT LIKE '%  %' AND approver NOT GLOB '*[^ -~]*'
+        AND instr(approver, char(0)) = 0 AND length(approver) = length(CAST(approver AS BLOB))),
     decision TEXT NOT NULL CHECK (decision IN ('approve','deny')),
     at REAL NOT NULL,
     UNIQUE (request_id, approver)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS one_open_request ON requests (execution_id, action)
+CREATE UNIQUE INDEX one_open_request ON requests (execution_id, action)
     WHERE status IN ('pending', 'approved');
-CREATE TRIGGER IF NOT EXISTS requests_insert_pending_only BEFORE INSERT ON requests
+CREATE TRIGGER requests_insert_pending_only BEFORE INSERT ON requests
 WHEN NEW.status != 'pending'
 BEGIN SELECT RAISE(ABORT, 'a request can only be created pending'); END;
-CREATE TRIGGER IF NOT EXISTS requests_forward_only BEFORE UPDATE OF status ON requests
+CREATE TRIGGER requests_forward_only BEFORE UPDATE OF status ON requests
 WHEN NEW.status != OLD.status AND NOT (
     (OLD.status = 'pending' AND NEW.status IN ('approved','denied','expired','cancelled'))
     OR (OLD.status = 'approved' AND NEW.status IN ('executed','expired','cancelled')))
 BEGIN SELECT RAISE(ABORT, 'illegal status transition'); END;
-CREATE TRIGGER IF NOT EXISTS requests_approved_needs_decisions BEFORE UPDATE OF status ON requests
+CREATE TRIGGER requests_approved_needs_decisions BEFORE UPDATE OF status ON requests
 WHEN ((OLD.status = 'pending' AND NEW.status = 'approved') OR (OLD.status = 'approved' AND NEW.status = 'executed'))
     AND (
     EXISTS (SELECT 1 FROM decisions WHERE request_id = OLD.id AND decision = 'deny')
@@ -193,20 +202,62 @@ WHEN ((OLD.status = 'pending' AND NEW.status = 'approved') OR (OLD.status = 'app
         WHERE request_id = OLD.id AND decision = 'approve' AND approver != OLD.requested_by)
        < (CASE OLD.tier WHEN 1 THEN 1 ELSE 2 END))
 BEGIN SELECT RAISE(ABORT, 'approved/executed needs the approvals that justify it'); END;
-CREATE TRIGGER IF NOT EXISTS requests_identity_frozen
+CREATE TRIGGER requests_identity_frozen
 BEFORE UPDATE OF requested_by, tier, action, execution_id, fingerprint, requested_at, expires_at, required ON requests
 BEGIN SELECT RAISE(ABORT, 'request identity is immutable'); END;
-CREATE TRIGGER IF NOT EXISTS decisions_only_while_pending BEFORE INSERT ON decisions
+CREATE TRIGGER decisions_only_while_pending BEFORE INSERT ON decisions
 WHEN (SELECT status FROM requests WHERE id = NEW.request_id) != 'pending'
 BEGIN SELECT RAISE(ABORT, 'request is not pending'); END;
-CREATE TRIGGER IF NOT EXISTS decisions_no_self_approval BEFORE INSERT ON decisions
+CREATE TRIGGER decisions_no_self_approval BEFORE INSERT ON decisions
 WHEN NEW.decision = 'approve' AND NEW.approver = (SELECT requested_by FROM requests WHERE id = NEW.request_id)
 BEGIN SELECT RAISE(ABORT, 'the person who triggered the run cannot approve it'); END;
-CREATE TRIGGER IF NOT EXISTS decisions_append_only_update BEFORE UPDATE ON decisions
+CREATE TRIGGER decisions_append_only_update BEFORE UPDATE ON decisions
 BEGIN SELECT RAISE(ABORT, 'decisions are append-only'); END;
-CREATE TRIGGER IF NOT EXISTS decisions_append_only_delete BEFORE DELETE ON decisions
+CREATE TRIGGER decisions_append_only_delete BEFORE DELETE ON decisions
 BEGIN SELECT RAISE(ABORT, 'decisions are append-only'); END;
 """
+
+
+SCHEMA_VERSION = 3  # bump on ANY change to _SCHEMA; PRAGMA user_version in the file must equal it
+
+
+def _signature(db: sqlite3.Connection) -> set[tuple[str, str, str]]:
+    rows = db.execute("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
+    return {(r[0], r[1], r[2] or "") for r in rows}
+
+
+def _expected_signature() -> set[tuple[str, str, str]]:
+    ref = sqlite3.connect(":memory:")
+    try:
+        ref.executescript(_SCHEMA)
+        return _signature(ref)
+    finally:
+        ref.close()
+
+
+def _open_checked(db: sqlite3.Connection, path: Path) -> None:
+    """A new (empty, version 0) file gets the current schema and version in one transaction. Anything else must be
+    EXACTLY the current schema (version, tables, indexes, triggers and their SQL), or it is refused: a database
+    from an older build would otherwise keep running without today's CHECKs and triggers. No auto-migration."""
+    version = int(db.execute("PRAGMA user_version").fetchone()[0])
+    found = _signature(db)
+    if version == 0 and not found:
+        newline = chr(10)
+        db.executescript(
+            "BEGIN;" + newline + _SCHEMA + f"PRAGMA user_version = {SCHEMA_VERSION};" + newline + "COMMIT;"
+        )
+        return
+    fix = f"there is no migration: archive {path} (its history is evidence), remove it so a fresh one is created"
+    if version != SCHEMA_VERSION:
+        raise SchemaError(f"{path} has schema version {version}, this build needs {SCHEMA_VERSION}: refused. {fix}")
+    expected = _expected_signature()
+    if found != expected:
+        missing = sorted({n for _, n, _ in expected} - {n for _, n, _ in found})
+        changed = sorted({n for _, n, _ in found ^ expected} - set(missing))
+        raise SchemaError(
+            f"{path} does not match the current schema (missing: {missing or 'none'}; "
+            f"different or unexpected: {changed or 'none'}): refused. {fix}"
+        )
 
 
 def _request(row: sqlite3.Row) -> ApprovalRequest:
@@ -237,8 +288,12 @@ class ApprovalStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(self.path, isolation_level=None)  # explicit transactions below
         self._db.row_factory = sqlite3.Row
+        try:
+            _open_checked(self._db, self.path)
+        except BaseException:
+            self._db.close()
+            raise
         self._db.execute("PRAGMA foreign_keys = ON")
-        self._db.executescript(_SCHEMA)
 
     def close(self) -> None:
         self._db.close()

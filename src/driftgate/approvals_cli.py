@@ -26,7 +26,8 @@ from typing import TextIO
 
 from driftgate.adapters.synthetic import LockTable, load_lock_table, save_lock_table
 from driftgate.approval_flow import ApprovalService, execute_approved
-from driftgate.approvals import ApprovalError, ApprovalRequest, ApprovalStore
+from driftgate.approvals import ApprovalError, ApprovalRequest, ApprovalStore, SchemaError
+from driftgate.audit import AuditLog
 from driftgate.gates import DEFAULT_KILL_SWITCH_PATH
 from driftgate.orchestrator import Orchestrator, build_synthetic_orchestrator, make_synthetic_target
 from driftgate.policy import DEFAULT_POLICY_PATH
@@ -111,7 +112,11 @@ def main(
         print(text, file=stream)
 
     say(BANNER)
-    store = ApprovalStore(args.state_dir / "approvals.sqlite", clock)
+    try:
+        store = ApprovalStore(args.state_dir / "approvals.sqlite", clock)
+    except SchemaError as e:
+        say(f"refused: {e}")
+        return 1
     try:
         try:
             return _run(args, store, pinned, clock, say)
@@ -138,6 +143,36 @@ def _build(store: ApprovalStore, pinned: CliInputs, clock: Clock) -> tuple[Orche
     return orch, locks
 
 
+def _short(text: object, limit: int = 160) -> str:
+    one_line = " ".join(str(text).split())
+    return one_line if len(one_line) <= limit else one_line[: limit - 3] + "..."
+
+
+def _show_history(r: ApprovalRequest, pinned: CliInputs, clock: Clock, say: Callable[[str], None]) -> int:
+    """The request's audit trail, so an operator can see WHY it is stuck pending (a refused approval, a gate
+    precheck that said no) versus timed out. Read-only."""
+    try:
+        entries = [
+            e
+            for e in AuditLog(pinned.audit_path, clock).read()
+            if e.payload.get("request_id") == r.id or e.seq == r.gate_seq
+        ]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        say(f"refused: the audit log could not be read: {type(e).__name__}: {e}")
+        return 1
+    say(f"  audit history ({len(entries)} entr{'y' if len(entries) == 1 else 'ies'}):")
+    for e in entries:
+        p = e.payload
+        parts = [f"#{e.seq}", f"{e.ts:.0f}", e.kind, str(p.get("stage", "request_time"))]
+        for key in ("decision", "approver", "error"):
+            if key in p:
+                parts.append(f"{key}={_short(p[key], 60)}")
+        if "reason" in p:
+            parts.append(f"reason: {_short(p['reason'])}")
+        say("    " + " ".join(parts))
+    return 0
+
+
 def _run(
     args: argparse.Namespace, store: ApprovalStore, pinned: CliInputs, clock: Clock, say: Callable[[str], None]
 ) -> int:
@@ -156,10 +191,16 @@ def _run(
             say(f"  {d.decision:<7} {d.approver} at {d.at:.0f}")
         if r.note:
             say(f"  note: {r.note}")
-        return 0
+        return _show_history(r, pinned, clock, say)
     try:
         orch, locks = _build(store, pinned, clock)
-    except (OSError, ValueError, KeyError, TypeError) as e:  # a malformed lock table, policy or switch: fail closed
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+    ) as e:  # a malformed lock table, policy or switch: fail closed
         say(f"refused: the gate inputs could not be loaded: {type(e).__name__}: {e}")
         return 1
     service = ApprovalService(store, orch.audit, clock, orchestrator=orch)

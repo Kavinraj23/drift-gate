@@ -209,3 +209,10 @@ Append-only run log. One entry per milestone: what was built, decisions made, re
 - 6 Claim-time expiry now audited. 7 Holder equal to the failing execution is `unknown`. 8 Tests for a proven holder whose target dry run fails (Tier 1 and 2).
 - Existing test changes (setup only, assertions unchanged): `tests/approvals/test_approvals_cli.py` harness injects paths via `CliInputs` instead of removed flags; `test_approvals_flow.py::test_a_pending_request_survives_a_restart...` constructs `ApprovalService(..., orchestrator=)`; `test_two_approvals_cannot_stand_in_for_a_missing_holder_proof` and `test_an_approval_cannot_override_the_abort_ceiling` write their forged approvals via `store.approve` because the approve-time gate now (correctly) refuses them through the service; the point of both (execute re-checks) is unchanged. `test_approvals_architecture.py`: the agents/tools import test was replaced by a stricter one covering llm/ and relative imports.
 - N4 still NOT ticked.
+
+## N4 hardening (2026-10-12, branch mvp2/n4-approvals)
+- F1 schema versioning: `PRAGMA user_version` + exact schema signature check on open; stale, mismatched or tampered databases are refused (`SchemaError`, CLI exit 1), no migration. Dropped `IF NOT EXISTS` from the schema (creation only happens on an empty file).
+- F2 tests that drop all triggers and forge rows: claim recount, `approvers()` skipping, `execute_approved` recount. F3 NUL: verified empirically that sqlite `length`/`GLOB` stop at NUL; added `instr(x, char(0)) = 0` and blob-length CHECKs on both identity columns. F5: `AttributeError` added to the CLI load-error catch; tests for bad lock/policy/kill-switch JSON.
+- `approvals show` now prints the request's audit history with gate reasons.
+- F4 and F6 logged in BLOCKERS.md as accepted limits. docs/design/N4.md has a Hardening section.
+- Existing tests: no assertion changed. New: `tests/approvals/test_approvals_hardening.py`. N4 NOT ticked.

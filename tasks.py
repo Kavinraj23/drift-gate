@@ -14,10 +14,8 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
 NOT_IMPLEMENTED: dict[str, str] = {
-    # MVP 2 stubs (see TASKS.md). `holdout-fetch` is human-only; add it to HUMAN_ONLY when it is implemented.
+    # MVP 2 stubs (see TASKS.md). `holdout-fetch` is human-only (network); add it to HUMAN_ONLY when it is implemented.
     "holdout-fetch": "N1",
-    "holdout-validate": "N1",
-    "eval-holdout": "N1",
     "eval-retrieval": "N2",
     "approvals": "N4",
     "trace-report": "N5",
@@ -100,6 +98,22 @@ def eval_() -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def _holdout(command: str) -> int:
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.holdout_eval", command, "--dir", str(ROOT / "holdout")]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def holdout_validate() -> int:
+    """Schema, quotas, hashes, redaction and label timing of the real-log holdout (offline; fails until it is full)."""
+    return _holdout("validate")
+
+
+def eval_holdout() -> int:
+    """Agent vs. baseline on the stored real logs, offline: dev per case, test aggregate only (no API key)."""
+    return _holdout("eval")
+
+
 def playground_reset() -> int:
     """Human-only: force scenario branches back to their baseline tags (see scripts/playground.py)."""
     return run([PY, "scripts/playground.py", "reset", "--yes"])
@@ -128,6 +142,8 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "baseline": baseline,
     "e2e": e2e,
     "eval": eval_,
+    "holdout-validate": holdout_validate,
+    "eval-holdout": eval_holdout,
     "mvp-check": mvp_check,
     "playground-reset": playground_reset,
 }

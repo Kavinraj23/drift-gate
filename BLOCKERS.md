@@ -58,3 +58,8 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 - Confirm real claude-sonnet-5-5 prices in `src/driftgate/llm/config.py`: the lockfile scenario needed Sonnet for the investigator, and the spend cap is computed from that table.
 - Decide whether to reserve tool calls for the reviewer (the shared 8-call budget can starve it); this changes the PRD budget rule, so it was not done.
 - Review the open PRs #2 to #4 on drift-gate-playground; do not merge.
+
+### N1 (real-log holdout) - Needs human
+- The 30 real runs, `holdout-fetch` (network, human-only), and labels do not exist; `holdout-validate` fails by design until they do. Labels must be committed before any agent run on them.
+- Ambiguity: the PRD says "Both stub" for the acceptance commands but does not say how the agent runs on stored logs offline. This milestone reads agent results from `holdout/runs.json` run records; a holdout source adapter and a record path are not built (see `docs/design/N1.md`).
+- Ambiguity: PRD says escalation runs are "at least 3" without naming layers; the schema allows L0..L6 for them.

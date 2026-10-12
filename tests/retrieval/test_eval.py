@@ -87,3 +87,29 @@ def test_the_report_is_honest_and_the_verdict_is_stays_off(arms) -> None:  # typ
     for claim in ("improves", "improved", "better than", "outperform"):
         assert claim not in lowered.replace("improves remediation success", "")
     assert "/" in text  # counts beside percentages
+
+
+def _iso(epoch: float) -> str:
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(epoch, UTC).isoformat()
+
+
+def test_leak_check_judges_against_the_known_case_and_catches_a_mis_bound_call() -> None:
+    from driftgate.eval.retrieval_eval import _leaks_in
+    from driftgate.tools.base import ToolResult
+
+    start = 1_000_000.0
+
+    def match(eid: str, finished: float) -> dict[str, object]:
+        return {"execution_id": eid, "finished_at": _iso(finished)}
+
+    clean = ToolResult("c", "similar_history", True, {"execution_id": "case", "matches": [match("p", start - 5)]})
+    assert _leaks_in([clean], "case", start) == 0
+    # a call answered for another (later) execution: its matches look fine for that execution, not for this case
+    mis_bound = ToolResult("c", "similar_history", True, {"execution_id": "later", "matches": [match("p", start - 5)]})
+    assert _leaks_in([mis_bound], "case", start) == 1
+    late = ToolResult("c", "similar_history", True, {"execution_id": "case", "matches": [match("x", start + 5)]})
+    self_hit = ToolResult("c", "similar_history", True, {"execution_id": "case", "matches": [match("case", start - 5)]})
+    assert _leaks_in([late], "case", start) == 1 and _leaks_in([self_hit], "case", start) == 1
+    assert _leaks_in([ToolResult("c", "similar_history", False, error="refused")], "case", start) == 0

@@ -255,6 +255,7 @@ class Investigator:
         self._budget = budget
         self._model = model
         self._max_tokens = max_response_tokens
+        self._optional = optional_tools
         self._tools = agent_tool_definitions(optional_tools)
         self._system = system_prompt(optional_tools)
 
@@ -262,6 +263,8 @@ class Investigator:
     def investigate(self, execution_id: str, context: str = "") -> Investigation:
         results: list[ToolResult] = []
         seen: set[str] = set()
+        # Bind the case under investigation in code, every round, before the model runs (invariant 16).
+        ctx = self._ctx.bind_case(execution_id) if "similar_history" in self._optional else self._ctx
         messages: list[dict[str, Any]] = [{"role": "user", "content": initial_message(execution_id, context)}]
         st = _Run(execution_id, results)
         nudged = False
@@ -301,7 +304,7 @@ class Investigator:
                 if not self._budget.consume_tool_call():
                     return self._truncated(st, "budget_tool_calls")
                 seen.add(call.id)
-                result = dispatch(self._ctx, call.name, call.input, call.id)
+                result = dispatch(ctx, call.name, call.input, call.id)
                 results.append(result)
                 blocks.append(_tool_result_block(call.id, _render(result), not result.ok))
             messages.append({"role": "user", "content": blocks})

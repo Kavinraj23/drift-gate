@@ -122,9 +122,7 @@ class HistoryProbe:
         offered = any(t.get("name") == TOOL_NAME for t in request.tools)
         if offered and not self._done and resp.tool_calls and all(c.name != "submit_report" for c in resp.tool_calls):
             self._done = True
-            call = ToolCall(
-                f"toolu_{self._execution_id}_sh{self._serial}", TOOL_NAME, {"execution_id": self._execution_id}
-            )
+            call = ToolCall(f"toolu_{self._execution_id}_sh{self._serial}", TOOL_NAME, {})
             resp = ModelResponse(resp.text, [*resp.tool_calls, call], resp.usage, resp.stop_reason)
         return resp
 
@@ -174,11 +172,10 @@ def _scenarios(data_dir: Path) -> list[tuple[FailureLabel, bool, float]]:
 
 
 def run_arms(data_dir: Path) -> tuple[Arm, Arm, Plumbing]:
-    source = SyntheticSource(data_dir)
     off, on = Arm("off"), Arm("on")
     index = HistoryIndex(":memory:")
     leaks = 0
-    for label, held, _start in _scenarios(data_dir):
+    for label, held, start in _scenarios(data_dir):
         r_off = e2e.run_scenario(data_dir, label, held, mode="fake")
         r_on = e2e.run_scenario(
             data_dir,
@@ -193,7 +190,7 @@ def run_arms(data_dir: Path) -> tuple[Arm, Arm, Plumbing]:
             arm.results.append(res)
             if res.outcome is not None:
                 arm.cases.append(agent_case(res))
-        leaks += _leaks(source, r_on)
+        leaks += _leaks(label.execution_id, start, r_on)
     stats = _plumbing(on.results, leaks, len(index))
     return off, on, stats
 
@@ -206,13 +203,23 @@ def _tool_results(res: ScenarioResult) -> list[ToolResult]:
     return [r for r in rounds if r.tool == TOOL_NAME]
 
 
-def _leaks(source: SyntheticSource, res: ScenarioResult) -> int:
-    """Self-check on the tool output itself: every returned match finished before the case started and is not it."""
-    case_id = res.row.execution_id
-    start = start_epoch(source.get_execution(case_id).started_at)
+def _leaks(case_id: str, start: float, res: ScenarioResult) -> int:
+    """Self-check against the independently known case: `case_id` and `start` come from the scenario list, not from
+    what the tool was given. See `_leaks_in`."""
+    return _leaks_in(_tool_results(res), case_id, start)
+
+
+def _leaks_in(results: list[ToolResult], case_id: str, start: float) -> int:
+    """Violations in tool results for the case (`case_id`, started at epoch `start`): a result answering for another
+    execution (a mis-bound call), or any returned match that is the case itself or did not finish strictly before
+    the case started."""
     bad = 0
-    for r in _tool_results(res):
-        for m in r.data.get("matches", []) if r.ok else []:
+    for r in results:
+        if not r.ok:
+            continue
+        if r.data.get("execution_id") != case_id:
+            bad += 1
+        for m in r.data.get("matches", []):
             if m["execution_id"] == case_id or start_epoch(m["finished_at"]) >= start:
                 bad += 1
     return bad
@@ -290,6 +297,10 @@ def render(off: Arm, on: Arm, plumbing: Plumbing, verdict: Verdict) -> str:
         f"({plumbing.matches_returned} matches in total; the index ends with {plumbing.index_size} incidents).",
         f"- Leakage self-check on every returned match (finished strictly before the case started, not the case "
         f"itself): {plumbing.leak_violations} violations.",
+        "- Index time: in this synthetic eval an incident enters the index as of the failed execution's own "
+        "`finished_at`, not the time the agent finished its report, remediation and verification (no latency is "
+        "invented). The live path (`record_incident`) uses the completion time the caller states, which is later and "
+        "so more conservative.",
         "- The index holds only agent-visible report fields from earlier scripted runs of these same scenarios, so a "
         "match is a scripted incident, not a real one.",
         "",

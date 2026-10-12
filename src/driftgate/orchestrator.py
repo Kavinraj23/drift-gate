@@ -205,10 +205,13 @@ class Orchestrator:
             optional_tools=self._optional_tools,
         )
 
-    def record_incident(self, out: Outcome, finished_at: float) -> bool:
-        """Add a finished incident to the history index (N2). The caller states when the incident finished (epoch
-        seconds); only agent-visible report fields are stored, never a label. Returns False when no index is set or
-        the outcome has nothing to index (closed by the pre-filter, or no failed step)."""
+    def record_incident(self, out: Outcome, completed_at: float) -> bool:
+        """Add a finished incident to the history index (N2). `completed_at` (epoch seconds) is the time the incident
+        COMPLETED: the report, the remediation and its verification are all finished, so the incident only becomes
+        visible to cases that start after that. Pass the completion time, not the failed execution's own finish time
+        (which is earlier and would let a case see an incident still in progress); the synthetic eval is the one
+        documented exception. Only agent-visible report fields are stored, never a label. Returns False when no
+        index is set or the outcome has nothing to index (closed by the pre-filter, or no failed step)."""
         if self._history is None or out.kind == CLOSED:
             return False
         analysis = self._ctx.analyzer.analyze(out.execution_id)
@@ -219,7 +222,7 @@ class Orchestrator:
         self._history.add(
             IncidentRecord(
                 execution_id=out.execution_id,
-                finished_at=finished_at,
+                finished_at=completed_at,
                 signature=analysis.primary.id,
                 fingerprint=analysis.fingerprint,
                 excerpt=key_excerpt(self._ctx, analysis),

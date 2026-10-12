@@ -43,15 +43,21 @@ def query_text(analysis: FailureAnalysis, excerpt: str) -> str:
     return f"{analysis.primary.id} {analysis.step} {excerpt}"
 
 
-def similar_history(ctx: ToolContext, execution_id: str) -> dict[str, Any]:
+def similar_history(ctx: ToolContext) -> dict[str, Any]:
+    """Earlier incidents like the bound case. The case id and the as-of time come from `ctx.bound_case`, set by code
+    before the investigation starts; with no bound case the tool refuses (fail closed)."""
     if ctx.history is None:
         raise ValueError("similar_history is not enabled for this run")
+    bound = ctx.bound_case
+    if bound is None:
+        raise ValueError("similar_history is not bound to a case; refusing")
+    execution_id = bound.execution_id
     ex = ctx.source.get_execution(execution_id)
     analysis = ctx.analyzer.analyze(execution_id)
     if analysis is None:
         return {"execution_id": execution_id, "matches": [], "note": "execution did not fail; nothing to look up"}
     matches = ctx.history.query(
-        query_text(analysis, key_excerpt(ctx, analysis)), as_of=start_epoch(ex.started_at), case_id=execution_id
+        query_text(analysis, key_excerpt(ctx, analysis)), as_of=bound.as_of, case_id=execution_id
     )
     out: dict[str, Any] = {
         "execution_id": execution_id,
@@ -72,21 +78,21 @@ def similar_history(ctx: ToolContext, execution_id: str) -> dict[str, Any]:
 
 
 def _handle(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
-    return similar_history(ctx, args["execution_id"])
+    return similar_history(ctx)
 
 
 SPEC = ToolSpec(
     name=NAME,
     description=(
         "Up to 3 earlier incidents whose signature and error text resemble this failure (BM25), each with the "
-        "hypothesis, the action taken and how it ended (verified, not verified, escalated). Only incidents that "
-        "finished before this execution started are searched. Leads only: a past outcome never satisfies a "
+        "hypothesis, the action taken and how it ended (verified, not verified, escalated). Takes no arguments: it "
+        "looks up the case you are investigating. Only incidents that finished before this execution started are "
+        "searched. Leads only: a past outcome never satisfies a "
         "Tier 0 condition and the current evidence still decides. Cheap, but it counts toward your tool-call limit."
     ),
     input_schema={
         "type": "object",
-        "properties": {"execution_id": {"type": "string"}},
-        "required": ["execution_id"],
+        "properties": {},  # no arguments: the case under investigation is bound by code, never named by the model
         "additionalProperties": False,
     },
     handler=_handle,

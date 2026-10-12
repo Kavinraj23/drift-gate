@@ -33,7 +33,7 @@ An agent that investigates failed CI pipeline executions like an on-call platfor
 
 ## Module layout
 
-`domain` (types, output contract) · `prefilter` · `tools/` (one module per agent tool, each a thin wrapper over a deterministic function) · `agents/investigator` · `agents/reviewer` · `llm/gateway` · `llm/fake` (scripted test double) · `gates` (SafetyGate, kill switch, abort ceiling, rate limit) · `audit` · `verify` · `adapters/synthetic` · `adapters/github_actions` · `baseline` · `eval/` · `generator/`. Schemas live in `contracts/`.
+`domain` (types, output contract) · `prefilter` · `tools/` (one module per agent tool, each a thin wrapper over a deterministic function; MVP 2 adds `tools/similar_history` and `tools/changes_in_window`) · `agents/investigator` · `agents/reviewer` · `llm/gateway` · `llm/fake` (scripted test double) · `gates` (SafetyGate, kill switch, abort ceiling, rate limit) · `audit` · `approvals` (persisted Tier 1/2 approvals) · `report` (static HTML trace report) · `verify` · `adapters/synthetic` · `adapters/github_actions` · `baseline` · `eval/` · `generator/`. Schemas live in `contracts/`. The real-log holdout (stored logs, versioned labels, dev/test split) lives in `holdout/` at the repo root, not under `data/`, because `tasks.py data` regenerates `data/`.
 
 ## Invariants
 
@@ -52,6 +52,9 @@ These are never weakened, bypassed, or "temporarily" disabled. Each has a test.
 11. **Credentials only in the gitignored `.env`.** Never read, print, log, or commit them.
 12. **Live GitHub work targets `drift-gate-playground` only.** The adapter refuses any other repo.
 13. **Additive before subtractive** in any multi-step remediation.
+14. **Ground-truth and holdout labels are reachable only by `eval/`.** Nothing else imports or opens `data/ground_truth/` or `holdout/` labels.
+15. **The holdout test split is never inspected during development.** Only aggregate metrics are viewed; the dev split may be read.
+16. **The retrieval index never contains the case under investigation,** nor any incident that finished after it, nor any ground-truth or holdout label.
 
 ## LLM budget
 

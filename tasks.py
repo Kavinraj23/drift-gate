@@ -13,7 +13,15 @@ _VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
 PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
-NOT_IMPLEMENTED: dict[str, str] = {}
+NOT_IMPLEMENTED: dict[str, str] = {
+    # MVP 2 stubs (see TASKS.md). `holdout-fetch` is human-only; add it to HUMAN_ONLY when it is implemented.
+    "holdout-fetch": "N1",
+    "holdout-validate": "N1",
+    "eval-holdout": "N1",
+    "eval-retrieval": "N2",
+    "approvals": "N4",
+    "trace-report": "N5",
+}
 LIVE_TARGETS = {"record", "eval-live", "e2e-live"}  # implemented in driftgate.eval.live; human-only
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
 

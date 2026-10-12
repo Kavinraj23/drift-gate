@@ -323,6 +323,82 @@ Each milestone is one Claude Code work unit on its own branch. Done means its ac
 
 **Learning safeguard:** each milestone ends with a short design note (what, why, what was tested, open doubts) and two questions from the reviewer agent that you answer before merging. The goal is that you can explain every module in an interview.
 
+## MVP 2
+
+**Goal:** prove the agent generalizes beyond the synthetic generator, and give it more context to reason with: memory of past incidents and awareness of recent changes. Add the higher-risk tiers behind real, persisted approvals. Every MVP 1 invariant, gate and budget carries over unchanged.
+
+**Prerequisite:** MVP 1 numbers are frozen as the comparison point. Tag the commit `v1.0-mvp` (the tip of `main` once `mvp1/m8b-live-playground` is merged) and copy the MVP 1 eval tables (`docs/results/report-replay.md` and `docs/results/report-live.md`) into docs/eval/mvp1.md before any MVP 2 change.
+
+**Success criteria:**
+- The eval reports results on real CI logs, separately from synthetic.
+- Retrieval is measured with the tool on vs. off. It ships enabled only if it improves remediation success (remediation recall, or verified / attempted) or cost per case without raising the false remediation rate; otherwise the result is reported as-is and the tool stays off by default.
+- False remediation rate on synthetic data is no worse than MVP 1.
+- Tier 1/2 gate decisions match ground truth on every synthetic Tier 1/2 scenario, including all refusal cases.
+
+### Milestones
+
+| # | Milestone | Done when |
+| --- | --- | --- |
+| N1 | Real-log holdout | Labels validate against a schema; the eval runs offline on stored logs and reports a separate real-data column |
+| N2 | `similar_history` retrieval | Tool tests pass, including the leakage test; eval reports on vs. off |
+| N3 | `changes_in_window` change correlation | Eval reports suspected-change accuracy and the decoy blame rate |
+| N4 | Tier 1/2 with persisted CLI approvals | All gate and approval tests pass (list below) |
+| N5 | Static HTML trace report | Builds offline from a sample audit log; first to cut |
+
+Order: N1 first, since it sets the baseline the rest are measured on. N2 and N3 are parallel-safe. Then N4, then N5.
+
+### N1: Real-log holdout
+- 30 failed GitHub Actions runs from public repositories, chosen to cover layers L1–L4 (at least 4 per layer) plus at least 3 runs that should be escalated, not fixed.
+- Store each failed step's log verbatim with its source: repo, run id, job, commit SHA, URL, and fetch date. Redact anything credential-shaped before storing.
+- Labels in a versioned JSON file: layer, classification, correct action (re-run, specific PR fix, or escalate), and a one-line rationale. Labels are written **before** the agent ever runs on that case.
+- Split: 10 dev cases (may be inspected while developing) and 20 test cases (never inspected; only aggregate metrics are viewed).
+- Fetching logs is a human-run target. The eval reads stored logs and stays offline.
+- With small n, report counts alongside percentages (e.g. 14/20).
+
+### N2: Retrieval over past incidents
+- Index every completed report in SQLite FTS5: error signature, fingerprint, key error excerpt, hypothesis, action taken, verification outcome.
+- `similar_history` returns the top 3 matches by BM25 with their outcome. Like every tool, results get a tool call id that evidence must cite.
+- **No leakage:** the index only contains incidents that finished before the case being investigated, and never the case itself or any ground-truth label. A test enforces this.
+- The agent decides when to call it; it's not forced into every investigation.
+
+### N3: Change correlation
+- `changes_in_window` returns commits and events (template bumps, credential rotations) in the window before the first failure, including decoys with no causal link.
+- The report's `suspected_change` is scored against ground truth. Track the decoy blame rate separately.
+
+### N4: Tier 1/2 approvals
+- Tier 1: one approval, 15-minute timeout; expiry escalates.
+- Tier 2: simulated state-lock force-unlock. Requires holder-death proof (the lock holder's execution is terminal and its id matches the lock) and two approvals from two different people. Hard refusal if the holder is still running.
+- Approvals persist in SQLite and survive restarts. The person who triggered a run cannot approve it.
+- Approval decisions pass through SafetyGate; an approval can never skip a gate.
+- Required tests: timeout escalates; Tier 2 refuses a live holder; Tier 2 refuses one approver; the same person can't approve twice; self-approval is refused; pending approvals survive a restart; model confidence never qualifies Tier 2.
+- Tier 1/2 actions remain stubbed; nothing executes against live infrastructure.
+
+### N5: Trace report
+- A static HTML page per investigation, generated from the audit log: tool calls, evidence with citations, gate decision, approvals, outcome. No web server, no new dependencies.
+
+### Tech decisions
+- Retrieval uses SQLite FTS5 with BM25, built into Python. No vector database: CI failures match on exact error strings. Add embeddings only if the eval shows BM25 missing paraphrased failures, and then try local embeddings alongside SQLite before any server.
+- Approvals use a CLI. A Slack approval channel is the planned next step after MVP 2, not part of it.
+- No new runtime dependencies in MVP 2.
+
+### Budget
+- Real API spend comes from what remains of the project budget after MVP 1. Read the gateway's lifetime total, and set the MVP 2 live cap to the remainder minus a $0.25 reserve. If the remainder is not above the reserve, MVP 2 has no live budget until the owner sets a new cap explicitly.
+- Development stays on the fake model and replay fixtures. Live spend is only for recording fixtures and the final eval, both run by me.
+- Running the 20 real test cases plus the retrieval on/off comparison is the priority use of live budget.
+
+### Risks
+- **Holdout too easy or too narrow:** enforce the per-layer quotas and include escalation cases.
+- **Labeling bias:** labels written before running the agent; test split never inspected.
+- **Retrieval leakage inflating results:** time-ordered index plus a leakage test.
+- **Small sample size:** report counts, and don't claim differences of one or two cases as improvements.
+- **Budget running out:** run the test split first, ablations second.
+
+### Non-goals for MVP 2
+- Vector database or hosted search.
+- Slack or any chat interface to the agent.
+- Real Tier 1/2 execution against live infrastructure.
+- Multi-repo or multi-tenant deployment, or a web application.
+
 ## Honest framing and non-goals
 
 **Framing.** Built without production CI access, using a fault-injection harness that generates labeled incidents. The same engine runs unchanged against real GitHub Actions, where re-run and pull-request remediations execute for real. Tier 1 and 2 actions are gated, dry-run, and audited with stubbed execution. No claim of production traffic, real incident volume, or team adoption.

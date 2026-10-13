@@ -60,7 +60,7 @@ def test_agents_and_tools_do_not_import_remediation_targets(sub: str) -> None:
 
 
 LIVE = "eval/live.py"
-ENV_READERS = {"llm/config.py", "adapters/github_client.py", LIVE}
+ENV_READERS = {"llm/config.py", "adapters/github_client.py", LIVE, "eval/holdout_fetch.py"}
 ENV_NAMES = {"load_dotenv", "dotenv_values", "getenv", "environ"}
 
 

@@ -29,4 +29,6 @@ These spend real API budget (cap $2.50 total) and touch the GitHub playground re
 - `python tasks.py eval-live`: the eval against the real API with a fixed spend cap; produces the numbers that should be reported.
 - `python tasks.py playground-reset`, then `python tasks.py e2e-live`: reset the playground to its baseline tag and run live scenarios (a real re-run and a real PR, never merged by the agent).
 
+- `python tasks.py holdout-fetch`: MVP 2 real-log holdout. Prints a plan from `holdout/candidates.json` and makes no request; `python tasks.py holdout-fetch --yes-fetch` then fetches the failed step's log of each listed PUBLIC run with a separate read-only token (`HOLDOUT_FETCH_TOKEN` in `.env`, GET only; the playground token is not used). It never writes labels; `--skeleton` prints a labels skeleton offline.
+
 Until these are run there are no real-model numbers.

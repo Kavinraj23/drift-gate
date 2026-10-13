@@ -22,6 +22,13 @@ ARG_TARGETS = {"approvals", "trace-report"}
 #: only other target that does, and it is human-only (read-only GET-only fetch of public logs; plan mode by default).
 FETCH_TARGETS = {"holdout-fetch"}
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset", "holdout-fetch"}
+# N1 holdout runner. Both take options, validated by their own argparse, and neither is in LIVE_TARGETS or ARG_TARGETS
+# (existing tests pin those sets exactly, as with holdout-fetch). `main` dispatches them explicitly:
+#   run-holdout     offline: driftgate.eval.holdout_run (replay fixtures or the plumbing double; no key, no spend)
+#   record-holdout  HUMAN ONLY: driftgate.eval.live record-holdout (--estimate | --yes-spend; real API under the caps)
+RUNNER_TARGETS = {"run-holdout", "record-holdout"}
+RECORD_HOLDOUT = "record-holdout"
+HUMAN_ONLY |= {RECORD_HOLDOUT}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
 IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8a", "M9a"}
@@ -197,6 +204,8 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "holdout-validate": holdout_validate,
     "eval-holdout": eval_holdout,
     "holdout-fetch": lambda: holdout_fetch([]),
+    "run-holdout": lambda: run_holdout([]),
+    "record-holdout": lambda: _live(RECORD_HOLDOUT, []),
     "eval-retrieval": eval_retrieval,
     "eval-tier12": eval_tier12,
     "mvp-check": mvp_check,
@@ -210,17 +219,38 @@ def _live(target: str, extra: list[str]) -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def run_holdout(extra: list[str]) -> int:
+    """Offline: run the agent on the stored real-log holdout (replay fixtures or the deterministic double); no key."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.holdout_run", "--dir", str(ROOT / "holdout"), *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def autonomous_present() -> bool:
+    """`.autonomous` at the repo root, or at the main checkout when this is a worktree; a dangling symlink counts."""
+    src = str(Path(__file__).resolve().parent / "src")
+    if not sys.path or sys.path[0] != src:
+        sys.path.insert(0, src)
+    from driftgate.autonomy import autonomous_present_at
+
+    return autonomous_present_at(ROOT)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print("usage: python tasks.py <target> [options]")
         return 2
     target = argv[1]
-    if len(argv) > 2 and target not in LIVE_TARGETS | ARG_TARGETS | FETCH_TARGETS:
+    if len(argv) > 2 and target not in LIVE_TARGETS | ARG_TARGETS | FETCH_TARGETS | RUNNER_TARGETS:
         print("usage: python tasks.py <target>")
         return 2
-    if target in HUMAN_ONLY and (ROOT / ".autonomous").exists():
+    if target in HUMAN_ONLY and autonomous_present():
         print(f"refusing: '{target}' is human-only and .autonomous exists")
         return 1
+    if target == RECORD_HOLDOUT:  # not in LIVE_TARGETS (pinned by tests); the live module still enforces its own caps
+        return _live(RECORD_HOLDOUT, argv[2:])
+    if target == "run-holdout":
+        return run_holdout(argv[2:])
     if target in LIVE_TARGETS:
         return _live(target, argv[2:])
     if target in FETCH_TARGETS:

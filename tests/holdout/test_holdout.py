@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator
 
 from driftgate.eval import holdout as hd
 from driftgate.eval import holdout_eval as he
+from driftgate.eval.holdout_meta import record_digest
 from driftgate.generator.catalog import load_catalog
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
@@ -351,6 +352,21 @@ def test_agent_column_comes_from_run_records_only(root: Path, capsys: pytest.Cap
     cases, logs = full_set()
     runs = [_run_for(c, "2026-10-16T00:00:00Z") for c in cases[:4]]  # four dev reruns, the agent got them right
     _write(root, cases, logs, runs)
+    # The agent column needs a real-model provenance entry matching each record (see holdout_meta); without one the
+    # command refuses, which tests/holdout/test_holdout_run.py covers.
+    meta = {
+        r["case_id"]: {
+            "mode": "replay",
+            "model": "claude-haiku-test",
+            "provenance": "recorded_real_model",
+            "fixture_id": r["case_id"],
+            "tools": "none",
+            "tools_backing": "none",
+            "record_sha256": record_digest(r),
+        }
+        for r in runs
+    }
+    (root / "runs_meta.json").write_text(json.dumps({"schema_version": 2, "runs": meta}), encoding="utf-8")
     assert he.main(["eval", "--dir", str(root)], clock=lambda: NOW) == 0
     out = capsys.readouterr().out
     assert "4/10 run" in out and "0/20 run" in out

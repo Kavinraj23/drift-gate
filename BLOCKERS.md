@@ -61,7 +61,7 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 
 ### N1 (real-log holdout) - Needs human
 - The 30 real runs, `holdout-fetch` (network, human-only), and labels do not exist; `holdout-validate` fails by design until they do. Labels must be committed before any agent run on them.
-- Ambiguity: the PRD says "Both stub" for the acceptance commands but does not say how the agent runs on stored logs offline. This milestone reads agent results from `holdout/runs.json` run records; a holdout source adapter and a record path are not built (see `docs/design/N1.md`).
+- RESOLVED by the runner (docs/design/N1-runner.md): the agent runs on stored logs through `HoldoutSource` (log text and source metadata only) under `eval/holdout_run.py` (`run-holdout`, offline: replay fixtures or the plumbing double) and `record-holdout` (human-only, real API under the gateway caps). Run records go to `holdout/runs.json` (schema unchanged) with a sidecar `runs_meta.json`.
 - Ambiguity: PRD says escalation runs are "at least 3" without naming layers; the schema allows L0..L6 for them.
 
 ### N1 fetch half (`holdout-fetch`) - Needs human
@@ -113,3 +113,10 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 ### N1 fetch half round 3 - Needs human
 - The log framing (timestamp prefix, `##[group]Run/Post`, runner-phase headers, a timestamped `##[error]` ending a failed step) is ASSUMED, not sourced. To make the extractor trustworthy, supply ONE redacted real job log under `tests/github/fixtures/real/` with a `.source.txt` (URL, date, redactions; framing untouched), ideally with a `Post` step and the final cleanup lines. See docs/design/N1-fetch.md, 'Supplying a real sample'.
 - A job with several failed steps now needs `"step"` in candidates.json (name or number), by human decision; unnamed ones are refused.
+
+### N1 runner - Needs human
+- **Abort ceiling vs a lone stored job** (docs/design/N1-runner.md, doubt 1). Human decision recorded: the runner does NOT lift the ceiling's resource-set total; gate inputs are the production derivation. A single stored job is 100% of its resource set, so the ceiling refuses every Tier 0 re-run and `rerun` may be unreachable on single-job holdout cases (the headline `rerun` recall can be zero whatever the agent does). To keep the agent visible, each case also records its proposal before the gates and eval-holdout prints a separate ungated block (including `refused by the abort ceiling only`). A human may later decide a different modelling (for example storing the real job count of the run at fetch time); nothing here assumes it.
+- **Optional tools refused for holdout runs** (`--tools similar_history|changes_in_window|both`): real logs have no history or change timeline. The N2/N3 on/off comparison stays on the synthetic data. If the PRD intends a tools-on holdout arm, say what honest inputs it should get.
+- Ambiguity: PRD does not say whether Tier 3 on a holdout case needs a reviewed diff. The runner scores the proposal (non-empty diff and paths) with no reviewer, since no repository content is stored.
+- Recording is human-only and unrun: `python tasks.py record-holdout --estimate`, then `--yes-spend` once the real labels are committed. Fixtures go to `fixtures/replay-holdout/` and must be committed with the run records; any prompt or tool change makes them stale.
+- Run records come only from the real model (`record-holdout`, or replay of its fixtures). `holdout/runs_meta.json` and `fixtures/replay-holdout/` hold per-case data for test cases: do not open them. `eval-holdout` refuses to build the agent column if any latest run record lacks a matching real-model sidecar entry.

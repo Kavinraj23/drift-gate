@@ -6,9 +6,12 @@ What this is
   the agent PROPOSED and what the gate DECIDED. Nothing is executed: the target is `ProposalOnlyTarget`, which has no
   capability at all (`execute`, `verify` and `rollback` raise). No `RemediationTarget` implementation from `adapters/`
   is imported, and nothing here can reach GitHub (invariants 1, 4, 12).
-- The gate runs on deterministic facts exactly as in the synthetic pipeline. With no history, Tier 0 can qualify only
-  through a Tier 0 known-transient rule (plus a deterministic signature match); Tier 2 never qualifies on confidence.
-  One documented deviation, `assume_other_jobs`: see `HoldoutOrchestrator`.
+- The gate runs on deterministic facts EXACTLY as the production derivation produces them (no invented resource set
+  total). With no history, Tier 0 can qualify only through a Tier 0 known-transient rule (plus a deterministic
+  signature match); Tier 2 never qualifies on confidence. A lone stored job is 100% of its resource set, so the abort
+  ceiling may refuse a Tier 0 re-run: that is the honest gate outcome. To keep the agent's behaviour visible, each case
+  records TWO views: `action_after_gates` (the headline; goes into runs.json) and `proposal_before_gates` (what the
+  agent proposed, plus the gate's decision and reason code; sidecar only, and NOT a result).
 - Tier 3 is scored on the proposal: the PR path with `allow_unreviewed_tier3` (no repository content is stored, so
   there is nothing to diff-check or review against). A Tier 3 proposal counts as `pr_fix` only if it carries a
   non-empty diff and paths; the diff itself is never judged. This is stated in every report.
@@ -25,6 +28,12 @@ past for every case, and `labels.json` must have no uncommitted changes (an unkn
 
 The test split is sealed: it is run through `Holdout.test_aggregate`, nothing per case is printed for it (only counts),
 and the only per-case artefacts are the run records the schema requires and a cost/tool-count sidecar.
+`holdout/runs_meta.json` and `fixtures/replay-holdout/` hold per-case data for test cases (cost, proposals, recorded
+model responses): do not open them.
+
+Fake-mode (the scripted double) runs NEVER write run records: they are plumbing checks. Run records come only from the
+real model (`record-holdout` live, or replay of the fixtures it wrote), each with a provenance entry in the sidecar.
+Each case's record is written (atomically) as soon as that case finishes, so a crash does not lose earlier ones.
 """
 
 from __future__ import annotations
@@ -37,7 +46,7 @@ import sys
 import tempfile
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -57,8 +66,17 @@ from driftgate.eval.holdout import (
     validate,
 )
 from driftgate.eval.holdout_eval import GitStatus, git_labels_status
+from driftgate.eval.holdout_meta import (
+    META_FILE,
+    META_VERSION,
+    MODE_FAKE,
+    MODE_REPLAY,
+    RUNS_FILE,
+    provenance_for,
+    record_digest,
+)
 from driftgate.eval.holdout_source import TIME_BASIS_FETCH, TIME_BASIS_LOG, HoldoutInput, HoldoutSource
-from driftgate.gates import DEFAULT_KILL_SWITCH_PATH, KillSwitch, RateLimiter, SafetyGate
+from driftgate.gates import DEFAULT_KILL_SWITCH_PATH, GateFacts, KillSwitch, RateLimiter, SafetyGate
 from driftgate.llm.budget import InvestigationBudget
 from driftgate.llm.config import GatewayConfig, InvestigationLimits
 from driftgate.llm.errors import FixtureMissing
@@ -72,9 +90,6 @@ from driftgate.retrieval import HistoryIndex
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_FIXTURES = ROOT / "fixtures" / "replay-holdout"
-RUNS_FILE = "runs.json"
-META_FILE = "runs_meta.json"
-META_VERSION = 1
 
 #: `--tools`: which optional tools the agent is offered. The default is none (the MVP 1 tool set).
 TOOL_SETS: dict[str, frozenset[str]] = {
@@ -94,21 +109,26 @@ TOOLS_REFUSAL = (
     "meaningless. The N2/N3 comparison stays on the synthetic data. Use --tools none."
 )
 
-REPLAY, FAKE = "replay", "fake"
+REPLAY, FAKE = MODE_REPLAY, MODE_FAKE
 MODES = ("auto", "fake", "replay")
 RERUN_ACTIONS = ("rerun_failed_job", "rerun_workflow")
 FAKE_MODEL_NAME = "fake:deterministic-plumbing-double"
 TARGET_DESCRIPTION = "proposal-only: execute, verify and rollback raise; nothing is executed"
 GATE_NOTE = (
-    "abort-ceiling set-size check not applicable to a lone stored job (assume_other_jobs); every other gate check "
-    "unchanged"
+    "gate inputs are the production derivation, unmodified; a lone stored job is 100% of its resource set, so the "
+    "abort ceiling may refuse a Tier 0 re-run (honest gate outcome). The headline is the action AFTER the gates; the "
+    "proposal BEFORE the gates is a separate, ungated view"
+)
+SEALED_NOTE = (
+    "note: holdout/runs_meta.json and fixtures/replay-holdout/ hold per-case data for test-split cases (cost, "
+    "proposals before gates, recorded model responses). Do not open them; read the aggregate output only."
 )
 SCORING_NOTE = (
     "Tier 3 scored on the proposal (non-empty diff and paths); no repository content is stored, so no diff check "
     "and no reviewer. Nothing is executed."
 )
 
-META_NOTES = {"target": TARGET_DESCRIPTION, "gate_assumption": GATE_NOTE, "scoring": SCORING_NOTE}
+META_NOTES = {"target": TARGET_DESCRIPTION, "gate_inputs": GATE_NOTE, "scoring": SCORING_NOTE, "sealed": SEALED_NOTE}
 
 Clock = Callable[[], datetime]
 ModelFactory = Callable[[str, InvestigationBudget], ModelClient]
@@ -146,29 +166,15 @@ class ProposalOnlyTarget:
         raise AssertionError("holdout runs never roll back a remediation")
 
 
-class HoldoutOrchestrator(Orchestrator):
-    """The real orchestrator with ONE documented deviation in the facts it hands the gate (`assume_other_jobs`).
+class FactsRecordingOrchestrator(Orchestrator):
+    """The real orchestrator, unmodified in behaviour: it only remembers the last facts it handed the gate, so the
+    report can say whether the abort ceiling alone refused a proposal. Nothing is changed or lifted."""
 
-    The abort ceiling refuses a Tier 0 action that would touch 100% of its resource set. A stored holdout case is one
-    job of a larger workflow run whose other jobs are unknown, so the set is "one failed job out of an unknown
-    number": the check cannot be evaluated, and left as is it would refuse every re-run and make `rerun` unreachable.
-    With `assume_other_jobs` (default) the total is lifted to one more than the proposed size for Tier 0 only. This
-    is NOT invented data about the run (nothing reads it back); it is a statement that the 100% rule does not apply.
-    The kill switch, rate limit, fleet blast radius (honestly empty here), signature match and known-transient rule
-    are untouched, and the gate still only downgrades. The flag is recorded in `runs_meta.json`."""
-
-    assume_other_jobs = True
+    last_facts: GateFacts | None = None
 
     def _gate_facts(self, execution_id, proposal, analysis, fleet, fingerprint, report, gate_results, proof=None):  # type: ignore[no-untyped-def]
         facts = super()._gate_facts(execution_id, proposal, analysis, fleet, fingerprint, report, gate_results, proof)
-        if (
-            self.assume_other_jobs
-            and proposal.remediation.tier == 0
-            and facts.proposed_set_size is not None
-            and facts.resource_set_total is not None
-            and facts.proposed_set_size >= facts.resource_set_total
-        ):
-            facts = replace(facts, resource_set_total=facts.proposed_set_size + 1)
+        self.last_facts = facts
         return facts
 
 
@@ -309,6 +315,7 @@ class CaseRun:
     output_tokens: int
     cost_usd: float
     dry_runs: tuple[str, ...]  # what the proposal-only target was asked to dry-run (never executed)
+    proposal: dict[str, Any]  # the ungated view: what the agent proposed and what the gate said (not the headline)
 
 
 def map_outcome(outcome: Outcome) -> tuple[str, str, dict[str, str], str]:
@@ -335,6 +342,64 @@ def map_outcome(outcome: Outcome) -> tuple[str, str, dict[str, str], str]:
     )
 
 
+#: Gate reason text (gates.py) -> a short, stable code. First match wins.
+_REASON_CODES: tuple[tuple[str, str], ...] = (
+    ("100% of the resource set", "abort_ceiling_set_100pct"),
+    ("empty proposed set", "empty_set"),
+    ("kill switch", "kill_switch"),
+    ("rate limit", "rate_limit"),
+    ("blast radius", "fleet_blast_radius"),
+    ("more than one shared resource", "shared_resources"),
+    ("resource set size unknown", "set_size_unknown"),
+    ("second failure", "prior_tier0_failed"),
+    ("no deterministic signature match", "no_signature_match"),
+    ("no flake precedent", "no_tier0_eligibility"),
+    ("does not match tier", "gate_label_mismatch"),
+)
+ABORT_CEILING_CODE = "abort_ceiling_set_100pct"
+
+
+def reason_code(reason: str) -> str:
+    return next((code for needle, code in _REASON_CODES if needle in reason), "other")
+
+
+def _ceiling_was_the_only_blocker(gate: Any, facts: GateFacts | None) -> bool:
+    """True when the gate refused on the 100%-of-set ceiling AND every other deterministic Tier 0 condition (signature
+    match, known-transient rule or flake precedent, no prior failed retry, blast radius within the ceiling, at most
+    one shared resource) was met. Read from the gate's own inputs; nothing is re-decided or lifted."""
+    if facts is None or gate is None or gate.decision != "refused" or reason_code(gate.reason) != ABORT_CEILING_CODE:
+        return False
+    return (
+        facts.signature_match
+        and (facts.flake_precedent or facts.known_transient_rule)
+        and not facts.prior_tier0_failed
+        and facts.blast_radius.executions_affected <= (gate.abort_ceiling or 0)
+        and len(set(facts.shared_resources)) <= 1
+    )
+
+
+def proposal_view(outcome: Outcome, facts: GateFacts | None) -> dict[str, Any]:
+    """What the agent PROPOSED (before any gate) in the holdout vocabulary, with the gate's decision and reason code.
+    This is an ungated view for understanding the agent. It is never the headline and never scored as a result."""
+    rem = outcome.report.remediation
+    gate = outcome.gate
+    view: dict[str, Any] = {"kind": "escalate", "tier": None, "action": None}
+    if rem is not None:
+        view["tier"], view["action"] = rem.tier, rem.action
+        if rem.tier == 0 and rem.action in RERUN_ACTIONS:
+            view["kind"] = "rerun"
+        elif rem.tier == 3:
+            inv = outcome.investigation
+            proposal = inv.proposal if inv is not None else None
+            if proposal is not None and proposal.diff.strip() and proposal.paths:
+                view["kind"], view["fix"] = "pr_fix", rem.action
+    view["gate_decision"] = gate.decision if gate is not None else "none"
+    view["gate_reason"] = gate.reason if gate is not None else ""
+    view["gate_reason_code"] = reason_code(gate.reason) if gate is not None else "none"
+    view["refused_by_abort_ceiling_only"] = _ceiling_was_the_only_blocker(gate, facts)
+    return view
+
+
 def build_orchestrator(
     source: HoldoutSource,
     target: ProposalOnlyTarget,
@@ -344,12 +409,11 @@ def build_orchestrator(
     tools: str = "none",
     kill_switch_path: Path | str = DEFAULT_KILL_SWITCH_PATH,
     policy_path: Path | str = DEFAULT_POLICY_PATH,
-    assume_other_jobs: bool = True,
-) -> HoldoutOrchestrator:
+) -> FactsRecordingOrchestrator:
     clock = StepClock()
     enabled = TOOL_SETS[tools]
     gate = SafetyGate(KillSwitch(kill_switch_path), RateLimiter(clock), load_policy(policy_path).abort_ceiling)
-    orch = HoldoutOrchestrator(
+    orch = FactsRecordingOrchestrator(
         source,
         target,
         gate,
@@ -361,7 +425,6 @@ def build_orchestrator(
         history=HistoryIndex(":memory:") if "similar_history" in enabled else None,
         optional_tools=enabled,
     )
-    orch.assume_other_jobs = assume_other_jobs
     return orch
 
 
@@ -372,7 +435,6 @@ def run_case(
     tools: str = "none",
     kill_switch_path: Path | str = DEFAULT_KILL_SWITCH_PATH,
     policy_path: Path | str = DEFAULT_POLICY_PATH,
-    assume_other_jobs: bool = True,
 ) -> CaseRun:
     """Run the pipeline on one case. Raises `FixtureMissing` when a replay fixture is absent."""
     source, target = HoldoutSource(inp), ProposalOnlyTarget()
@@ -385,9 +447,9 @@ def run_case(
             tools=tools,
             kill_switch_path=kill_switch_path,
             policy_path=policy_path,
-            assume_other_jobs=assume_other_jobs,
         )
         outcome = orch.handle(inp.case_id)
+        facts = orch.last_facts
     layer, classification, action, note = map_outcome(outcome)
     run = outcome.report.run
     return CaseRun(
@@ -404,6 +466,7 @@ def run_case(
         output_tokens=run.output_tokens,
         cost_usd=run.cost_usd,
         dry_runs=tuple(target.dry_runs),
+        proposal=proposal_view(outcome, facts),
     )
 
 
@@ -461,13 +524,16 @@ def run_record(case: HoldoutCase, run: CaseRun, ran_at: datetime) -> dict[str, A
 
 
 def meta_entry(
-    run: CaseRun, ran_at: datetime, *, mode: str, model: str, tools: str, fixture_id: str | None
+    run: CaseRun, record: dict[str, Any], ran_at: datetime, *, mode: str, model: str, tools: str, fixture_id: str | None
 ) -> dict[str, Any]:
-    """Cost and provenance for one run, keyed by case id in `runs_meta.json`. No outcome, no label, no log text."""
+    """Cost, provenance and the ungated proposal for one run, keyed by case id in `runs_meta.json`. `provenance` and
+    `record_sha256` are what `eval-holdout` requires before it will use the run record. No label, no log text."""
     return {
         "ran_at": iso(ran_at),
         "mode": mode,
         "model": model,
+        "provenance": provenance_for(mode),
+        "record_sha256": record_digest(record),
         "tools": tools,
         "tools_backing": TOOLS_BACKING,
         "fixture_id": fixture_id,
@@ -477,7 +543,7 @@ def meta_entry(
         "input_tokens": run.input_tokens,
         "output_tokens": run.output_tokens,
         "cost_usd": round(run.cost_usd, 6),
-        "gate_assumptions": ["assume_other_jobs"],
+        "proposal_before_gates": dict(run.proposal),  # ungated view; NOT the headline
     }
 
 
@@ -489,7 +555,9 @@ def _write_json(path: Path, doc: dict[str, Any]) -> None:
 
 def append_records(root: Path, records: list[dict[str, Any]], meta: dict[str, dict[str, Any]]) -> None:
     """Append run records to runs.json (latest wins per case at load time) and merge the sidecar. The schema of
-    runs.json is untouched; extra provenance lives only in runs_meta.json."""
+    runs.json is untouched; extra provenance lives only in runs_meta.json. Both writes are atomic. runs.json goes first:
+    a crash between the two leaves a record with no matching sidecar entry, which `eval-holdout` refuses (loudly)
+    instead of trusting."""
     if not records:
         return
     runs_path = root / RUNS_FILE
@@ -528,6 +596,19 @@ class Session:
     records: list[dict[str, Any]] = field(default_factory=list)
     meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     stopped: str = ""
+    #: Where a finished case's record goes (once per case, as soon as it is done). None: nothing is written.
+    sink: Callable[[list[dict[str, Any]], dict[str, dict[str, Any]]], None] | None = None
+    committed: set[str] = field(default_factory=set)
+
+
+def commit_case(session: Session, case_id: str) -> None:
+    """Write one finished case's record and sidecar entry now (atomically), so a later crash cannot lose them. A case
+    whose record was dropped (gateway failure) or never made (fake double) has nothing pending and writes nothing."""
+    record = next((r for r in session.records if r["case_id"] == case_id), None)
+    if record is None or case_id in session.committed or session.sink is None:
+        return
+    session.sink([record], {case_id: session.meta[case_id]})
+    session.committed.add(case_id)
 
 
 @dataclass(frozen=True)
@@ -553,8 +634,6 @@ class RunContext:
     rerun: bool = False
     kill_switch_path: Path | str = DEFAULT_KILL_SWITCH_PATH
     policy_path: Path | str = DEFAULT_POLICY_PATH
-    allow_fake_records: bool = False
-    assume_other_jobs: bool = True
 
 
 def skip_reason(ctx: RunContext, case: HoldoutCase, prior: RunRecord | None) -> str:
@@ -583,15 +662,15 @@ def process_case(
                 tools=ctx.tools,
                 kill_switch_path=ctx.kill_switch_path,
                 policy_path=ctx.policy_path,
-                assume_other_jobs=ctx.assume_other_jobs,
             )
         except FixtureMissing:
             continue
-        if choice.mode == FAKE and not ctx.allow_fake_records:
-            return "ran", run, f"not recorded ({choice.model})"
-        session.records.append(run_record(case, run, ctx.now))
+        if choice.mode == FAKE:  # a scripted double is a plumbing check: it NEVER produces a run record
+            return "ran", run, f"not recorded ({choice.model}; fake runs never write run records)"
+        record = run_record(case, run, ctx.now)
+        session.records.append(record)
         session.meta[case.id] = meta_entry(
-            run, ctx.now, mode=choice.mode, model=choice.model, tools=ctx.tools, fixture_id=choice.fixture_id
+            run, record, ctx.now, mode=choice.mode, model=choice.model, tools=ctx.tools, fixture_id=choice.fixture_id
         )
         return "ran", run, "recorded"
     return "no_fixture", None, "no replay fixture (missing or stale)"
@@ -694,7 +773,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--cases", nargs="*", default=None, help="run only these case ids")
     ap.add_argument("--tools", choices=sorted(TOOL_SETS), default="none")
     ap.add_argument("--write", action="store_true", help="append run records to runs.json (replay-served cases)")
-    ap.add_argument("--allow-fake-records", action="store_true", help="also record cases run by the fake double")
     ap.add_argument("--rerun", action="store_true", help="run cases that already have a run record")
     return ap.parse_args(argv)
 
@@ -712,9 +790,6 @@ def main(
     if args.tools != "none":
         print(TOOLS_REFUSAL.format(tools=args.tools), file=out)
         return 2
-    if args.allow_fake_records and not args.write:
-        print("--allow-fake-records only matters with --write", file=out)
-        return 2
     try:
         holdout = preflight(args.dir, now, git_status or git_labels_status)
     except RunRefused as e:
@@ -730,21 +805,29 @@ def main(
         tools=args.tools,
         wanted=frozenset(args.cases) if args.cases is not None else None,
         rerun=args.rerun,
-        allow_fake_records=args.write and args.allow_fake_records,
     )
     print(f"run-holdout (offline, no API key, nothing executed): model source: {desc}", file=out)
     print("tools offered: standard set only (optional tools are refused for holdout runs)", file=out)
     print(f"target: {TARGET_DESCRIPTION}. Gate: {GATE_NOTE}. {SCORING_NOTE}", file=out)
-    session = Session()
-    tallies = iterate(holdout, lambda c, lg, p: process_case(ctx, session, choose, c, lg, p), order=order, out=out)
+    print(SEALED_NOTE, file=out)
+    session = Session(sink=(lambda recs, meta: append_records(args.dir, recs, meta)) if args.write else None)
+
+    def process(c: HoldoutCase, lg: str, p: RunRecord | None) -> tuple[str, CaseRun | None, str]:
+        result = process_case(ctx, session, choose, c, lg, p)
+        commit_case(session, c.id)  # written now, not at the end: a crash later cannot lose it
+        return result
+
+    tallies = iterate(holdout, process, order=order, out=out)
     print_tallies(tallies, order, out)
     if args.write:
-        append_records(args.dir, session.records, session.meta)
-        print(f"wrote {len(session.records)} run record(s) to {args.dir / RUNS_FILE} (+ {META_FILE})", file=out)
+        print(f"wrote {len(session.committed)} run record(s) to {args.dir / RUNS_FILE} (+ {META_FILE})", file=out)
     else:
         print("no files written (pass --write to append run records)", file=out)
     if args.mode != REPLAY:
-        print("note: cases served by the fake double are plumbing checks, not agent results.", file=out)
+        print(
+            "note: cases served by the fake double are plumbing checks, not agent results; they write no records.",
+            file=out,
+        )
     return 0
 
 

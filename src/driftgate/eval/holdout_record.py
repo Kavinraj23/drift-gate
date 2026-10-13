@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from driftgate.agents.fingerprint import prompt_fingerprint
 from driftgate.eval.holdout import Holdout, HoldoutCase, RunRecord
@@ -30,6 +30,7 @@ from driftgate.eval.holdout_run import (
     Choice,
     RunContext,
     Session,
+    commit_case,
     inputs_for,
     iterate,
     plumbing_model,
@@ -125,7 +126,6 @@ def estimate_case(ctx: RunContext, case: HoldoutCase, log: str, config: GatewayC
         tools=ctx.tools,
         kill_switch_path=ctx.kill_switch_path,
         policy_path=ctx.policy_path,
-        assume_other_jobs=ctx.assume_other_jobs,
     )
     return CaseEstimate(tally.calls, tally.input_tokens, tally.output_tokens, tally.cost_usd, margin)
 
@@ -249,18 +249,25 @@ def run_record(
     reserve: float,
     fixtures_dir: Path,
     out: TextIO,
+    sink: Callable[[list[dict[str, Any]], dict[str, dict[str, Any]]], None] | None = None,
 ) -> tuple[Session, SpendState]:
-    """Record every pending case, test split first. Returns the session (records to write) and the spend."""
-    session, spend = Session(), SpendState()
+    """Record every pending case, test split first. Each finished case's record and sidecar entry go to `sink` at once
+    (atomically), so a crash after spending does not lose the earlier ones. Returns the session and the spend.
+
+    Sealing: when the case that stops the run is in the test split, the stop line is generic ("stopped: cap reached" /
+    "stopped: gateway error"): no estimate, no id, no exception text, because those would reveal the size or content
+    of a test case. Dev cases may keep detail (scrubbed)."""
+    session, spend = Session(sink=sink), SpendState()
     fingerprint = prompt_fingerprint()
     calls = gateway.calls  # type: ignore[attr-defined]
 
     def process(case: HoldoutCase, log: str, prior: RunRecord | None) -> tuple[str, CaseRun | None, str]:
         if session.stopped or skip_reason(ctx, case, prior):
             return process_case(ctx, session, lambda _c: [], case, log, prior)
+        sealed = case.split == "test"
         why = room(estimates.of(case.id), spend.cumulative_usd, cap_usd, life_left, day_left, reserve)
         if why:
-            session.stopped = f"stopped before the next case: {why}"
+            session.stopped = "stopped: cap reached" if sealed else f"stopped before the next case: {why}"
             return "skipped", None, session.stopped
         before = len(calls)
         errors: list[GatewayError] = []
@@ -278,14 +285,22 @@ def run_record(
             status, run, detail = process_case(ctx, session, lambda _c: [choice], case, log, prior)
         except Exception as exc:  # noqa: BLE001 - SDK or transport failure: report it scrubbed and stop
             spend.cumulative_usd += sum(c.cost_usd for c in calls[before:])
-            session.stopped = f"stopped: {type(exc).__name__}: {scrub(str(exc), config.api_key)}"
+            session.stopped = (
+                "stopped: gateway error"
+                if sealed
+                else f"stopped: {type(exc).__name__}: {scrub(str(exc), config.api_key)}"
+            )
             return "unusable", None, "error"
         cost = sum(c.cost_usd for c in calls[before:])
         spend.cumulative_usd += cost
         if errors:  # a gateway failure inside the run: its record is not an agent decision
             session.records[:] = [r for r in session.records if r["case_id"] != case.id]
             session.meta.pop(case.id, None)
-            session.stopped = f"stopped: gateway failure ({type(errors[0]).__name__}); that case has no run record"
+            session.stopped = (
+                "stopped: gateway error"
+                if sealed
+                else f"stopped: gateway failure ({type(errors[0]).__name__}); that case has no run record"
+            )
             return "unusable", None, "gateway failure"
         if status == "ran":
             save_manifest_entry(
@@ -299,6 +314,7 @@ def run_record(
                     "cost_usd": round(cost, 6),
                 },
             )
+            commit_case(session, case.id)  # now, not at the end of the run
         return status, run, detail
 
     tallies = iterate(holdout, process, order=("test", "dev"), out=out)

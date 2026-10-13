@@ -7,7 +7,11 @@ Never needs the API key and never touches the network. Two systems are scored ag
   flake history for a lone real log, so it can only re-run on a signature with an authored Tier 0 rule (invariant 3),
   and it cannot author a fix, so it escalates everything else.
 - agent: read from run records in `holdout/runs.json` (the human-run record/replay path writes them). A case with no
-  run record is simply not in the agent column; the agent is never invented offline.
+  run record is simply not in the agent column; the agent is never invented offline. The agent column is built ONLY if
+  every latest run record has a matching real-model provenance entry in `holdout/runs_meta.json` (see `holdout_meta`);
+  a fake/scripted record, a record with no entry, or one that does not match its entry makes the command refuse
+  (exit 1, counts only). The report header states the provenance.
+- a second, clearly labelled block shows the agent's proposal BEFORE the gates (ungated; not the headline).
 
 Dev cases get a per-case table. Test cases contribute to aggregate metrics only. Counts sit beside percentages and
 this report is a separate real-data column: it is never merged with the synthetic tables.
@@ -18,10 +22,12 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from driftgate.eval.holdout import (
     DEFAULT_DIR,
@@ -32,6 +38,7 @@ from driftgate.eval.holdout import (
     ValidationReport,
     validate,
 )
+from driftgate.eval.holdout_meta import Provenance, check_provenance, load_meta
 from driftgate.eval.report import SMALL_N, CaseResult, Metrics, compute_metrics, fmt
 from driftgate.tools.signatures import GENERIC_EXIT_ID, UNKNOWN, match_all
 
@@ -104,10 +111,16 @@ def agent_from_run(case: HoldoutCase, run: RunRecord) -> CaseResult:
 class Scored:
     baseline: CaseResult
     agent: CaseResult | None
+    proposal: dict[str, Any] | None = None  # the agent's ungated proposal (sidecar), if it has one
 
 
-def score_case(case: HoldoutCase, log: str, run: RunRecord | None) -> Scored:
-    return Scored(baseline_on_log(case, log), agent_from_run(case, run) if run else None)
+def score_case(case: HoldoutCase, log: str, run: RunRecord | None, meta: dict[str, Any] | None = None) -> Scored:
+    proposal = (meta or {}).get("proposal_before_gates") if run else None
+    return Scored(
+        baseline_on_log(case, log),
+        agent_from_run(case, run) if run else None,
+        proposal if isinstance(proposal, dict) else None,
+    )
 
 
 @dataclass(frozen=True)
@@ -116,6 +129,9 @@ class SplitMetrics:
     baseline: Metrics
     agent: Metrics | None  # None: the agent has no run records for this split
     agent_runs: int
+    proposals: Counter[str] = field(default_factory=Counter)  # ungated proposal kind -> count
+    proposals_seen: int = 0  # cases that have a recorded ungated proposal
+    ceiling_only: int = 0  # proposals refused by the abort ceiling and nothing else
 
 
 def aggregate(scores: list[Scored]) -> SplitMetrics:
@@ -125,6 +141,9 @@ def aggregate(scores: list[Scored]) -> SplitMetrics:
         baseline=compute_metrics([s.baseline for s in scores], has_verification=False),
         agent=compute_metrics(agent, has_verification=False) if agent else None,
         agent_runs=len(agent),
+        proposals=Counter(str(s.proposal.get("kind")) for s in scores if s.proposal is not None),
+        proposals_seen=sum(1 for s in scores if s.proposal is not None),
+        ceiling_only=sum(1 for s in scores if s.proposal and s.proposal.get("refused_by_abort_ceiling_only")),
     )
 
 
@@ -156,8 +175,58 @@ def _cell(m: Metrics | None, attr: str) -> str:
     return "not run" if m is None else fmt(getattr(m, attr))
 
 
+def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, test_m: SplitMetrics) -> list[str]:
+    """Counts of what the agent PROPOSED before the gates. Clearly not the headline; per case for dev only."""
+
+    def row(name: str, m: SplitMetrics) -> list[str]:
+        c = m.proposals
+        return [name, str(m.proposals_seen), str(c["rerun"]), str(c["pr_fix"]), str(c["escalate"]), str(m.ceiling_only)]
+
+    out = [
+        "## Proposal before gates (ungated; NOT the headline)",
+        "",
+        "What the agent proposed before SafetyGate saw it. A lone stored job is 100% of its resource set, so the abort "
+        "ceiling can refuse a Tier 0 re-run that the agent proposed correctly: `refused by the abort ceiling only` "
+        "counts those. This block is for understanding the agent; the table above (action after the gates) is the "
+        "result. Aggregate only for the test split.",
+        "",
+        _md_table(
+            ["split", "cases", "rerun", "pr_fix", "escalate", "refused by the abort ceiling only"],
+            [row("dev", dev_m), row("test", test_m)],
+        ),
+        "",
+    ]
+    lines = []
+    for case, s in dev:
+        if s.proposal is None:
+            continue
+        p = s.proposal
+        fix = f" ({p['fix']})" if p.get("fix") else ""
+        lines.append(
+            [
+                case.id,
+                f"{p.get('kind')}{fix}",
+                str(p.get("gate_decision")),
+                str(p.get("gate_reason_code")),
+                "yes" if p.get("refused_by_abort_ceiling_only") else "no",
+            ]
+        )
+    if lines:
+        out += [
+            "Dev cases:",
+            "",
+            _md_table(["case", "proposed", "gate decision", "gate reason code", "ceiling only"], lines),
+            "",
+        ]
+    return out
+
+
 def render(
-    dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, test_m: SplitMetrics, counts: dict[str, int]
+    dev: list[tuple[HoldoutCase, Scored]],
+    dev_m: SplitMetrics,
+    test_m: SplitMetrics,
+    counts: dict[str, int],
+    provenance: Provenance | None = None,
 ) -> str:
     header = ["metric", "baseline dev", "agent dev", "baseline test", "agent test"]
     rows = [
@@ -178,6 +247,10 @@ def render(
         "# Real-log holdout (offline)",
         "",
         HONESTY,
+        "",
+        provenance.header() if provenance and provenance.records else "Agent provenance: no run records.",
+        "",
+        "The headline agent column is the action AFTER the gates (the production gate on the production inputs).",
         "",
         f"Stored: {counts['total']} cases ({counts['dev']} dev, {counts['test']} test). `*` marks n < {SMALL_N}.",
         "",
@@ -212,20 +285,39 @@ def render(
         "## Test split",
         "",
         "Sealed: aggregate metrics only (the table above). No per-case output exists for it.",
+        "",
+        *_proposal_block(dev, dev_m, test_m),
     ]
     return "\n".join(out) + "\n"
 
 
+class ProvenanceRefused(Exception):
+    """The agent column will not be built: some run record is not a recorded real-model run. Counts only."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
 def evaluate(root: Path, now: datetime) -> tuple[str | None, ValidationReport]:
-    """The rendered report, or None when there is nothing to evaluate."""
+    """The rendered report, or None when there is nothing to evaluate. Raises `ProvenanceRefused` when any latest run
+    record is a fake/scripted run, has no provenance entry, or does not match its entry."""
     holdout = Holdout.load(root, now=now)
     counts = holdout.counts()
     if counts["total"] == 0:
         return None, holdout.report
-    dev = holdout.dev_details(score_case)
+    provenance = check_provenance(root)
+    if not provenance.ok:
+        raise ProvenanceRefused(provenance.problems())
+    meta = load_meta(root)
+
+    def score(case: HoldoutCase, log: str, run: RunRecord | None) -> Scored:
+        return score_case(case, log, run, meta.get(case.id))
+
+    dev = holdout.dev_details(score)
     dev_m = aggregate([s for _, s in dev])
-    test_m = holdout.test_aggregate(score_case, aggregate)
-    return render(dev, dev_m, test_m, counts), holdout.report
+    test_m = holdout.test_aggregate(score, aggregate)
+    return render(dev, dev_m, test_m, counts, provenance), holdout.report
 
 
 def _validate_cmd(root: Path, now: datetime, git_status: GitStatus) -> int:
@@ -256,6 +348,12 @@ def _eval_cmd(root: Path, now: datetime) -> int:
         print("eval-holdout: refusing to evaluate an invalid holdout")
         for p in e.problems:
             print(f"INVALID: {p}")
+        return 1
+    except ProvenanceRefused as e:
+        print("eval-holdout: REFUSING to build the agent column: run records without a real-model provenance.")
+        for p in e.problems:
+            print(f"  {p}")
+        print("Only records from `record-holdout` (or its replay) with a matching runs_meta.json entry are used.")
         return 1
     if text is None:
         print("eval-holdout: no holdout cases are stored (holdout/labels.json has 0 cases). Nothing was evaluated and")

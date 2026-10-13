@@ -39,6 +39,7 @@ from typing import Any, TextIO
 from driftgate.adapters.github_live import Playground, connect_playground
 from driftgate.agents import reviewer as reviewer_agent
 from driftgate.agents.fingerprint import prompt_fingerprint
+from driftgate.autonomy import autonomous_present_at
 from driftgate.eval import e2e, holdout_eval, holdout_record, holdout_run
 from driftgate.eval.e2e import ScenarioResult
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth, load_ground_truth
@@ -690,6 +691,7 @@ def run_record_holdout(
             f"{config.investigator_model}; test first; fixtures -> {args.fixtures}; cap ${args.cap_usd:.2f}",
             file=out,
         )
+        print(holdout_run.SEALED_NOTE, file=out)
         status = ledger_status(config, clock)
         session, spend = holdout_record.run_record(
             holdout,
@@ -703,13 +705,18 @@ def run_record_holdout(
             reserve=MIN_RESERVE_USD,
             fixtures_dir=args.fixtures,
             out=out,
+            sink=lambda recs, meta: holdout_run.append_records(args.dir, recs, meta),
         )
     except UnknownModel as exc:
         print(f"refusing: {exc}", file=out)
         return 2
-    holdout_run.append_records(args.dir, session.records, session.meta)
     after = ledger_status(config, clock)
-    print(f"wrote {len(session.records)} run record(s) (+ runs_meta.json); spent ${spend.cumulative_usd:.4f}", file=out)
+    print(
+        f"wrote {len(session.committed)} run record(s) as each case finished (+ runs_meta.json); "
+        f"spent ${spend.cumulative_usd:.4f}",
+        file=out,
+    )
+    print(holdout_run.SEALED_NOTE, file=out)
     print(
         f"ledger: lifetime ${after.lifetime_spent:.4f} of ${after.lifetime_cap:.2f}; "
         f"today ${after.daily_spent:.4f} of ${after.daily_cap:.2f}",
@@ -763,7 +770,7 @@ def main(
         print("usage: python -m driftgate.eval.live (record|eval-live|e2e-live|record-holdout) [options]", file=out)
         return 2
     prog = argv[0]
-    if (root / ".autonomous").exists():
+    if autonomous_present_at(root):
         print(f"refusing: '{prog}' is human-only and .autonomous exists", file=out)
         return 1
     if prog == "record-holdout":

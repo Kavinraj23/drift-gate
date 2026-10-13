@@ -22,11 +22,13 @@ ARG_TARGETS = {"approvals", "trace-report"}
 #: only other target that does, and it is human-only (read-only GET-only fetch of public logs; plan mode by default).
 FETCH_TARGETS = {"holdout-fetch"}
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset", "holdout-fetch"}
-# N1 holdout runner. `run-holdout` is offline; `record-holdout` is human-only (real API under the gateway's caps,
-# implemented in driftgate.eval.live). Both take options, validated by their own argparse. LIVE_TARGETS and ARG_TARGETS
-# are left exactly as they were (existing tests pin them), as with holdout-fetch.
+# N1 holdout runner. Both take options, validated by their own argparse, and neither is in LIVE_TARGETS or ARG_TARGETS
+# (existing tests pin those sets exactly, as with holdout-fetch). `main` dispatches them explicitly:
+#   run-holdout     offline: driftgate.eval.holdout_run (replay fixtures or the plumbing double; no key, no spend)
+#   record-holdout  HUMAN ONLY: driftgate.eval.live record-holdout (--estimate | --yes-spend; real API under the caps)
 RUNNER_TARGETS = {"run-holdout", "record-holdout"}
-HUMAN_ONLY |= {"record-holdout"}
+RECORD_HOLDOUT = "record-holdout"
+HUMAN_ONLY |= {RECORD_HOLDOUT}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
 IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8a", "M9a"}
@@ -202,8 +204,8 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "holdout-validate": holdout_validate,
     "eval-holdout": eval_holdout,
     "holdout-fetch": lambda: holdout_fetch([]),
-    "run-holdout": lambda: holdout_runner("run-holdout", []),
-    "record-holdout": lambda: holdout_runner("record-holdout", []),
+    "run-holdout": lambda: run_holdout([]),
+    "record-holdout": lambda: _live(RECORD_HOLDOUT, []),
     "eval-retrieval": eval_retrieval,
     "eval-tier12": eval_tier12,
     "mvp-check": mvp_check,
@@ -224,8 +226,14 @@ def run_holdout(extra: list[str]) -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
-def holdout_runner(target: str, extra: list[str]) -> int:
-    return _live(target, extra) if target == "record-holdout" else run_holdout(extra)
+def autonomous_present() -> bool:
+    """`.autonomous` at the repo root, or at the main checkout when this is a worktree; a dangling symlink counts."""
+    src = str(Path(__file__).resolve().parent / "src")
+    if not sys.path or sys.path[0] != src:
+        sys.path.insert(0, src)
+    from driftgate.autonomy import autonomous_present_at
+
+    return autonomous_present_at(ROOT)
 
 
 def main(argv: list[str]) -> int:
@@ -236,15 +244,17 @@ def main(argv: list[str]) -> int:
     if len(argv) > 2 and target not in LIVE_TARGETS | ARG_TARGETS | FETCH_TARGETS | RUNNER_TARGETS:
         print("usage: python tasks.py <target>")
         return 2
-    if target in HUMAN_ONLY and (ROOT / ".autonomous").exists():
+    if target in HUMAN_ONLY and autonomous_present():
         print(f"refusing: '{target}' is human-only and .autonomous exists")
         return 1
+    if target == RECORD_HOLDOUT:  # not in LIVE_TARGETS (pinned by tests); the live module still enforces its own caps
+        return _live(RECORD_HOLDOUT, argv[2:])
+    if target == "run-holdout":
+        return run_holdout(argv[2:])
     if target in LIVE_TARGETS:
         return _live(target, argv[2:])
     if target in FETCH_TARGETS:
         return holdout_fetch(argv[2:])
-    if target in RUNNER_TARGETS:
-        return run_holdout(argv[2:])
     if target == "approvals":
         return approvals(argv[2:])
     if target == "trace-report":

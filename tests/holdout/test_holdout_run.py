@@ -338,7 +338,9 @@ def test_test_split_only_run_prints_no_case_line(root: Path) -> None:
 # -- tasks, human-only, autonomous ------------------------------------------------------------------------------------
 def test_targets_are_wired_and_record_holdout_is_human_only() -> None:
     assert "record-holdout" in tasks.HUMAN_ONLY and "run-holdout" not in tasks.HUMAN_ONLY
-    assert tasks.RUNNER_TARGETS == {"run-holdout", "record-holdout"} and {"run-holdout", "record-holdout"} <= set(tasks.HANDLERS)
+    assert tasks.RUNNER_TARGETS == {"run-holdout", "record-holdout"} and {"run-holdout", "record-holdout"} <= set(
+        tasks.HANDLERS
+    )
 
 
 def test_record_holdout_refuses_under_autonomous(tmp_path: Path) -> None:

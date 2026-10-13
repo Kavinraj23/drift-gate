@@ -105,3 +105,7 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 - The audit log stores evidence COUNTS (`evidence_kept`, `evidence_dropped`), not evidence items, and has no final-outcome entry. The report shows evidence text only from a saved `Report.to_dict()` (`reports.json` beside the audit log) and derives the outcome from the last terminal audit event. I did not add audit fields (KINDS and payload shapes are pinned). Decide whether live runs (`eval/live.py`, a future runner) should also write `Report.to_dict()` per investigation next to the audit log; today nothing does, so a live trace page would show "evidence: not recorded" until that exists.
 - Dropped (uncited) evidence text is never stored anywhere, so the page can only show how many items were dropped, not what they said.
 - The per-call "result summary" is the one line the orchestrator audits (tool name and file or error). A fuller tool-result view would need the results persisted; out of scope for N5.
+
+### N1 fetch half round 2 - Needs human
+- The extraction rules (docs/design/N1-fetch.md, "Extraction") are built from the framing seen in this repo's sourced samples, not from a live log. Fetch ONE candidate first; if it is refused, the printed reason says which rule failed, and any loosening is a rule change a human reviews. Refused cases must be cut by hand.
+- Under a git worktree `.autonomous` is looked up at the worktree root and at the main checkout; confirm that matches how the orchestrator creates it.

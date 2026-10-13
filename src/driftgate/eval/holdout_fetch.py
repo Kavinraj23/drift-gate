@@ -47,6 +47,7 @@ from driftgate.eval.holdout_gh import (
 )
 from driftgate.eval.holdout_steplog import (
     StepLogError,
+    count_lines,
     decode_log,
     extract_step_section,
     first_failed_step,
@@ -239,6 +240,10 @@ def _pick_job(jobs: list[dict[str, Any]], wanted: str | None) -> dict[str, Any]:
     return failed[0]
 
 
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def fetch_one(
     cand: Candidate,
     case_id: str,
@@ -246,8 +251,10 @@ def fetch_one(
     store: Store,
     today: str,
     known: dict[Identity, str],
+    token: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
-    """Returns (fetched record, None) or ({}, existing case id) when the resolved job is already stored."""
+    """Returns (fetched record, None) or ({}, existing case id) when the resolved job is already stored.
+    Raises `StepLogError` (nothing written) when the failed step cannot be cut out safely."""
     run = gh.get_run(cand.repo, cand.run_id)
     if run.get("status") != "completed" or run.get("conclusion") != "failure":
         raise FetchError(f"run is {run.get('status')!r}/{run.get('conclusion')!r}, not completed/failure")
@@ -262,13 +269,16 @@ def fetch_one(
     existing = known.get((cand.repo.lower(), cand.run_id, job_name))
     if existing:
         return {}, existing
+    attempt = run.get("run_attempt")
+    job_attempt = job.get("run_attempt")
+    if job_attempt is not None and job_attempt != attempt:
+        raise FetchError("the job's run_attempt differs from the run's; not the latest attempt, fetch by hand")
     step = first_failed_step(job)
     raw = gh.get_job_log(cand.repo, job_id)
-    section = extract_step_section(decode_log(raw), step)
-    data = prepare_for_storage(section).encode("utf-8")
-    attempt = run.get("run_attempt")
+    ext = extract_step_section(decode_log(raw), step)
+    data = prepare_for_storage(ext.text, token).encode("utf-8")
     record = {
-        "schema_version": 1,
+        "schema_version": 2,
         "case_id": case_id,
         "source": {
             "repo": cand.repo,
@@ -280,8 +290,23 @@ def fetch_one(
         },
         "job_id": job_id,
         "run_attempt": attempt if type(attempt) is int and attempt > 0 else None,
-        "step": {"name": step.name, "number": step.number},
-        "other_failed_steps": step.other_failed,
+        "step": {
+            "name": step.name,
+            "number": step.number,
+            "started_at": _iso(step.started_at),
+            "completed_at": _iso(step.completed_at),
+        },
+        "other_failed_steps": [{"name": o.name, "number": o.number} for o in step.other_failed],
+        "extraction": {
+            "method": ext.method,
+            "job_log_lines": ext.job_log_lines,
+            "start_line": ext.start_line,
+            "end_line": ext.end_line,
+            "error_line": ext.error_line,
+            "error_timestamp": ext.error_timestamp,
+            "inner_group_lines": ext.inner_group_lines,
+            "stored_lines": count_lines(data.decode("utf-8")),
+        },
         "log_sha256": sha256_bytes(data),
         "log_bytes": len(data),
     }
@@ -290,20 +315,43 @@ def fetch_one(
     return record, None
 
 
+_ENV_LINE = re.compile(rf"^\s*(?:export\s+)?{TOKEN_ENV}\s*=\s*(.*?)\s*$", re.ASCII)
+
+
 def env_token() -> str | None:
-    """`HOLDOUT_FETCH_TOKEN` from the environment, else from the gitignored env file. No other key is read."""
+    """`HOLDOUT_FETCH_TOKEN` from the environment, else from the gitignored env file.
+
+    The file is read line by line; every line is dropped as soon as it is examined and only the value of the one
+    matching line is kept (no other key is parsed, retained or exported, and there is no `${VAR}` interpolation).
+    A value may be wrapped in one pair of single or double quotes; a trailing ` # comment` is not stripped."""
     value = os.environ.get(TOKEN_ENV)
     if value:
         return value
     if not ENV_FILE.is_file():
         return None
-    from dotenv import dotenv_values
-
-    return dotenv_values(ENV_FILE).get(TOKEN_ENV) or None
+    found: str | None = None
+    with open(ENV_FILE, encoding="utf-8") as fh:
+        for line in fh:
+            m = _ENV_LINE.match(line)
+            if m:
+                found = m.group(1)
+                break
+    if found and len(found) >= 2 and found[0] == found[-1] and found[0] in "\"'":
+        found = found[1:-1]
+    return found or None
 
 
 def default_clock() -> datetime:
     return datetime.now(UTC)
+
+
+def autonomous_present() -> bool:
+    """True when `.autonomous` exists at the repo root (same root as tasks.py), or at the main checkout when this
+    code runs from a git worktree under `<main>/.claude/worktrees/<name>`."""
+    roots = [ROOT]
+    if ROOT.parent.name == "worktrees" and ROOT.parent.parent.name == ".claude":
+        roots.append(ROOT.parent.parent.parent)
+    return any((r / ".autonomous").exists() for r in roots)
 
 
 def run_fetch(
@@ -315,6 +363,7 @@ def run_fetch(
     transport_factory: TransportFactory = RequestsTransport,
     token_provider: TokenProvider = env_token,
     clock: Clock = default_clock,
+    autonomous: Callable[[], bool] = autonomous_present,
 ) -> int:
     out = out or sys.stdout
     err = err or sys.stderr
@@ -349,6 +398,9 @@ def run_fetch(
         print("\nnot fetching: pass --yes-fetch (human-run; uses the read-only token HOLDOUT_FETCH_TOKEN).", file=out)
         return 2
 
+    if autonomous():
+        print("refusing: holdout-fetch makes network requests and is human-only, and .autonomous exists.", file=out)
+        return 1
     token = token_provider()
     if not token:
         print(f"{TOKEN_ENV} is not set (environment or the gitignored env file); nothing was requested.", file=out)
@@ -374,12 +426,16 @@ def run_fetch(
             continue
         assert row.case_id is not None
         try:
-            record, existing = fetch_one(c, row.case_id, gh, store, today, known)
+            record, existing = fetch_one(c, row.case_id, gh, store, today, known, token)
         except RateLimited as exc:
             say(f"  STOPPED  {label}: {exc}")
             say("stopped at the rate limit; rerun later (already stored cases are skipped, ids keep counting up).")
             return 1
-        except (FetchError, StepLogError) as exc:
+        except StepLogError as exc:
+            failures += 1
+            say(f"  NOT STORED  {label}: {exc}. Nothing was written for this case; fetch it by hand.")
+            continue
+        except FetchError as exc:
             failures += 1
             say(f"  FAILED   {label}: {exc}")
             continue
@@ -392,12 +448,17 @@ def run_fetch(
             continue
         src = record["source"]
         known[(src["repo"].lower(), src["run_id"], src["job"])] = record["case_id"]
-        extra = (
-            f" ({record['other_failed_steps']} other failed step(s) not stored)" if record["other_failed_steps"] else ""
-        )
+        ex = record["extraction"]
+        others = ", ".join(repr(o["name"]) for o in record["other_failed_steps"])
+        extra = f"; other failed step(s) not stored: {others}" if others else ""
+        nested = f"; {ex['inner_group_lines']} inner ##[group] line(s) kept" if ex["inner_group_lines"] else ""
         say(
             f"  {record['case_id']}  stored  {c.repo} run {c.run_id} job {src['job']!r} "
-            f"step {record['step']['name']!r}  {record['log_bytes']} bytes{extra}"
+            f"step {record['step']['name']!r} (#{record['step']['number']}, attempt {record['run_attempt']})"
+            f"\n      job log {ex['job_log_lines']} lines; stored lines {ex['start_line']}-{ex['end_line']} "
+            f"({ex['stored_lines']} lines, {record['log_bytes']} bytes); error at line {ex['error_line']} "
+            f"{ex['error_timestamp']}; step window {record['step']['started_at']}..{record['step']['completed_at']}; "
+            f"method {ex['method']}{nested}{extra}"
         )
     say(f"\n{gh.requests_made} request(s) made. Next: label by hand, then `python tasks.py holdout-validate`.")
     return 1 if failures else 0

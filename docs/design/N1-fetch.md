@@ -25,11 +25,15 @@ them (existing "no `eval` import" tests plus `tests/holdout/test_holdout_fetch_a
 - **Not the playground adapter.** No import of `adapters/`, `github_client`, any `RemediationTarget`, the gateway or
   the SDK (architecture test). The playground adapter and invariant 12 are untouched.
 - **GET only, by construction**: the `Transport` protocol has one method, `get`. The single real call is
-  `session.get(..., allow_redirects=False)` (asserted by a source scan; no `post/put/patch/delete/request`).
+  `session.get(..., allow_redirects=False)` (source scan: no `post/put/patch/delete/request`). The real
+  `RequestsTransport` is also exercised offline with an injected fake session: `allow_redirects=False`,
+  `trust_env=False`, the timeout is passed, the body is streamed and the size cap stops reading at the first chunk past
+  the limit, `requests` exceptions are re-raised as `FetchError` from None (no URL, no token), exactly one attempt, and
+  the transport itself refuses an `Authorization` header for any host other than the GitHub API host.
 - **Three paths only**, built from strictly validated parts and re-checked against an allow-list before every send:
   `/repos/{o}/{r}/actions/runs/{id}`, `.../runs/{id}/jobs` (fixed query `filter=latest&per_page=100[&page=N]`),
   `.../actions/jobs/{id}/logs`. Host must be exactly `api.github.com` over https (no userinfo, no port, no fragment).
-  Owner `[A-Za-z0-9-]{1,39}` not starting with `-`; repo `[A-Za-z0-9_.-]{1,100}` and not `.`/`..`; ids are `int` > 0
+  Every host/path pattern is ASCII-only (`[0-9]`, `re.ASCII`; tested with Arabic-Indic digits). Owner `[A-Za-z0-9-]{1,39}` not starting with `-`; repo `[A-Za-z0-9_.-]{1,100}` and not `.`/`..`; ids are `int` > 0
   (bool, str, float rejected).
 - **Redirects**: only the logs endpoint, one hop, to https on an allow-listed host, sent WITHOUT `Authorization`.
   Allow-list (`BLOB_HOST_PATTERNS`): `pipelines.actions.githubusercontent.com`,
@@ -39,12 +43,18 @@ them (existing "no `eval` import" tests plus `tests/holdout/test_holdout_fetch_a
 - **Bounds**: 30 s timeout; 2 MiB cap for JSON, 32 MiB for a log; jobs paged up to 5 x 100.
 - **Rate limit** (429, or 403 with `x-ratelimit-remaining: 0`, `retry-after`, or "rate limit" in the body): the whole
   batch stops with the reset time. No retry, no sleep. Cases already stored stay; ids keep counting up on the next run.
-- **Token**: `HOLDOUT_FETCH_TOKEN` from the process environment, else only that key from the gitignored `.env`
-  (`dotenv_values`, so nothing is exported). Used only in the `Authorization` header. Every exception message is built
-  from fixed text plus a status code or host; unexpected exceptions print their type name only; the CLI also masks the
-  token in anything it prints. `eval/holdout_fetch.py` was added to the architecture test's `ENV_READERS` for this.
+- **Token**: `HOLDOUT_FETCH_TOKEN` from the process environment, else from the gitignored `.env`. The file is opened and
+  read line by line; each line is matched against one anchored pattern for that key and dropped, only the matching
+  value is kept (no `dotenv` parsing, no `${VAR}` interpolation, nothing exported; a test shows other keys never land in
+  anything the module holds). The OS still reads the whole file; the code just does not parse or keep it.
+  Used only in the `Authorization` header. Every exception message is built from fixed text plus a status code or host;
+  unexpected exceptions print their type name only; the CLI masks the token in anything it prints, and the exact token
+  string is also replaced by `[REDACTED]` in the log text before storage (on top of the pattern redaction). `eval/holdout_fetch.py` was added to the architecture test's `ENV_READERS` for this.
 
 ### Behaviour
+- **`.autonomous`**: `tasks.py` refuses the target, AND `holdout_fetch` itself refuses any `--yes-fetch` (exit 1, before the
+  token is looked up or a transport is built) when `.autonomous` exists at the repo root (or at the main checkout when
+  run from a git worktree), so `python -m driftgate.eval.holdout_fetch --yes-fetch` is covered too.
 - **Plan by default** (no token needed, zero requests): validates `holdout/candidates.json` against the schema and
   strict repo/id checks, prints the ids it would allocate and the request count (4 per run), exits 2 like `e2e-live`.
   `--yes-fetch` is the only way to touch the network.
@@ -59,6 +69,31 @@ them (existing "no `eval` import" tests plus `tests/holdout/test_holdout_fetch_a
 - **Never labels**: `labels.json` is only read (ids and sources). The code path that stores a case has no label field.
   `--skeleton` prints placeholders (`FILL_ME`, empty rationale) that fail `holdout-validate`.
 
+## Extraction (`holdout_steplog.py`, method label `error-anchor-v1`)
+The section is chosen from the log's own structure and cross-checked against the REST `steps[]` data; there is NO
+fallback to a raw time window. Each rule refuses the case rather than guessing; nothing is written and the output says
+`NOT STORED <repo> run <id>: <reason>. ... fetch it by hand` (exit 1):
+1. Window = `started_at` floored to the second .. `completed_at` + 1 s. Anchor = the `##[error]` line(s) whose OWN
+   timestamp is in the window. None (or only un-timestamped or out-of-window ones) -> refuse.
+2. Start = the single step-opening header (`##[group]Run `, `Post `, or a runner phase) with its own timestamp in the
+   window before the last window error. Zero -> refuse. More than one -> refuse (the same-second neighbour and the
+   composite-action cases: an inner `##[group]Run` is a second header in the window).
+3. No other step-opening header, timestamped or not, may sit between the start and the last error (a nested header
+   outside the window is still caught). A window error before the start header belongs to an earlier step -> refuse.
+4. A runner phase step (`Set up job`, `Initialize containers`, `Stop containers`, `Complete job`), or a phase header as
+   the start, is refused: their logs have no `##[error]` framing I can source.
+5. Another failed step whose window contains the anchor's timestamp -> refuse.
+6. End = the last window error (+ one directly following `##[endgroup]`). After it there must be the end of the log or a
+   step-opening header; other output means the step continues -> refuse.
+7. A job whose `run_attempt` differs from the run's is refused.
+Ordinary `##[group]TITLE` lines inside the step are kept and counted (`inner_group_lines`).
+
+Fetched record (`holdout/fetched/<id>.json`, schema version 2, no log text): source block, `job_id`, `run_attempt`,
+`step` {name, number, started_at, completed_at}, `other_failed_steps` [{name, number}], `extraction` {method,
+`job_log_lines`, `start_line`, `end_line` (1-based, counting newline characters only), `error_line`, `error_timestamp`,
+`inner_group_lines`, `stored_lines`}, `log_sha256`, `log_bytes`. The stdout line per case prints the same numbers, so a
+human can open the run page and check lines `start_line`..`end_line` against the job log without trusting the tool.
+
 ## Exactly what is verbatim and what is transformed
 The stored `holdout/logs/<id>.log` is the failed step's lines from the job log, with ONLY:
 1. UTF-8 decode, one leading BOM removed (undecodable bytes are an error);
@@ -67,7 +102,8 @@ The stored `holdout/logs/<id>.log` is the failed step's lines from the job log, 
    `holdout-validate` requires it, else the case is refused). A private-key block makes the case refused rather than
    stored with lines cut out.
 Kept exactly as received: line endings (CRLF stays CRLF; files are written as bytes), the per-line timestamps, `##[...]`
-markers, blank lines, everything else. Selecting the step's lines is itself a cut of the whole log (below).
+markers, blank lines, everything else. Selecting the step's lines is itself a cut of the whole log (see Extraction). The exact fetch token, if it occurs, is
+replaced by `[REDACTED]` first.
 
 ## Tested (`tests/holdout/test_holdout_fetch_*.py`, offline, stub transport, no sleeping)
 Hostile owner/repo/run/job ids and URLs (traversal, query, userinfo, port, other verbs' paths); every request of a full
@@ -84,17 +120,23 @@ Log text in tests is the verified `docker_pull_rate_limit` catalog entry plus th
 `##[error]Process completed with exit code 1.` line; timestamps and `##[group]` framing are marked as structural
 scaffolding in `tests/holdout/fetch_helpers.py` (invariant 9).
 
+Round 2 tests (`tests/holdout/test_holdout_fetch_extraction.py`): adversarial layouts (neighbour with its own header in
+the same second before the step, neighbour after, adjacent and distant failing steps, failed `Set up job` and other
+phase steps, composite action with a nested header, nested header outside the window, missing / un-timestamped /
+out-of-window `##[error]`, an earlier step's error in the window, trailing output), the record and stdout fields against
+the stored bytes, refusal writes nothing, token masking, `.autonomous` inside the module, `.env` reading, Arabic-Indic
+digits, the real transport with a fake session, and the skeleton failing closed when `labels.json` is unreadable (a
+missing file still means nothing is labelled).
+
 ## Open doubts
 - **Never exercised against real GitHub.** The job-log format, the `steps[]` timestamps and the redirect hosts are from
   documentation and memory. The first `--yes-fetch` should be a single candidate; read the stored log against the run
   page before fetching 30. The redirect allow-list may need a host added (the refusal says which host).
-- **Step extraction is a heuristic.** The API names the failed step but the log has no step names: the section is the
-  step's `started_at`..`completed_at` window (second resolution), trimmed at the runner's `##[group]Run`/`Post` headers.
-  Weak points: a step that fails in under a second next to a neighbour; steps whose header is not `Run `/`Post `
-  (e.g. `Set up job` failures, composite actions) are cut by timestamps only; a tool that prints its own
-  `##[group]Run ...` inside the step truncates the section at it; log lines without timestamps are attributed to the
-  previous stamped line.
-- **Multi-failure.** Only the first `failure` step is stored; `other_failed_steps` records how many more exist. A
+- **Step extraction is anchored, but still unverified against real logs.** See "Extraction" below. The framing it relies
+  on (`##[group]Run`/`Post`, a timestamped `##[error]` as the last line of a failing step, a following step header) is
+  what the sourced samples in this repo show (`tests/github/fixtures/job_9001.log`, `data/logs`, the catalog lines),
+  not something checked on a live log. Expect refusals in the first real run; each one is safe (nothing stored).
+- **Multi-failure.** Only the first `failure` step is stored; `other_failed_steps` lists the names and numbers of the others. A
   matrix run with several failed jobs must name the job; one case per job needs one candidate per job.
 - **Re-runs.** The jobs list is `filter=latest`: the latest attempt. A run that failed then passed on re-run is refused
   (run conclusion). `run_attempt` is recorded.
@@ -106,3 +148,10 @@ scaffolding in `tests/holdout/fetch_helpers.py` (invariant 9).
 - **Redaction can alter evidence** (a redacted token inside an error message), by design; the label's `source` still
   identifies the original run.
 - Invariant 12 wording needs a human clarification (BLOCKERS.md).
+- **Remaining weak points of the cut (honest list).** (a) Real GitHub framing is unverified: if a real failing step does
+  not end with a timestamped `##[error]` followed by a header, every such case is refused (safe, but unhelpful). (b) The
+  refusal is conservative: a legitimate step that prints a user group titled like a step header, or prints after its
+  error line, is refused. (c) A user group titled `Run ...` can only cause a refusal, not a wrong cut. (d) The window is
+  second-resolution; consistently wrong API timestamps would not be detected. (e) Un-timestamped continuation lines
+  between start and error are kept as received. (f) The line numbers help a human verify the cut; they do not prove it.
+- A present but unreadable `labels.json` stops `--skeleton` (exit 2) so no possibly test-split log is hashed.

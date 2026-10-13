@@ -76,7 +76,7 @@ def _failed_step() -> sl.FailedStep:
 
 
 def test_only_the_failed_step_is_extracted_and_neighbours_sharing_a_second_are_trimmed() -> None:
-    assert sl.extract_step_section(log_text(), _failed_step()) == expected_section()
+    assert sl.extract_step_section(log_text(), _failed_step()).text == expected_section()
     assert "Set up job" not in expected_section() and "Post Run" not in expected_section()
 
 
@@ -84,7 +84,7 @@ def test_crlf_endings_and_a_bom_are_kept_or_removed_exactly_as_documented() -> N
     raw = ("﻿" + log_text("\r\n")).encode("utf-8")
     text = sl.decode_log(raw)
     assert not text.startswith("﻿") and text == log_text("\r\n")
-    assert sl.extract_step_section(text, _failed_step()) == expected_section("\r\n")
+    assert sl.extract_step_section(text, _failed_step()).text == expected_section("\r\n")
     assert sl.prepare_for_storage(expected_section("\r\n")) == expected_section("\r\n")
 
 
@@ -117,7 +117,7 @@ def test_first_failed_step_edge_cases() -> None:
     twice = failed_job()
     twice["steps"].append(step("Always cleanup", 6, "failure", 7, 8))
     got = sl.first_failed_step(twice)
-    assert got.number == 3 and got.other_failed == 1
+    assert got.number == 3 and [o.name for o in got.other_failed] == ["Always cleanup"]
     cancelled = {"steps": [step("a", 1, "cancelled", 0, 1)]}
     with pytest.raises(sl.StepLogError, match="no step"):
         sl.first_failed_step(cancelled)
@@ -221,8 +221,8 @@ def test_fetch_stores_the_log_and_metadata_and_the_hash_validates(root: Path) ->
         "fetch_date": "2026-10-14",
     }
     assert rec["log_sha256"] == hashlib.sha256(data).hexdigest() == hd.sha256_bytes(data)
-    assert rec["log_bytes"] == len(data) and rec["step"] == {"name": "Pull image", "number": 3}
-    assert rec["job_id"] == JOB_ID and rec["run_attempt"] == 1 and rec["other_failed_steps"] == 0
+    assert rec["log_bytes"] == len(data) and (rec["step"]["name"], rec["step"]["number"]) == ("Pull image", 3)
+    assert rec["job_id"] == JOB_ID and rec["run_attempt"] == 1 and rec["other_failed_steps"] == []
     assert sorted(p.name for p in root.iterdir()) == ["candidates.json", "fetched", "logs"]  # never labels.json
 
 

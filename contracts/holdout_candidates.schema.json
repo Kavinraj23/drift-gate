@@ -4,53 +4,228 @@
   "title": "DriftGate holdout-fetch: candidates document (root, human-written) and fetched-record ($defs/fetched_record)",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "candidates"],
+  "required": [
+    "schema_version",
+    "candidates"
+  ],
   "properties": {
-    "schema_version": {"const": 1},
-    "candidates": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/candidate"}}
+    "schema_version": {
+      "const": 1
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    }
   },
   "$defs": {
     "candidate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repo", "run_id"],
+      "required": [
+        "repo",
+        "run_id"
+      ],
       "properties": {
-        "repo": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$", "description": "owner/name of a PUBLIC repository."},
-        "run_id": {"type": "integer", "minimum": 1},
-        "job": {"type": "string", "minLength": 1, "maxLength": 200, "description": "Exact job name. Optional when exactly one job of the run failed."}
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
+          "description": "owner/name of a PUBLIC repository."
+        },
+        "run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "job": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Exact job name. Optional when exactly one job of the run failed."
+        }
       }
     },
     "fetched_record": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "case_id", "source", "job_id", "run_attempt", "step", "other_failed_steps", "log_sha256", "log_bytes"],
+      "required": [
+        "schema_version",
+        "case_id",
+        "source",
+        "job_id",
+        "run_attempt",
+        "step",
+        "other_failed_steps",
+        "extraction",
+        "log_sha256",
+        "log_bytes"
+      ],
       "properties": {
-        "schema_version": {"const": 1},
-        "case_id": {"type": "string", "pattern": "^hc-[0-9]{2,3}$"},
+        "schema_version": {
+          "const": 2
+        },
+        "case_id": {
+          "type": "string",
+          "pattern": "^hc-[0-9]{2,3}$"
+        },
         "source": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["repo", "run_id", "job", "commit_sha", "url", "fetch_date"],
+          "required": [
+            "repo",
+            "run_id",
+            "job",
+            "commit_sha",
+            "url",
+            "fetch_date"
+          ],
           "properties": {
-            "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
-            "run_id": {"type": "integer", "minimum": 1},
-            "job": {"type": "string", "minLength": 1},
-            "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-            "url": {"type": "string", "pattern": "^https://github\\.com/"},
-            "fetch_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+            "repo": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+            },
+            "run_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "job": {
+              "type": "string",
+              "minLength": 1
+            },
+            "commit_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://github\\.com/"
+            },
+            "fetch_date": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+            }
           }
         },
-        "job_id": {"type": "integer", "minimum": 1},
-        "run_attempt": {"type": ["integer", "null"], "minimum": 1},
+        "job_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "run_attempt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
         "step": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["name", "number"],
-          "properties": {"name": {"type": "string", "minLength": 1}, "number": {"type": "integer", "minimum": 1}}
+          "required": [
+            "name",
+            "number",
+            "started_at",
+            "completed_at"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "started_at": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+            },
+            "completed_at": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+            }
+          }
         },
-        "other_failed_steps": {"type": "integer", "minimum": 0},
-        "log_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "log_bytes": {"type": "integer", "minimum": 1}
+        "other_failed_steps": {
+          "type": "array",
+          "description": "Further steps of the job that concluded failure (names only, not stored).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "number"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "number": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "log_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "log_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "extraction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "job_log_lines",
+            "start_line",
+            "end_line",
+            "error_line",
+            "error_timestamp",
+            "inner_group_lines",
+            "stored_lines"
+          ],
+          "description": "Where the stored section sits in the job log (1-based, \n-counted lines) so a human can check the cut. No log text.",
+          "properties": {
+            "method": {
+              "enum": [
+                "error-anchor-v1"
+              ]
+            },
+            "job_log_lines": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "start_line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end_line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "error_line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "error_timestamp": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+            },
+            "inner_group_lines": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stored_lines": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
       }
     }
   }

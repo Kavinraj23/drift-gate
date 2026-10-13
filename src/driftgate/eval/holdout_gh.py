@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -40,22 +40,24 @@ MAX_JOB_PAGES = 5
 #   pipelines.actions.githubusercontent.com / pipelinesghubeus<N>.actions.githubusercontent.com : Actions log service
 #   productionresultssa<N>.blob.core.windows.net : Azure blob storage account of the newer results service
 BLOB_HOST_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"^pipelines\.actions\.githubusercontent\.com$"),
-    re.compile(r"^pipelinesghub[a-z]{2,4}\d{1,3}\.actions\.githubusercontent\.com$"),
-    re.compile(r"^productionresultssa\d{1,3}\.blob\.core\.windows\.net$"),
+    re.compile(r"^pipelines\.actions\.githubusercontent\.com$", re.ASCII),
+    re.compile(r"^pipelinesghub[a-z]{2,4}[0-9]{1,3}\.actions\.githubusercontent\.com$", re.ASCII),
+    re.compile(r"^productionresultssa[0-9]{1,3}\.blob\.core\.windows\.net$", re.ASCII),
 )
 
-OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
-REPO_RE = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$")
+OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$", re.ASCII)
+REPO_RE = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$", re.ASCII)
 MAX_ID = 2**63 - 1
 
 _P = r"/repos/[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.{1,2}/)[A-Za-z0-9_.-]{1,100}/actions"
 ALLOWED_API_PATHS: tuple[re.Pattern[str], ...] = (
-    re.compile(rf"^{_P}/runs/[1-9][0-9]{{0,18}}$"),
-    re.compile(rf"^{_P}/runs/[1-9][0-9]{{0,18}}/jobs$"),
-    re.compile(rf"^{_P}/jobs/[1-9][0-9]{{0,18}}/logs$"),
+    re.compile(rf"^{_P}/runs/[1-9][0-9]{{0,18}}$", re.ASCII),
+    re.compile(rf"^{_P}/runs/[1-9][0-9]{{0,18}}/jobs$", re.ASCII),
+    re.compile(rf"^{_P}/jobs/[1-9][0-9]{{0,18}}/logs$", re.ASCII),
 )
-ALLOWED_API_QUERY = re.compile(r"^(?:per_page=100(?:&page=[1-9])?|filter=latest&per_page=100(?:&page=[1-9])?)?$")
+ALLOWED_API_QUERY = re.compile(
+    r"^(?:per_page=100(?:&page=[1-9])?|filter=latest&per_page=100(?:&page=[1-9])?)?$", re.ASCII
+)
 
 
 class FetchError(Exception):
@@ -81,23 +83,35 @@ class Transport(Protocol):
 
 class RequestsTransport:
     """The real transport. `requests` is imported lazily so importing this module never needs it; never follows
-    redirects (the client decides what to follow) and streams the body so the size cap is enforced while reading."""
+    redirects (the client decides what to follow), ignores host proxy and netrc settings, streams the body so the size
+    cap is enforced while reading, makes exactly one attempt (no retry) and refuses credentials for any host other than
+    the API host. `session_factory` lets tests inject a fake session; the default is `requests.Session`."""
+
+    def __init__(self, session_factory: Callable[[], Any] | None = None) -> None:
+        self._session_factory = session_factory
 
     def get(self, url: str, headers: Mapping[str, str], *, timeout: float, max_bytes: int) -> HttpResponse:
         import requests
 
+        if any(k.lower() == "authorization" for k in headers) and urlsplit(url).netloc != API_HOST:
+            raise FetchError("refusing to send credentials to a host other than the GitHub API")
+        factory = self._session_factory or requests.Session
         try:
-            with requests.Session() as session:
+            with factory() as session:
                 session.trust_env = False  # no proxy / netrc credentials picked up from the host
                 resp = session.get(url, headers=dict(headers), timeout=timeout, allow_redirects=False, stream=True)
-                chunks: list[bytes] = []
-                total = 0
-                for chunk in resp.iter_content(chunk_size=65536):
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise FetchError(f"response larger than the {max_bytes} byte limit")
-                    chunks.append(chunk)
-                return HttpResponse(resp.status_code, {k.lower(): v for k, v in resp.headers.items()}, b"".join(chunks))
+                try:
+                    chunks: list[bytes] = []
+                    total = 0
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise FetchError(f"response larger than the {max_bytes} byte limit")
+                        chunks.append(chunk)
+                    hdrs = {k.lower(): v for k, v in resp.headers.items()}
+                    return HttpResponse(resp.status_code, hdrs, b"".join(chunks))
+                finally:
+                    resp.close()
         except FetchError:
             raise
         except requests.RequestException as exc:

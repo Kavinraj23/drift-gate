@@ -32,12 +32,22 @@ def _fetched_validator() -> Draft202012Validator:
     )
 
 
+class SkeletonError(Exception):
+    """labels.json exists but cannot be read: refuse rather than guess which cases are labelled (test-split logs)."""
+
+
 def _labelled_ids(root: Path) -> set[str]:
+    """Ids already labelled. A missing file means none; any other problem fails closed."""
     try:
-        doc = json.loads((root / "labels.json").read_text(encoding="utf-8"))
-        return {c["id"] for c in doc["cases"]}
-    except (OSError, ValueError, KeyError, TypeError):
+        text = (root / "labels.json").read_text(encoding="utf-8")
+    except FileNotFoundError:
         return set()
+    except OSError:
+        raise SkeletonError("labels.json is unreadable; refusing to hash any log") from None
+    try:
+        return {c["id"] for c in json.loads(text)["cases"]}
+    except (ValueError, KeyError, TypeError):
+        raise SkeletonError("labels.json is not a valid labels document; refusing to hash any log") from None
 
 
 def build_skeleton(root: Path) -> tuple[list[dict[str, Any]], list[str], list[str]]:
@@ -86,7 +96,11 @@ def build_skeleton(root: Path) -> tuple[list[dict[str, Any]], list[str], list[st
 
 
 def print_skeleton(root: Path, *, out: TextIO, err: TextIO) -> int:
-    cases, summary, problems = build_skeleton(root)
+    try:
+        cases, summary, problems = build_skeleton(root)
+    except SkeletonError as exc:
+        print(f"cannot build a skeleton: {exc}", file=err)
+        return 2
     for line in summary:
         print(line, file=err)
     for p in problems:

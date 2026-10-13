@@ -19,8 +19,15 @@ What it HAS beyond the one stored job: the run's real job counts (`HoldoutInput.
 from the jobs list). When the run had more than one job, the execution tree shows the other jobs as sibling leaf nodes
 with only that real metadata: their number and their conclusions. Their names are generic (`sibling-2`, ...), they have
 no logs, no error summary, no join keys, and they are listed in a fixed conclusion order, so nothing here says which
-real job is which. This is what makes the production gate derivation (`Orchestrator._gate_facts`: failed leaves out of
-all leaves of the tree) produce the real set sizes: proposed 1 of `jobs.total`. Siblings are the SAME run, so they are
+real job is which. This is what makes the production gate
+derivation (`Orchestrator._gate_facts`: failed leaves out of all leaves of the tree) produce the real set sizes:
+proposed = the number of jobs that really failed (`jobs.failure`), total = `jobs.total`. A re-run of the failed jobs
+re-runs EVERY failed job, so a run in which all jobs failed is 100% of its set and the ceiling refuses it; the failed
+leaves are therefore the stored job's `step-1` first, then one leaf per failed sibling, and the tree and the failed-leaf
+list agree exactly. Cancelled, skipped, success and other siblings keep their own status and are not failed leaves.
+Sibling leaves have no log and no error summary (reading one raises `SourceError`; the analyzers already treat that as
+empty text), so the classification the agent sees still comes from `step-1`'s real text only. Siblings are the SAME
+run, so they are
 deliberately NOT executions: `list_executions` still returns only this one, which keeps `fleet_correlate` and
 `flake_history` honest (a green or red sibling job is not a peer failure and is never fleet evidence). With no counts
 (a case whose fetch record has none) the source is a lone job, as before.
@@ -147,7 +154,8 @@ class HoldoutSource:
 
     def get_failed_leaf_nodes(self, execution_id: str) -> list[Node]:
         self._check(execution_id)
-        return list(self._job_node(None).children)
+        failed = [n for n in self._siblings() if n.status == "failed"]
+        return [*self._job_node(None).children, *failed]
 
     def get_step_logs(self, execution_id: str, node_id: str, budget: int) -> LogChunk:
         self._check(execution_id)

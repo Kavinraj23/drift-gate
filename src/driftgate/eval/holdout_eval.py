@@ -114,6 +114,7 @@ class Scored:
     agent: CaseResult | None
     proposal: dict[str, Any] | None = None  # the agent's ungated proposal (sidecar), if it has one
     jobs_total: int | None = None  # the run's real job count from the fetch record; None when there is no record
+    jobs_failed: int | None = None  # of those, how many concluded failure (the re-run touches all of them)
 
 
 def score_case(
@@ -122,6 +123,7 @@ def score_case(
     run: RunRecord | None,
     meta: dict[str, Any] | None = None,
     jobs_total: int | None = None,
+    jobs_failed: int | None = None,
 ) -> Scored:
     proposal = (meta or {}).get("proposal_before_gates") if run else None
     return Scored(
@@ -129,6 +131,7 @@ def score_case(
         agent_from_run(case, run) if run else None,
         proposal if isinstance(proposal, dict) else None,
         jobs_total,
+        jobs_failed,
     )
 
 
@@ -143,6 +146,11 @@ class SplitMetrics:
     ceiling_only: int = 0  # proposals refused by the abort ceiling and nothing else
     jobs_known: int = 0  # cases whose fetch record gives the run's real job count
     single_job: int = 0  # of those, runs with exactly one job
+    all_failed: int = 0  # of those, runs with more than one job where every job failed
+
+
+def _all_failed(s: Scored) -> bool:
+    return s.jobs_total is not None and s.jobs_failed is not None and s.jobs_failed >= s.jobs_total
 
 
 def aggregate(scores: list[Scored]) -> SplitMetrics:
@@ -157,6 +165,7 @@ def aggregate(scores: list[Scored]) -> SplitMetrics:
         ceiling_only=sum(1 for s in scores if s.proposal and s.proposal.get("refused_by_abort_ceiling_only")),
         jobs_known=sum(1 for s in scores if s.jobs_total is not None),
         single_job=sum(1 for s in scores if s.jobs_total == 1),
+        all_failed=sum(1 for s in scores if _all_failed(s) and s.jobs_total != 1),
     )
 
 
@@ -194,7 +203,11 @@ def _single_job_lines(dev_m: SplitMetrics, test_m: SplitMetrics) -> list[str]:
     def one(name: str, m: SplitMetrics) -> str:
         unknown = m.n - m.jobs_known
         extra = f"; {unknown} with no stored job count" if unknown else ""
-        return f"{m.single_job} of {m.n} {name} cases are single-job runs{extra}."
+        structural = m.single_job + m.all_failed
+        return (
+            f"{structural} of {m.n} {name} cases have every job failed or are single-job runs "
+            f"({m.single_job} single-job runs, {m.all_failed} all-jobs-failed runs){extra}."
+        )
 
     return [one("dev", dev_m), one("test", test_m)]
 
@@ -210,9 +223,11 @@ def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, 
         "## Proposal before gates (ungated; NOT the headline)",
         "",
         "What the agent proposed before SafetyGate saw it. The resource set of a re-run is the run's jobs, taken from "
-        "the real job count stored at fetch time. A single-job run is 100% of its set, so the abort ceiling refuses a "
+        "the real job counts stored at fetch time: the failed jobs (all of which a re-run touches) out of all jobs. A "
+        "run in which every job failed (including a single-job run) is 100% of its set, so the abort ceiling refuses a "
         "Tier 0 re-run there however good the proposal: `refused by the abort ceiling only` counts those. A run with "
-        "several jobs is not refused by the ceiling alone. This block is for understanding the agent; the table above "
+        "at least one job that did not fail is not refused by the ceiling. This block is for understanding the agent; "
+        "the table above "
         "(action after the gates) is the result. Aggregate only for the test split.",
         "",
         *_single_job_lines(dev_m, test_m),
@@ -232,7 +247,7 @@ def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, 
         lines.append(
             [
                 case.id,
-                _jobs_cell(s.jobs_total),
+                _jobs_cell(s.jobs_total, s.jobs_failed),
                 f"{p.get('kind')}{fix}",
                 str(p.get("gate_decision")),
                 str(p.get("gate_reason_code")),
@@ -243,21 +258,26 @@ def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, 
         out += [
             "Dev cases:",
             "",
-            _md_table(["case", "jobs in run", "proposed", "gate decision", "gate reason code", "ceiling only"], lines),
+            _md_table(
+                ["case", "jobs in run (failed/total)", "proposed", "gate decision", "gate reason code", "ceiling only"],
+                lines,
+            ),
             "",
         ]
     return out
 
 
 STRUCTURAL_ZERO_NOTE = (
-    "Headline rerun recall is 0 by construction on single-job runs: the abort ceiling refuses a Tier 0 rerun that "
-    "touches 100% of its resource set (a run with one job). A run with several jobs is judged on its real job count "
-    'and is not refused by the ceiling alone. See "Proposal before gates" for what the agent proposed.'
+    "Headline rerun recall is 0 by construction on runs where every job failed (including single-job runs): a rerun "
+    "of the failed jobs touches 100% of the run's jobs and the abort ceiling refuses it. A run with k failed jobs of "
+    'N is refused exactly when k = N. See "Proposal before gates" for what the agent proposed.'
 )
 
 
-def _jobs_cell(total: int | None) -> str:
-    return "?" if total is None else str(total)
+def _jobs_cell(total: int | None, failed: int | None = None) -> str:
+    if total is None:
+        return "?"
+    return f"{failed}/{total} failed" if failed is not None else str(total)
 
 
 def _structural_zero_note(dev_m: SplitMetrics, test_m: SplitMetrics) -> list[str]:
@@ -266,7 +286,7 @@ def _structural_zero_note(dev_m: SplitMetrics, test_m: SplitMetrics) -> list[str
     ceiling = dev_m.ceiling_only + test_m.ceiling_only
     runs = dev_m.agent_runs + test_m.agent_runs
     cannot_tell = runs > (dev_m.proposals_seen + test_m.proposals_seen)
-    single = (dev_m.single_job + test_m.single_job) > 0 and runs > 0
+    single = (dev_m.single_job + test_m.single_job + dev_m.all_failed + test_m.all_failed) > 0 and runs > 0
     return [STRUCTURAL_ZERO_NOTE, ""] if ceiling or cannot_tell or single else []
 
 
@@ -320,7 +340,7 @@ def render(
                 f"{s.baseline.layer}/{s.baseline.classification}",
                 s.baseline.action or "escalate",
                 agent,
-                _jobs_cell(s.jobs_total),
+                _jobs_cell(s.jobs_total, s.jobs_failed),
             ]
         )
     out.append(
@@ -332,7 +352,7 @@ def render(
                 "baseline layer/class",
                 "baseline action",
                 "agent action",
-                "jobs in run",
+                "jobs in run (failed/total)",
             ],
             detail,
         )
@@ -358,13 +378,14 @@ class ProvenanceRefused(Exception):
         self.problems = problems
 
 
-def _jobs_total(root: Path, case_id: str) -> int | None:
-    """The run's real job count from the fetch record, or None when there is no (valid version 3) record."""
+def _jobs_counts(root: Path, case_id: str) -> tuple[int | None, int | None]:
+    """The run's real (total, failed) job counts from the fetch record, or (None, None) when there is no valid
+    version 3 record."""
     try:
         facts = load_fetched_facts(root, case_id)
     except FetchedRecordError:
-        return None
-    return facts.jobs.total if facts else None
+        return None, None
+    return (facts.jobs.total, facts.jobs.failure) if facts else (None, None)
 
 
 def evaluate(root: Path, now: datetime) -> tuple[str | None, ValidationReport]:
@@ -380,7 +401,8 @@ def evaluate(root: Path, now: datetime) -> tuple[str | None, ValidationReport]:
     meta = load_meta(root)
 
     def score(case: HoldoutCase, log: str, run: RunRecord | None) -> Scored:
-        return score_case(case, log, run, meta.get(case.id), _jobs_total(root, case.id))
+        total, failed = _jobs_counts(root, case.id)
+        return score_case(case, log, run, meta.get(case.id), total, failed)
 
     dev = holdout.dev_details(score)
     dev_m = aggregate([s for _, s in dev])

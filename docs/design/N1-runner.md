@@ -54,8 +54,8 @@ name, before the generic branches:
 
 Gate inputs are exactly what the production derivation produces; nothing is invented. A SINGLE-JOB run is 100% of its
 resource set (`proposed_set_size == resource_set_total == 1`), so the abort ceiling refuses a Tier 0 re-run there. That
-is the honest gate outcome. A run with several jobs is judged on its real job count (next section) and is no longer
-refused by the ceiling alone. The earlier `assume_other_jobs` lift is REMOVED, with its code, flag and text.
+is the honest gate outcome. A run with k failed jobs of N is judged on the real counts (next section) and is refused by
+the ceiling exactly when k == N (a single-job run, or every job failed). The earlier `assume_other_jobs` lift is REMOVED, with its code, flag and text.
 
 Each case therefore records two things side by side:
 
@@ -102,10 +102,11 @@ payment is needed. Run `python tasks.py run-holdout --mode replay --rerun --writ
 it rewrites both files from the recorded fixtures (offline, no key). The refusal message states this (counts only, no ids).
 
 The eval-holdout report puts a caveat directly under the headline table (headline rerun recall is 0 by construction on
-single-job runs; a run with several jobs is not refused by the ceiling alone) when any case was refused by the ceiling
-alone, when any case is a known single-job run, or when it cannot tell (an agent run without a recorded ungated
-proposal). Dev lines show `jobs in run` per case; the test split gets counts only ("k of n test cases are single-job
-runs", plus how many have no stored job count).
+runs where every job failed, single-job runs included; a run with k failed jobs of N is refused exactly when k = N)
+when any case was refused by the ceiling alone, when any case is a known single-job or all-jobs-failed run, or when it
+cannot tell (an agent run without a recorded ungated
+proposal). Dev lines show `jobs in run (failed/total)` per case, e.g. `3/6 failed`; the test split gets counts only ("k of n
+test cases have every job failed or are single-job runs (a single-job runs, b all-jobs-failed runs)", plus how many have no stored job count).
 
 Limit: replay provenance rests on the fixtures having been written by `record-holdout`; a hand-made fixture directory is
 not detected (fixtures are keyed by the request hash and the prompt fingerprint, not signed).
@@ -171,10 +172,10 @@ gateway (a stand-in for the SDK), not from the fake double.
 
 ## Open doubts
 
-1. A single-job run is still refused by the ceiling, so headline `rerun` recall on single-job cases stays 0 by
-   construction (correct and honest: re-running the only job is 100% of the set). Multi-job runs are judged on the real
-   job count. If many chosen runs are single-job workflows the headline rerun recall will be low whatever the agent
-   does; the ungated block and the single-job counts say so. See "Real job counts" below.
+1. A run where every job failed (a single-job run included) is refused by the ceiling, so headline `rerun` recall on
+   such cases stays 0 by construction (correct and honest: re-running every job is 100% of the set). Other runs are
+   judged on the real failed/total counts. If many chosen runs are single-job or all-failed workflows the headline rerun recall will be low whatever the agent
+   does; the ungated block and the single-job / all-failed counts say so. See "Real job counts" below.
 2. Fetched logs without timestamps: the execution start time falls back to the fetch date at 00:00:00Z, flagged
    `refs.time_basis = fetch_date`. It only matters for time windows, which are empty here anyway.
 3. The step name and the job counts come from `holdout/fetched/<id>.json` (schema version 3) when present; with no
@@ -198,7 +199,7 @@ gateway (a stand-in for the SDK), not from the fake double.
   `proposed_set_size = len(source.get_failed_leaf_nodes(...))` and `resource_set_total` = the number of leaves of
   `source.get_execution(...).root`. So `HoldoutSource` builds a truthful tree: when the run had more than one job the
   root is `run` with the stored job (`job` -> failed leaf step `step-1`) plus `jobs.total - 1` sibling LEAF nodes. Gate
-  facts are then 1 of `jobs.total`, produced by the unmodified derivation. Nothing edits `gates.py`, `orchestrator.py`
+  facts are then `jobs.failure` of `jobs.total`, produced by the unmodified derivation. Nothing edits `gates.py`, `orchestrator.py`
   or the facts (a test pins that the runner source contains no `resource_set_total=`, `proposed_set_size=` or
   `replace(facts`). The proposal sidecar records the set sizes the gate saw (`proposed_set_size`, `resource_set_total`).
 - **Siblings are real metadata only.** Names and ids are `sibling-2` ... (no job names), the status is the real
@@ -210,12 +211,27 @@ gateway (a stand-in for the SDK), not from the fake double.
   neither a log nor a join key). So `blast_radius` stays 0 and the fleet-wide escalation is not tripped by the run's own
   jobs; it would trip only if real fleet data existed, which one stored log does not have. `flake_history` is likewise
   empty. Both are tested with a run that has five failed jobs.
-- **Limit that remains.** `proposed_set_size` is 1 even when siblings also failed: the stored failed leaf is the one job
-  the case describes, and sibling logs are not stored. A real "re-run failed jobs" would touch every failed job, so with
-  several failures the gate sees 1 of N where the truth is k of N; the ceiling check (`proposed >= total`) is then a
-  little more permissive than the truth only when every job failed. Single-job runs (total 1) are STILL refused by the
-  ceiling.
+- **Numerator and denominator (round 2 of the follow-up).** A "re-run failed jobs" action re-runs EVERY failed job, so
+  `proposed_set_size` is `jobs.failure` and `resource_set_total` is `jobs.total`. `get_failed_leaf_nodes` returns the
+  stored job's `step-1` first, then exactly `jobs.failure - 1` failed sibling leaves (conclusion `failure`); cancelled,
+  skipped, success and other siblings keep their own status (`cancelled`, `skipped`, `success`, `other`) and are not
+  failed leaves. The tree and the failed-leaf list agree exactly (property-tested over several shapes). A run with k
+  failed jobs of N is refused by the ceiling exactly when k == N: single-job runs and runs where every job failed (4 of
+  4, 6 of 6). Round 1 returned only `step-1` as failed, which gave 1 of N for an all-failed run and let it through; that
+  flattered the agent and is fixed. Accepted cost: lower headline rerun recall (a human decision).
+- **Sibling leaves carry no log.** Reading one raises `SourceError`. `FailureAnalyzer._analyze` and
+  `Orchestrator._holder_proof` already treat that as empty text and an unknown signature of the lowest rank, so the
+  fingerprint, signature and classification still come from `step-1`'s real text only (tested: the analysis with five
+  failed siblings equals the analysis with none). `get_step_logs` defaults to `step-1` and returns an error for a
+  sibling node id.
+- **Tree-shape caveat (read agent-vs-baseline comparisons with this in mind).** The model now sees N generic
+  `sibling-k` job leaves, some of them failed with no logs. That can change investigator behaviour: extra tool calls
+  aimed at siblings, or escalating because it cannot see a failed sibling's logs. The baseline never sees the tree, so a
+  gap between the agent and the baseline on multi-job holdout runs may partly come from this tree shape and not from
+  the quality of the diagnosis. No recordings exist yet, so no replay fixture is stale; any recording made from here on
+  is made with this tree shape.
 - **Tests** (`tests/holdout/test_holdout_jobcount.py`): sibling counts and conclusions, no label or join-key fields,
-  tool honesty (fleet, flake, get_execution), gate facts 1 of 6 and the re-run allowed, 1 of 2 allowed, 1 of 1 and an
-  unknown count refused by the ceiling alone, five failed siblings do not trip the blast radius, the v3 loader, and the
+  tool honesty (fleet, flake, get_execution), gate facts 1 of 6 and 3 of 6 allowed, 1 of 2 allowed, 1 of 1, an unknown count, and all-failed 2/2, 4/4 and 6/6 refused
+  by the ceiling alone, cancelled/skipped/other siblings not counted, tree and failed-leaf list agreement over several
+  shapes, analysis unchanged by failed siblings, five failed siblings do not trip the blast radius (the set is 5 of 6), the v3 loader, and the
   report text.

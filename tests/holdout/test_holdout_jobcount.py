@@ -320,9 +320,7 @@ def test_siblings_carry_only_real_counts_and_conclusions(tmp_path: Path) -> None
     assert [s.name for s in sibs] == [f"sibling-{n}" for n in range(2, 7)]
     for s in sibs:
         assert s.children == [] and s.error_summary == "" and s.node_id == s.name
-    assert [n.node_id for n in src.get_failed_leaf_nodes("hc-01")] == [
-        "step-1"
-    ]  # only the stored job is failed-and-stored
+    assert [n.node_id for n in src.get_failed_leaf_nodes("hc-01")] == ["step-1"]  # exactly jobs.failure failed leaves
 
 
 def test_a_failed_sibling_is_shown_failed_but_has_no_log(tmp_path: Path) -> None:
@@ -330,7 +328,8 @@ def test_a_failed_sibling_is_shown_failed_but_has_no_log(tmp_path: Path) -> None
     src = HoldoutSource(_inp(counts=counts, tmp=tmp_path))
     sibs = src.get_execution("hc-01").root.children[1:]
     assert [s.status for s in sibs] == ["failed", "failed", "success"]
-    assert len(src.get_failed_leaf_nodes("hc-01")) == 1
+    # CHANGED in round 2: 3 failed jobs of 4 are 3 failed leaves (was 1): the tree and the list now agree exactly
+    assert [n.node_id for n in src.get_failed_leaf_nodes("hc-01")] == ["step-1", "sibling-2", "sibling-3"]
     with pytest.raises(SourceError):
         src.get_step_logs("hc-01", "sibling-2", 100)
 
@@ -362,7 +361,15 @@ def test_siblings_are_not_executions_so_fleet_and_flake_tools_stay_honest(tmp_pa
     flake = dispatch(ctx, "flake_history", {"execution_id": "hc-01"}, "c2")
     assert flake.ok and flake.data["precedent"] is False
     tree = dispatch(ctx, "get_execution", {"execution_id": "hc-01"}, "c3")
-    assert tree.ok and [f["node_id"] for f in tree.data["failed_leaves"]] == ["step-1"]
+    # CHANGED in round 2: five failed jobs in the run are five failed leaves (was one): step-1, then 4 failed siblings
+    assert tree.ok and [f["node_id"] for f in tree.data["failed_leaves"]] == [
+        "step-1",
+        "sibling-2",
+        "sibling-3",
+        "sibling-4",
+        "sibling-5",
+    ]
+    assert [f["error_summary"] for f in tree.data["failed_leaves"][1:]] == [""] * 4
 
 
 # -- the gate: real total, no override --------------------------------------------------------------
@@ -382,8 +389,85 @@ def test_a_multi_job_run_gives_the_gate_set_one_of_the_real_total_and_is_no_long
 def test_failed_siblings_in_the_same_run_do_not_trip_the_fleet_blast_radius(tmp_path: Path) -> None:
     counts = hj.JobCounts(total=6, success=1, failure=5, cancelled=0, skipped=0, other=0)
     p = _run("hc-01", counts, tmp_path).proposal
-    assert (p["proposed_set_size"], p["resource_set_total"]) == (1, 6)
+    # CHANGED in round 2: the re-run touches all 5 failed jobs, so the set is 5 of 6 (was 1 of 6). Still allowed, and
+    # the failed siblings are not executions, so fleet_correlate sees no peers and the blast radius stays 0.
+    assert (p["proposed_set_size"], p["resource_set_total"]) == (5, 6)
     assert p["gate_decision"] == "allowed" and p["gate_reason_code"] != "fleet_blast_radius"
+
+
+@pytest.mark.parametrize("n", [2, 4, 6])
+def test_a_run_where_every_job_failed_is_refused_by_the_ceiling_alone(tmp_path: Path, n: int) -> None:
+    counts = hj.JobCounts(total=n, success=0, failure=n, cancelled=0, skipped=0, other=0)
+    run = _run("hc-01", counts, tmp_path)
+    p = run.proposal
+    assert (p["proposed_set_size"], p["resource_set_total"]) == (n, n)
+    assert p["gate_decision"] == "refused" and p["gate_reason_code"] == "abort_ceiling_set_100pct"
+    assert p["refused_by_abort_ceiling_only"] is True and run.action == {"kind": "escalate"}
+
+
+def test_one_failed_job_of_six_is_one_of_six_and_allowed(tmp_path: Path) -> None:
+    counts = hj.JobCounts(total=6, success=5, failure=1, cancelled=0, skipped=0, other=0)
+    p = _run("hc-01", counts, tmp_path).proposal
+    assert (p["proposed_set_size"], p["resource_set_total"]) == (1, 6) and p["gate_decision"] == "allowed"
+
+
+def test_three_failed_of_six_is_three_of_six_and_other_conclusions_are_not_counted(tmp_path: Path) -> None:
+    counts = hj.JobCounts(total=6, success=1, failure=3, cancelled=1, skipped=1, other=0)
+    p = _run("hc-01", counts, tmp_path).proposal
+    assert (p["proposed_set_size"], p["resource_set_total"]) == (3, 6)
+    assert p["gate_decision"] == "allowed" and p["refused_by_abort_ceiling_only"] is False
+
+
+def test_cancelled_skipped_and_other_siblings_are_not_failed_leaves(tmp_path: Path) -> None:
+    counts = hj.JobCounts(total=8, success=1, failure=2, cancelled=2, skipped=1, other=2)
+    src = HoldoutSource(_inp(counts=counts, tmp=tmp_path))
+    sibs = src.get_execution("hc-01").root.children[1:]
+    assert [s.status for s in sibs] == ["failed", "cancelled", "cancelled", "skipped", "success", "other", "other"]
+    assert [n.node_id for n in src.get_failed_leaf_nodes("hc-01")] == ["step-1", "sibling-2"]
+    p = _run("hc-01", counts, tmp_path / "run").proposal
+    assert (p["proposed_set_size"], p["resource_set_total"]) == (2, 8)
+
+
+SHAPES = [
+    (1, 0, 1, 0, 0, 0),
+    (2, 0, 2, 0, 0, 0),
+    (6, 3, 1, 1, 1, 0),
+    (6, 0, 6, 0, 0, 0),
+    (7, 1, 5, 1, 0, 0),
+    (8, 1, 2, 2, 1, 2),
+    (5, 0, 1, 0, 0, 4),
+]
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+def test_the_tree_and_the_failed_leaf_list_agree_exactly(tmp_path: Path, shape: tuple[int, ...]) -> None:
+    counts = hj.JobCounts(*shape)
+    src = HoldoutSource(_inp(counts=counts, tmp=tmp_path))
+    leaves = _leaves(src.get_execution("hc-01").root)
+    in_tree = [n.node_id for n in leaves if n.status == "failed"]
+    listed = [n.node_id for n in src.get_failed_leaf_nodes("hc-01")]
+    assert listed == in_tree and listed[0] == "step-1" and len(listed) == counts.failure
+    assert len(leaves) == counts.total
+    assert len({n.node_id for n in leaves}) == len(leaves)
+
+
+def test_failed_siblings_do_not_change_what_the_analysis_sees(tmp_path: Path) -> None:
+    from driftgate.tools.base import FailureAnalyzer
+
+    alone = FailureAnalyzer(HoldoutSource(_inp(counts=None, tmp=tmp_path / "a"))).analyze("hc-01")
+    many = hj.JobCounts(total=6, success=1, failure=5, cancelled=0, skipped=0, other=0)
+    with_sibs = FailureAnalyzer(HoldoutSource(_inp(counts=many, tmp=tmp_path / "b"))).analyze("hc-01")
+    assert alone is not None and with_sibs == alone
+    assert with_sibs.node_id == "step-1"
+
+
+def test_the_log_tool_defaults_to_step_1_and_has_nothing_to_read_for_a_failed_sibling(tmp_path: Path) -> None:
+    many = hj.JobCounts(total=4, success=1, failure=3, cancelled=0, skipped=0, other=0)
+    ctx = ToolContext(HoldoutSource(_inp(counts=many, tmp=tmp_path)))
+    default = dispatch(ctx, "get_step_logs", {"execution_id": "hc-01"}, "c1")
+    assert default.ok and default.data["node_id"] == "step-1" and default.data["text"]
+    sib = dispatch(ctx, "get_step_logs", {"execution_id": "hc-01", "node_id": "sibling-2"}, "c2")
+    assert not sib.ok and sib.error
 
 
 def test_a_single_job_run_is_still_refused_by_the_ceiling(tmp_path: Path) -> None:
@@ -490,18 +574,24 @@ def test_the_report_shows_jobs_per_dev_case_and_aggregates_for_test(tmp_path: Pa
     from test_holdout_run import real_records  # same helper the runner tests use
 
     root = make_holdout(tmp_path / "holdout")
-    for cid, total in (("hc-01", 6), ("hc-02", 1), ("hc-11", 1), ("hc-12", 3)):
-        _write_fetched(root, cid, total)
+    for cid, total, failed in (("hc-01", 6, 3), ("hc-02", 1, 1), ("hc-11", 1, 1), ("hc-12", 3, 3)):
+        _write_fetched(root, cid, total, failed)
     real_records(root, tmp_path)
     text, _ = he.evaluate(root, NOW)
     assert text is not None
-    assert "jobs in run" in text
-    assert "1 of 2 dev cases are single-job runs." in text and "1 of 2 test cases are single-job runs." in text
+    assert "jobs in run (failed/total)" in text
+    dev_line = (
+        "1 of 2 dev cases have every job failed or are single-job runs (1 single-job runs, 0 all-jobs-failed runs)."
+    )
+    test_line = (
+        "2 of 2 test cases have every job failed or are single-job runs (1 single-job runs, 1 all-jobs-failed runs)."
+    )
+    assert dev_line in text and test_line in text
     assert he.STRUCTURAL_ZERO_NOTE in text
     assert "hc-11" not in text and "hc-12" not in text  # sealed: counts only
     dev_rows = [line for line in text.splitlines() if line.startswith("| hc-01") or line.startswith("| hc-02")]
-    assert any(line.rstrip().endswith("| 6 |") for line in dev_rows if line.startswith("| hc-01"))
-    assert any(line.rstrip().endswith("| 1 |") for line in dev_rows if line.startswith("| hc-02"))
+    assert any(line.rstrip().endswith("| 3/6 failed |") for line in dev_rows if line.startswith("| hc-01"))
+    assert any(line.rstrip().endswith("| 1/1 failed |") for line in dev_rows if line.startswith("| hc-02"))
     # multi-job case: the headline rerun went through; the single-job one was refused by the ceiling alone
     assert '"kind": "rerun"' in (root / "runs.json").read_text(encoding="utf-8")
 
@@ -511,12 +601,29 @@ def test_no_single_job_runs_means_no_structural_zero_note(tmp_path: Path) -> Non
 
     root = make_holdout(tmp_path / "holdout")
     for cid in ("hc-01", "hc-02", "hc-11", "hc-12"):
-        _write_fetched(root, cid, 4)
+        _write_fetched(root, cid, 4, 2)
     real_records(root, tmp_path)
     text, _ = he.evaluate(root, NOW)
     assert text is not None and he.STRUCTURAL_ZERO_NOTE not in text
-    assert "0 of 2 dev cases are single-job runs." in text
+    assert "0 of 2 dev cases have every job failed or are single-job runs" in text
 
 
-def test_the_structural_zero_note_now_names_single_job_runs_only() -> None:
-    assert "single-job runs" in he.STRUCTURAL_ZERO_NOTE and "several jobs" in he.STRUCTURAL_ZERO_NOTE
+def test_the_structural_zero_note_states_the_k_equals_n_rule() -> None:
+    note = he.STRUCTURAL_ZERO_NOTE
+    assert "every job failed" in note and "k = N" in note
+    assert "several jobs" not in note and "not refused by the ceiling alone" not in note
+
+
+def test_an_all_jobs_failed_run_alone_triggers_the_note_and_the_sealed_split_shows_only_counts(tmp_path: Path) -> None:
+    from test_holdout_run import real_records
+
+    root = make_holdout(tmp_path / "holdout")
+    for cid in ("hc-01", "hc-02", "hc-11", "hc-12"):
+        _write_fetched(root, cid, 3, 3)  # multi-job, every job failed
+    real_records(root, tmp_path)
+    text, _ = he.evaluate(root, NOW)
+    assert text is not None and he.STRUCTURAL_ZERO_NOTE in text
+    assert (
+        "2 of 2 test cases have every job failed or are single-job runs (0 single-job runs, 2 all-jobs-failed" in text
+    )
+    assert "hc-11" not in text and "hc-12" not in text

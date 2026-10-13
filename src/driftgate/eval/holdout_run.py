@@ -9,8 +9,9 @@ What this is
 - The gate runs on deterministic facts EXACTLY as the production derivation produces them (no invented resource set
   total). With no history, Tier 0 can qualify only through a Tier 0 known-transient rule (plus a deterministic
   signature match); Tier 2 never qualifies on confidence. The resource set of a re-run is the run's jobs: the source
-  exposes the run's REAL job count (from the fetch record) as sibling leaves, so a multi-job run is no longer refused by
-  the abort ceiling alone, while a single-job run still is (100% of its set): the honest gate outcome. To keep the
+  exposes the run's REAL job counts (from the fetch record) as sibling leaves: the failed jobs (all of which a re-run
+  touches) out of all jobs. A run with k failed jobs of N is refused by the ceiling exactly when k == N (a single-job
+  run, or every job failed): the honest gate outcome. To keep the
   agent's behaviour visible, each case records TWO views: `action_after_gates` (the headline; goes into runs.json)
   and `proposal_before_gates` (what the agent proposed, plus the gate's decision and reason code; sidecar only, and
   NOT a result).
@@ -119,8 +120,9 @@ FAKE_MODEL_NAME = "fake:deterministic-plumbing-double"
 TARGET_DESCRIPTION = "proposal-only: execute, verify and rollback raise; nothing is executed"
 GATE_NOTE = (
     "gate inputs are the production derivation, unmodified, over the run's REAL job counts from the fetch record; a "
-    "single-job run is 100% of its resource set, so the abort ceiling refuses a Tier 0 re-run there (honest gate "
-    "outcome). The headline is the action AFTER the gates; the proposal BEFORE the gates is a separate, ungated view"
+    "run with k failed jobs of N is refused by the abort ceiling exactly when k = N (a re-run touches every failed "
+    "job), including a single-job run (honest gate outcome). "
+    "The headline is the action AFTER the gates; the proposal BEFORE the gates is a separate, ungated view"
 )
 SEALED_NOTE = (
     "note: holdout/runs_meta.json and fixtures/replay-holdout/ hold per-case data for test-split cases (cost, "

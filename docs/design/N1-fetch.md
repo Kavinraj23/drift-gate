@@ -202,9 +202,12 @@ missing file still means nothing is labelled).
 ## Job counts and `--limit` (follow-up, schema version 3)
 
 - **Why.** The abort ceiling refuses an action that touches 100% of its resource set. For a Tier 0 re-run of one failed
-  job that set is the jobs of the run, so the runner needs the REAL number of jobs the run had. The jobs list the fetcher
-  already downloads (latest attempt, `filter=latest`) says so. Nothing is invented and no gate is changed
-  (docs/design/N1-runner.md, "Real job counts").
+  job that set is the jobs of the run, and a "re-run failed jobs" action touches EVERY failed job. So the runner needs
+  the REAL number of jobs the run had (the denominator, `jobs.total`) and the REAL number that failed (the numerator,
+  `jobs.failure`). The jobs list the fetcher already downloads (latest attempt, `filter=latest`) says both. A run with
+  k failed jobs of N is refused by the ceiling exactly when k == N. Nothing is invented and no gate is changed
+  (docs/design/N1-runner.md, "Real job counts"). Accepted cost: headline rerun recall is lower on runs where every job
+  failed, because the honest gate refuses them.
 - **What is stored.** `jobs`: `{total, success, failure, cancelled, skipped, other}`, counts only. No job names (beyond
   the already-recorded failed job) and no log text. `other` is every conclusion not in the four named values, including
   a missing one (in progress, `neutral`, `timed_out`, `action_required` ...). The contract is

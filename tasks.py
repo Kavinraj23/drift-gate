@@ -15,7 +15,13 @@ PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 # Targets whose implementation arrives in a later milestone: name -> milestone.
 NOT_IMPLEMENTED: dict[str, str] = {}
 LIVE_TARGETS = {"record", "eval-live", "e2e-live"}  # implemented in driftgate.eval.live; human-only
-HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
+#: The only offline targets that take extra arguments: `approvals` (a sub-command and its options) and `trace-report`
+#: (`--audit`, `--reports`, `--out`; argparse rejects anything else). Every other target still takes none.
+ARG_TARGETS = {"approvals", "trace-report"}
+#: `holdout-fetch` also takes arguments (`--yes-fetch`, `--skeleton`, ...), validated by its own argparse; it is the
+#: only other target that does, and it is human-only (read-only GET-only fetch of public logs; plan mode by default).
+FETCH_TARGETS = {"holdout-fetch"}
+HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset", "holdout-fetch"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
 IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8a", "M9a"}
@@ -92,6 +98,74 @@ def eval_() -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def eval_retrieval() -> int:
+    """similar_history on vs. off over the synthetic scenarios, offline (scripted model; plumbing, not quality)."""
+    if not (ROOT / "data" / "executions.json").exists():
+        code = data()
+        if code:
+            return code
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [
+        PY,
+        "-m",
+        "driftgate.eval.retrieval_eval",
+        "--data",
+        str(ROOT / "data"),
+        "--out",
+        str(ROOT / "data" / "eval"),
+    ]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def eval_tier12() -> int:
+    """Tier 1/2 approval cases on the synthetic lock table: expected decisions from the PRD rules vs. the code."""
+    if not (ROOT / "data" / "executions.json").exists():
+        code = data()
+        if code:
+            return code
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.tier12_cases", "--data", str(ROOT / "data")]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def approvals(extra: list[str]) -> int:
+    """Tier 1/2 approvals CLI (synthetic target only): list | show | approve | deny | expire-check | execute."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    # Nothing is injected and nothing can be overridden: the CLI pins the gate inputs and rejects unknown options.
+    cmd = [PY, "-m", "driftgate.approvals_cli", *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def trace_report(extra: list[str]) -> int:
+    """Static HTML trace pages from an audit log, offline. No arguments: the committed sample into data/report/."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.report", *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def _holdout(command: str) -> int:
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.holdout_eval", command, "--dir", str(ROOT / "holdout")]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def holdout_validate() -> int:
+    """Schema, quotas, hashes, redaction and label timing of the real-log holdout (offline; fails until it is full)."""
+    return _holdout("validate")
+
+
+def eval_holdout() -> int:
+    """Agent vs. baseline on the stored real logs, offline: dev per case, test aggregate only (no API key)."""
+    return _holdout("eval")
+
+
+def holdout_fetch(extra: list[str]) -> int:
+    """Human-only: store the failed step's log of the runs in holdout/candidates.json. Plan mode unless --yes-fetch."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.holdout_fetch", *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
 def playground_reset() -> int:
     """Human-only: force scenario branches back to their baseline tags (see scripts/playground.py)."""
     return run([PY, "scripts/playground.py", "reset", "--yes"])
@@ -120,6 +194,11 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "baseline": baseline,
     "e2e": e2e,
     "eval": eval_,
+    "holdout-validate": holdout_validate,
+    "eval-holdout": eval_holdout,
+    "holdout-fetch": lambda: holdout_fetch([]),
+    "eval-retrieval": eval_retrieval,
+    "eval-tier12": eval_tier12,
     "mvp-check": mvp_check,
     "playground-reset": playground_reset,
 }
@@ -136,7 +215,7 @@ def main(argv: list[str]) -> int:
         print("usage: python tasks.py <target> [options]")
         return 2
     target = argv[1]
-    if len(argv) > 2 and target not in LIVE_TARGETS:
+    if len(argv) > 2 and target not in LIVE_TARGETS | ARG_TARGETS | FETCH_TARGETS:
         print("usage: python tasks.py <target>")
         return 2
     if target in HUMAN_ONLY and (ROOT / ".autonomous").exists():
@@ -144,6 +223,12 @@ def main(argv: list[str]) -> int:
         return 1
     if target in LIVE_TARGETS:
         return _live(target, argv[2:])
+    if target in FETCH_TARGETS:
+        return holdout_fetch(argv[2:])
+    if target == "approvals":
+        return approvals(argv[2:])
+    if target == "trace-report":
+        return trace_report(argv[2:])
     if target in HANDLERS:
         return HANDLERS[target]()
     if target in NOT_IMPLEMENTED:

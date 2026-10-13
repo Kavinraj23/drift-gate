@@ -58,3 +58,58 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 - Confirm real claude-sonnet-5-5 prices in `src/driftgate/llm/config.py`: the lockfile scenario needed Sonnet for the investigator, and the spend cap is computed from that table.
 - Decide whether to reserve tool calls for the reviewer (the shared 8-call budget can starve it); this changes the PRD budget rule, so it was not done.
 - Review the open PRs #2 to #4 on drift-gate-playground; do not merge.
+
+### N1 (real-log holdout) - Needs human
+- The 30 real runs, `holdout-fetch` (network, human-only), and labels do not exist; `holdout-validate` fails by design until they do. Labels must be committed before any agent run on them.
+- Ambiguity: the PRD says "Both stub" for the acceptance commands but does not say how the agent runs on stored logs offline. This milestone reads agent results from `holdout/runs.json` run records; a holdout source adapter and a record path are not built (see `docs/design/N1.md`).
+- Ambiguity: PRD says escalation runs are "at least 3" without naming layers; the schema allows L0..L6 for them.
+
+### N1 fetch half (`holdout-fetch`) - Needs human
+- **Permission rule (I did not edit `.claude/settings.json`).** Add this line to `permissions.ask` so the human-only fetch always prompts, plan mode included: `"Bash(python tasks.py holdout-fetch:*)"`. Do not add it to `allow`. (Without a rule, the target is still refused under `.autonomous` by `HUMAN_ONLY`.)
+- **Create the token.** `HOLDOUT_FETCH_TOKEN=...` in the gitignored `.env` (never in a prompt or shell history). Separate from the playground token: read-only. Unverified: whether a fine-grained token can read Actions logs of arbitrary public third-party repos it does not own (fine-grained tokens are scoped to repositories the owner can select; a classic token limited to `public_repo` may be needed). Try one candidate first.
+- **Invariant 12 wording (CLAUDE.md, which I may not edit).** "Live GitHub work targets `drift-gate-playground` only" reads as covering every GitHub access. Suggested clarification: "The playground adapter is the only GitHub writer and refuses any repo except `drift-gate-playground`. `eval/holdout_fetch` is a separate GET-only reader for public repositories, with its own read-only token; it shares no code with the adapter and writes only under `holdout/`." The adapter guard is unchanged.
+- **Placement deviation.** The fetcher is `src/driftgate/eval/holdout_fetch.py` (plus `holdout_gh.py`, `holdout_steplog.py`, `holdout_skeleton.py`), not `src/driftgate/holdout_fetch.py` as asked: the existing test `test_holdout_is_referenced_only_in_eval` forbids the word "holdout" in any module outside `eval/`, and I was not to weaken it. Say if you would rather relax that test and move the module.
+- **First real fetch is unverified** against GitHub: log framing, step timestamps and redirect hosts come from documentation. Fetch ONE run first and compare the stored section with the run page (docs/design/N1-fetch.md, "Open doubts"). Logs expire after 90 days.
+- **Existing tests whose assertions had to change** (the target became real and human-only): see PROGRESS.md.
+
+### N2 (`similar_history`) - Needs human
+- Decision (round 2): "incident finish time". The PRD says the index holds incidents that "finished before the case". Live, `record_incident(outcome, completed_at)` now takes the time the incident COMPLETED (report, remediation and verification finished); the index is as-of completion, the conservative choice. The synthetic eval still uses the failed execution's own `finished_at` and the report says so. Human may overrule.
+- Ambiguity: the shipping rule's "improves" has no numbers in the PRD. `eval/retrieval_eval.py` uses at least 3 cases of recall or verified fixes, or a 10 percent drop in mean cost per case with no loss of recall or success rate, and any rise in false remediation vetoes. Constants `MIN_CASES`, `MIN_COST_DROP`; change if you disagree.
+- RESOLVED (round 2): a model could pass another execution's id to `similar_history`. The tool now takes no arguments; the case id and start time are bound by code in `Investigator.investigate`, and an unbound context refuses.
+- Needs human: recorded real-model on/off fixtures (`record` with the tool offered) and a loader for a recorded arm in `eval-retrieval`; until then the verdict stays "stays off: no recorded evidence".
+### N3 (change correlation) - Needs human
+- Recording fixtures with `changes_in_window` enabled (`record`) and any live eval are human-only; until then no real model has used the tool and the report's N3 rows are metric-code validation only.
+- Ambiguity: the PRD does not say which timestamp "first failure" means for a recurring or retried failure. Implemented as the start of the pipeline's unbroken run of same-fingerprint failures ending at the case (see `docs/design/N3.md`).
+- Ambiguity: how `suspected_change.ref` identifies a change is unspecified. Scoring accepts `change_id`, a commit sha (7+ char prefix) or exact `(kind, ref, at)`; the prompt asks for the `change_id`.
+- Ambiguity: the PRD's `ExecutionSource` protocol has no change-listing method. Kept additive: a separate `ChangeSource` protocol in the tool module; `ExecutionSource` unchanged.
+- Ambiguity: the scored "causal" and "decoy" sets come from the generator's labels (decoys = other changes within 6h before the failure touching the pipeline's own refs). Changes in the window outside both sets count only in the blame denominator.
+### Needs human / later (integration of N2 + N3)
+- When the live path that calls `Orchestrator.record_incident` is built, it must take the verification-finished time from the audit log itself (the `verification` entry's `ts`), not from a caller-supplied `completed_at`. A wrong value there could let a case see an incident that was still in progress.
+
+### N4 (Tier 1/2 approvals) - Needs human
+
+- Tier 2 approval window: the PRD gives Tier 2 no timeout. `TIER2_TIMEOUT_S` = 60 minutes (src/driftgate/approvals.py) is my assumption; an unbounded window was not acceptable. Confirm or change.
+- Tier 2 on the generated dataset: no execution records which execution holds a state lock, so the 4 labelled Tier 2 scenarios (sc-03, sc-11, sc-29, sc-33) can only be downgraded ("holder death not proven"). The allowed path is exercised on the simulated lock table of the dedicated `eval-tier12` cases. Giving the generator lock-holder data would change seeded dataset bytes and invalidate MVP 1 fixtures, so I did not. Decide whether a later dataset version should carry holders.
+- The dataset has no "who triggered this run" field. The orchestrator takes a `triggered_by` resolver; with none, no approval request is opened (fail closed). The CLI cannot create requests. Decide where the trigger identity should come from for a real source (GitHub: the run's `triggering_actor`).
+- Identities are unauthenticated strings (trusted local CLI). Fine for a local simulation; real approval (Slack) needs authentication first. See docs/design/N4.md.
+- Old note "Tier 2 (M5): ... can never execute": superseded for the simulated lock table (N4); still true for the generated scenarios.
+- RESOLVED in round 2 (reviewer FAIL): CLI gate inputs are pinned (no `--kill-switch/--policy/--audit/--locks/--data`; unknown flags rejected; `tasks.py approvals` injects nothing); quorum derived from the tier and request columns frozen, status needs its decisions; invisible/non-ASCII identities refused and the stored form constrained; relative-import detection in the architecture test; approvals gated by SafetyGate (human decision); claim-time expiry audited; failing-execution holder is `unknown`; dry-run-failure tests added. Still open: everything listed above under Needs human.
+
+### N4 hardening: known, accepted limits (not bugs to fix now)
+
+- F4 (delete-and-reinsert / REPLACE): an `INSERT OR REPLACE` or DELETE-then-INSERT on `requests` or `decisions` by a writer that can open the SQLite file can bypass the UPDATE/INSERT triggers, and `PRAGMA foreign_keys` is per connection (a writer that does not turn it on is not held to it). Accepted: the SQL layer is defence in depth against honest mistakes and buggy writers, not against someone with write access to the file (identities are unauthenticated anyway, see docs/design/N4.md). The real boundary is that execution never trusts a stored approval alone: `execute_approved` re-counts the distinct non-requester approvers in code, re-runs SafetyGate from fresh facts (kill switch, abort ceiling, rate limit, Tier 2 holder proof) and claims atomically. A forged row can at most reach that gate, which can only downgrade. The hardening tests drop every trigger and forge rows to show the code-level recounts still refuse.
+- F6 (dynamic imports): the architecture test finds static imports (including relative ones) but not `importlib.import_module(...)`, `__import__` or `exec`-built imports, so a dynamic import of the approval store or a `RemediationTarget` from `agents/` or `tools/` would not be caught by it. Accepted: invariant 1 is also held by the text backstop in the same test and by review; a complete check would need a runtime import hook, which is out of scope. Reviewers should grep for `import_module` and `__import__` in `agents/`, `tools/` and `llm/`.
+
+### N5 (trace report) - Needs human / decisions
+
+- The audit log stores evidence COUNTS (`evidence_kept`, `evidence_dropped`), not evidence items, and has no final-outcome entry. The report shows evidence text only from a saved `Report.to_dict()` (`reports.json` beside the audit log) and derives the outcome from the last terminal audit event. I did not add audit fields (KINDS and payload shapes are pinned). Decide whether live runs (`eval/live.py`, a future runner) should also write `Report.to_dict()` per investigation next to the audit log; today nothing does, so a live trace page would show "evidence: not recorded" until that exists.
+- Dropped (uncited) evidence text is never stored anywhere, so the page can only show how many items were dropped, not what they said.
+- The per-call "result summary" is the one line the orchestrator audits (tool name and file or error). A fuller tool-result view would need the results persisted; out of scope for N5.
+
+### N1 fetch half round 2 - Needs human
+- The extraction rules (docs/design/N1-fetch.md, "Extraction") are built from the framing seen in this repo's sourced samples, not from a live log. Fetch ONE candidate first; if it is refused, the printed reason says which rule failed, and any loosening is a rule change a human reviews. Refused cases must be cut by hand.
+- Under a git worktree `.autonomous` is looked up at the worktree root and at the main checkout; confirm that matches how the orchestrator creates it.
+
+### N1 fetch half round 3 - Needs human
+- The log framing (timestamp prefix, `##[group]Run/Post`, runner-phase headers, a timestamped `##[error]` ending a failed step) is ASSUMED, not sourced. To make the extractor trustworthy, supply ONE redacted real job log under `tests/github/fixtures/real/` with a `.source.txt` (URL, date, redactions; framing untouched), ideally with a `Post` step and the final cleanup lines. See docs/design/N1-fetch.md, 'Supplying a real sample'.
+- A job with several failed steps now needs `"step"` in candidates.json (name or number), by human decision; unnamed ones are refused.

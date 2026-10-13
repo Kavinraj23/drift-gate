@@ -13,3 +13,4 @@ __pycache__/
 build/
 dist/
 .claude/stop_state.json
+state/

@@ -26,9 +26,12 @@ from driftgate.llm.budget import CallRecord, InvestigationBudget
 from driftgate.llm.errors import FixtureMissing, GatewayError, InvestigationBudgetExhausted
 from driftgate.llm.types import ModelClient, ModelRequest, ModelResponse
 from driftgate.remediation_catalog import CATALOG
-from driftgate.tools import ToolContext, ToolResult, dispatch, tool_definitions
+from driftgate.tools import ToolContext, ToolResult, dispatch, optional_tool_definitions, tool_definitions
+from driftgate.tools.changes_in_window import PROMPT_ADDENDUM as CHANGES_PROMPT_ADDENDUM
 
 SUBMIT_REPORT = "submit_report"
+#: Fixed reason written to the audit log when the case's start time could not be read (no raw source values).
+HISTORY_SKIPPED_UNBOUND = "case start time unreadable"
 DEFAULT_RESPONSE_TOKENS = 1500
 EXTRA_TURNS = 4  # turns beyond the tool-call limit: duplicate-only turns and the one nudge to report
 DEFAULT_LAYER = "L4"
@@ -149,9 +152,33 @@ def submit_report_definition() -> dict[str, Any]:
     }
 
 
-def agent_tool_definitions() -> list[dict[str, Any]]:
-    """The read-only tools plus the final-report tool, in a stable order (cache friendly)."""
-    return [*tool_definitions(), submit_report_definition()]
+def agent_tool_definitions(optional: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
+    """The read-only tools plus the final-report tool, in a stable order (cache friendly).
+
+    `optional` names the per-run optional tools (`similar_history`, `changes_in_window`). Empty, the list is exactly
+    MVP 1's, which keeps recorded replay fixtures valid; enabled ones go before `submit_report` in registry order.
+    """
+    return [*tool_definitions(), *optional_tool_definitions(optional), submit_report_definition()]
+
+
+SIMILAR_HISTORY_NOTE = """
+
+Optional tool for this run: similar_history returns up to 3 earlier incidents that resemble this failure (matched \
+on text), with the action taken and how it ended. They are leads, never proof: a past outcome does not satisfy any \
+Tier 0 condition, does not raise your confidence by itself, and your claims must still cite the tool call id of \
+what you rely on. It costs one of your 8 tool calls, so use it only when the cheap tools leave open what has \
+worked before."""
+
+
+def system_prompt(optional: frozenset[str] = frozenset()) -> str:
+    """`SYSTEM_PROMPT` unchanged unless an optional tool is enabled; then each enabled tool's addendum is appended in
+    a fixed order (similar_history, then changes_in_window), independent of set iteration order."""
+    text = SYSTEM_PROMPT
+    if "similar_history" in optional:
+        text += SIMILAR_HISTORY_NOTE
+    if "changes_in_window" in optional:
+        text += CHANGES_PROMPT_ADDENDUM
+    return text
 
 
 @dataclass
@@ -175,6 +202,7 @@ class Investigation:
     evidence_dropped: int = 0
     duplicate_ids_rejected: int = 0
     model_calls: int = 0
+    history_skipped: str = ""  # fixed reason code when similar_history was enabled but could not be bound
 
     @property
     def tool_call_ids(self) -> list[str]:
@@ -231,20 +259,27 @@ class Investigator:
         *,
         model: str = "",
         max_response_tokens: int = DEFAULT_RESPONSE_TOKENS,
+        optional_tools: frozenset[str] = frozenset(),
     ) -> None:
         self._client = client
         self._ctx = ctx
         self._budget = budget
         self._model = model
         self._max_tokens = max_response_tokens
-        self._tools = agent_tool_definitions()
+        self._optional = frozenset(optional_tools)
+        self._tools = agent_tool_definitions(self._optional)
+        self._system = system_prompt(self._optional)
 
     # -- public ------------------------------------------------------------------------------
     def investigate(self, execution_id: str, context: str = "") -> Investigation:
         results: list[ToolResult] = []
         seen: set[str] = set()
+        # Bind the case under investigation in code, every round, before the model runs (invariant 16).
+        ctx = self._ctx.bind_case(execution_id) if "similar_history" in self._optional else self._ctx
         messages: list[dict[str, Any]] = [{"role": "user", "content": initial_message(execution_id, context)}]
         st = _Run(execution_id, results)
+        if "similar_history" in self._optional and ctx.bound_case is None:
+            st.history_skipped = HISTORY_SKIPPED_UNBOUND  # the tool will refuse; the investigation goes on without it
         nudged = False
         for _ in range(self._budget.limits.max_tool_calls + EXTRA_TURNS):
             if self._budget.tokens_exhausted:
@@ -282,7 +317,7 @@ class Investigator:
                 if not self._budget.consume_tool_call():
                     return self._truncated(st, "budget_tool_calls")
                 seen.add(call.id)
-                result = dispatch(self._ctx, call.name, call.input, call.id)
+                result = dispatch(ctx, call.name, call.input, call.id, self._optional)
                 results.append(result)
                 blocks.append(_tool_result_block(call.id, _render(result), not result.ok))
             messages.append({"role": "user", "content": blocks})
@@ -295,7 +330,7 @@ class Investigator:
     # -- model I/O ---------------------------------------------------------------------------
     def _call(self, messages: list[dict[str, Any]]) -> ModelResponse:
         request = ModelRequest(
-            system=SYSTEM_PROMPT,
+            system=self._system,
             messages=list(messages),
             tools=self._tools,
             model=self._model,
@@ -355,6 +390,7 @@ class Investigator:
             evidence_dropped=dropped,
             duplicate_ids_rejected=st.duplicates,
             model_calls=st.model_calls,
+            history_skipped=st.history_skipped,
         )
 
     def _partial_report(self, st: _Run, reason: str, *, truncated: bool) -> Report:
@@ -435,6 +471,7 @@ class _Run:
     results: list[ToolResult]
     model_calls: int = 0
     duplicates: int = 0
+    history_skipped: str = ""
 
 
 def _fingerprint(results: list[ToolResult]) -> str:

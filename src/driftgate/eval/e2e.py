@@ -45,7 +45,9 @@ from driftgate.orchestrator import (
     build_synthetic_orchestrator,
     make_synthetic_target,
 )
+from driftgate.retrieval import HistoryIndex
 from driftgate.tier3 import ReviewerHook
+from driftgate.tools.similar_history import start_epoch
 from driftgate.verify import install_verification
 
 MODES = ("fake", "replay", "auto")
@@ -206,8 +208,13 @@ def run_scenario(
     variant: str = "correct",
     reviewer: str = "strict",
     wrap: Callable[[ModelClient], ModelClient] | None = None,
+    history: HistoryIndex | None = None,
+    offer_similar_history: bool = False,
 ) -> ScenarioResult:
-    """`wrap` decorates every scripted model client (fake mode only); the cost estimator uses it to read requests."""
+    """`wrap` decorates every scripted model client (fake mode only); the cost estimator uses it to read requests.
+
+    `history` (fake mode only, N2): the incident is recorded in this index once it finishes; with
+    `offer_similar_history` the optional tool is also offered to the model. Both are off by default."""
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}")
     source = SyntheticSource(data_dir)
@@ -220,6 +227,8 @@ def run_scenario(
             _wrapped(two_round_factory(label, source, "overconfident_tier0"), wrap),
             "fake",
             _wrapped(scripted_reviewer_factory(label, source, reviewer), wrap),
+            history=history,
+            offer_similar_history=offer_similar_history,
         )
     if mode == "fake":
         return _run(
@@ -229,6 +238,8 @@ def run_scenario(
             _wrapped(_scripted_factory(label, source, variant), wrap),
             "fake",
             _wrapped(scripted_reviewer_factory(label, source, reviewer), wrap),
+            history=history,
+            offer_similar_history=offer_similar_history,
         )
     fixtures = fixtures_dir or DEFAULT_FIXTURES
     gateway = Gateway(GatewayConfig(), mode="replay", fixtures=FixtureStore(fixtures, fingerprint=prompt_fingerprint()))
@@ -313,6 +324,8 @@ def _build_orchestrator(
     naive: bool,
     reviewer_factory: ModelFactory,
     source: SyntheticSource,
+    history: HistoryIndex | None = None,
+    offer_similar_history: bool = False,
 ) -> Orchestrator:
     kill = Path(tmp) / "kill_switch.json"
     kill.write_text(json.dumps(_KILL_SWITCH_ON), encoding="utf-8")
@@ -321,6 +334,8 @@ def _build_orchestrator(
         "clock": StepClock(),
         "kill_switch_path": kill,
         "tier3_review": ReviewerHook(source, reviewer_factory),
+        "history": history,
+        "offer_similar_history": offer_similar_history,
     }
     if not naive:
         return build_synthetic_orchestrator(data_dir, model_factory, target=target, verification=True, **common)
@@ -342,13 +357,19 @@ def _run(
     target: RemediationTarget | None = None,
     naive: bool = False,
     drill: Drill | None = None,
+    history: HistoryIndex | None = None,
+    offer_similar_history: bool = False,
 ) -> ScenarioResult:
     with tempfile.TemporaryDirectory(prefix="driftgate-e2e-") as tmp:
+        source = SyntheticSource(data_dir)
         orch = _build_orchestrator(
-            data_dir, model_factory, tmp, target, naive, reviewer_factory, SyntheticSource(data_dir)
+            data_dir, model_factory, tmp, target, naive, reviewer_factory, source, history, offer_similar_history
         )
         outcome = orch.handle(label.execution_id)
         audit = orch.audit.read()
+        if history is not None:  # the incident is indexed only after it finished
+            ex = source.get_execution(label.execution_id)
+            orch.record_incident(outcome, start_epoch(ex.finished_at or ex.started_at))
     status, note = judge(label, outcome) if drill is None else drill.judge(label, outcome)
     row = Row(
         drill.drill_id if drill else label.scenario_id or "",

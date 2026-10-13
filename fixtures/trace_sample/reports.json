@@ -1,0 +1,537 @@
+{
+  "ex-000112": {
+    "abstained": false,
+    "blast_radius": {
+      "executions_affected": 0,
+      "shared_dimension": ""
+    },
+    "budget_truncated": false,
+    "classification": "user",
+    "confidence": 0.8,
+    "duplicate_of": null,
+    "escalation_reason": "",
+    "evidence": [
+      {
+        "finding": "billing-service execution is failed; failed step: Install dependencies",
+        "source": "toolu_ex-000112_0",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "signature npm_ci_lock_out_of_sync at step 'Install dependencies' (layer L4); deterministic match: True; Tier 0 rule: False",
+        "source": "toolu_ex-000112_1",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "read package-lock.json at d58d0178339f27b049a9062a2a609425dafde9f1",
+        "source": "toolu_ex-000112_2",
+        "supports": "hypothesis"
+      }
+    ],
+    "execution_id": "ex-000112",
+    "fingerprint": "fcb1765ab1504084",
+    "hypothesis": "npm_ci_lock_out_of_sync in step 'Install dependencies'",
+    "layer": "L4",
+    "prior_attempts": [],
+    "remediation": {
+      "action": "regenerate_lockfile",
+      "dry_run": {
+        "branch": "driftgate/fcb1765ab1504084-regenerate_lockfile",
+        "ci": {
+          "note": "verified by CI",
+          "status": "green"
+        },
+        "diff": {
+          "added": 6,
+          "files": [
+            {
+              "added": 6,
+              "hunks": [
+                {
+                  "lines": [
+                    "       \"name\": \"billing-service\",",
+                    "       \"version\": \"1.0.0\",",
+                    "       \"dependencies\": {",
+                    "-        \"express\": \"^4.19.2\"",
+                    "+        \"express\": \"^4.19.2\",",
+                    "+        \"dayjs\": \"^1.11.10\"",
+                    "       }",
+                    "     },",
+                    "     \"node_modules/express\": {",
+                    "       \"version\": \"4.19.2\",",
+                    "       \"resolved\": \"https://registry.npmjs.org/express/-/express-4.19.2.tgz\"",
+                    "+    },",
+                    "+    \"node_modules/dayjs\": {",
+                    "+      \"version\": \"1.11.10\",",
+                    "+      \"resolved\": \"https://registry.npmjs.org/dayjs/-/dayjs-1.11.10.tgz\"",
+                    "     }",
+                    "   }",
+                    " }"
+                  ],
+                  "new_count": 17,
+                  "new_start": 8,
+                  "old_count": 12,
+                  "old_start": 8
+                }
+              ],
+              "new_path": "package-lock.json",
+              "old_path": "package-lock.json",
+              "path": "package-lock.json",
+              "removed": 1
+            }
+          ],
+          "removed": 1
+        },
+        "diff_text": "--- a/package-lock.json\n+++ b/package-lock.json\n@@ -8,12 +8,17 @@\n       \"name\": \"billing-service\",\n       \"version\": \"1.0.0\",\n       \"dependencies\": {\n-        \"express\": \"^4.19.2\"\n+        \"express\": \"^4.19.2\",\n+        \"dayjs\": \"^1.11.10\"\n       }\n     },\n     \"node_modules/express\": {\n       \"version\": \"4.19.2\",\n       \"resolved\": \"https://registry.npmjs.org/express/-/express-4.19.2.tgz\"\n+    },\n+    \"node_modules/dayjs\": {\n+      \"version\": \"1.11.10\",\n+      \"resolved\": \"https://registry.npmjs.org/dayjs/-/dayjs-1.11.10.tgz\"\n     }\n   }\n }\n",
+        "execution_id": "ex-000112",
+        "paths": [
+          "package-lock.json"
+        ],
+        "pull_request": {
+          "description": "## DriftGate proposed fix: regenerate_lockfile\n\nFailed execution: `ex-000112`  |  fingerprint `fcb1765ab1504084`  |  branch `driftgate/fcb1765ab1504084-regenerate_lockfile`\n\nThis pull request was opened by an automated agent. It has not been merged and will not be; a human reviews and merges it.\n\n### Hypothesis\nnpm_ci_lock_out_of_sync in step 'Install dependencies'\n\n### Proposed change\nthe injected fault is in package-lock.json; a reviewed change fixes it\n\n- `package-lock.json`: +6 -1\n\n### Evidence bundle\n- `toolu_ex-000112_0`: billing-service execution is failed; failed step: Install dependencies (supports: hypothesis)\n- `toolu_ex-000112_1`: signature npm_ci_lock_out_of_sync at step 'Install dependencies' (layer L4); deterministic match: True; Tier 0 rule: False (supports: hypothesis)\n- `toolu_ex-000112_2`: read package-lock.json at d58d0178339f27b049a9062a2a609425dafde9f1 (supports: hypothesis)\n\n### Independent review\nVerdict: **approve**\n\nthe diff produces exactly the minimal fix for the failing step\n",
+          "merged": false,
+          "number": 1,
+          "url": "synthetic://pull/1"
+        },
+        "state": "pr_proposed"
+      },
+      "gate": "pull_request",
+      "gate_decision": "allowed",
+      "rationale": "the injected fault is in package-lock.json; a reviewed change fixes it",
+      "reversible": true,
+      "tier": 3
+    },
+    "review": {
+      "comments": "the diff produces exactly the minimal fix for the failing step",
+      "verdict": "approve"
+    },
+    "run": {
+      "cost_usd": 0.0,
+      "input_tokens": 7500,
+      "latency_s": 0.0,
+      "output_tokens": 620,
+      "tool_calls": 4
+    },
+    "suspected_change": null
+  },
+  "ex-000384": {
+    "abstained": false,
+    "blast_radius": {
+      "executions_affected": 0,
+      "shared_dimension": ""
+    },
+    "budget_truncated": false,
+    "classification": "transient",
+    "confidence": 0.9,
+    "duplicate_of": null,
+    "escalation_reason": "",
+    "evidence": [
+      {
+        "finding": "infra-db execution is failed; failed step: Terraform Plan",
+        "source": "toolu_ex-000384_0",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "signature aws_throttling at step 'Terraform Plan' (layer L4); deterministic match: True; Tier 0 rule: True",
+        "source": "toolu_ex-000384_1",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "1 error blocks in step 'Terraform Plan'",
+        "source": "toolu_ex-000384_2",
+        "supports": "hypothesis"
+      }
+    ],
+    "execution_id": "ex-000384",
+    "fingerprint": "a34c0d23d129048e",
+    "hypothesis": "aws_throttling in step 'Terraform Plan'",
+    "layer": "L4",
+    "prior_attempts": [],
+    "remediation": {
+      "action": "rerun_failed_job",
+      "dry_run": {
+        "dry_run": {
+          "description": "simulated dry run of rerun_failed_job",
+          "details": {
+            "tier": 0
+          },
+          "ok": true
+        },
+        "execution": {
+          "description": "simulated execution of rerun_failed_job",
+          "ok": true
+        },
+        "execution_id": "ex-000384"
+      },
+      "gate": "auto",
+      "gate_decision": "allowed",
+      "rationale": "re-run the failed job: Tier 0 known-transient rule",
+      "reversible": true,
+      "tier": 0
+    },
+    "review": null,
+    "run": {
+      "cost_usd": 0.0,
+      "input_tokens": 4800,
+      "latency_s": 0.0,
+      "output_tokens": 420,
+      "tool_calls": 3
+    },
+    "suspected_change": null
+  },
+  "ex-000582": {
+    "abstained": false,
+    "blast_radius": {
+      "executions_affected": 0,
+      "shared_dimension": ""
+    },
+    "budget_truncated": false,
+    "classification": "platform",
+    "confidence": 0.9,
+    "duplicate_of": null,
+    "escalation_reason": "",
+    "evidence": [
+      {
+        "finding": "scripted",
+        "source": "c0",
+        "supports": "hypothesis"
+      }
+    ],
+    "execution_id": "ex-000582",
+    "fingerprint": "d133eb48ef9ba542",
+    "hypothesis": "scripted",
+    "layer": "L2",
+    "prior_attempts": [],
+    "remediation": {
+      "action": "bump_pool_capacity",
+      "dry_run": {
+        "dry_run": {
+          "description": "simulated dry run of bump_pool_capacity",
+          "details": {
+            "tier": 1
+          },
+          "ok": true
+        },
+        "execution_id": "ex-000582"
+      },
+      "gate": "single_approval",
+      "gate_decision": "allowed",
+      "rationale": "scripted",
+      "reversible": true,
+      "tier": 1
+    },
+    "review": null,
+    "run": {
+      "cost_usd": 0.0,
+      "input_tokens": 1700,
+      "latency_s": 0.0,
+      "output_tokens": 140,
+      "tool_calls": 1
+    },
+    "suspected_change": null
+  },
+  "ex-000605": {
+    "abstained": false,
+    "blast_radius": {
+      "executions_affected": 0,
+      "shared_dimension": ""
+    },
+    "budget_truncated": false,
+    "classification": "transient",
+    "confidence": 0.99,
+    "duplicate_of": null,
+    "escalation_reason": "no flake precedent and no Tier 0 known-transient rule",
+    "evidence": [
+      {
+        "finding": "infra-db execution is failed; failed step: Terraform Plan",
+        "source": "toolu_ex-000605_0",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "signature tf_state_lock at step 'Terraform Plan' (layer L4); deterministic match: True; Tier 0 rule: False",
+        "source": "toolu_ex-000605_1",
+        "supports": "hypothesis"
+      }
+    ],
+    "execution_id": "ex-000605",
+    "fingerprint": "6b6e90c293867a62",
+    "hypothesis": "tf_state_lock in step 'Terraform Plan'",
+    "layer": "L4",
+    "prior_attempts": [],
+    "remediation": {
+      "action": "rerun_failed_job",
+      "dry_run": {},
+      "gate": "auto",
+      "gate_decision": "downgraded",
+      "rationale": "looks transient; re-run",
+      "reversible": true,
+      "tier": 0
+    },
+    "review": null,
+    "run": {
+      "cost_usd": 0.0,
+      "input_tokens": 2500,
+      "latency_s": 0.0,
+      "output_tokens": 280,
+      "tool_calls": 2
+    },
+    "suspected_change": null
+  },
+  "ex-000638": {
+    "abstained": false,
+    "blast_radius": {
+      "executions_affected": 0,
+      "shared_dimension": ""
+    },
+    "budget_truncated": false,
+    "classification": "platform",
+    "confidence": 0.9,
+    "duplicate_of": null,
+    "escalation_reason": "",
+    "evidence": [
+      {
+        "finding": "scripted",
+        "source": "c0",
+        "supports": "hypothesis"
+      }
+    ],
+    "execution_id": "ex-000638",
+    "fingerprint": "7aa9334e67354acd",
+    "hypothesis": "scripted",
+    "layer": "L2",
+    "prior_attempts": [],
+    "remediation": {
+      "action": "refresh_connector_token",
+      "dry_run": {
+        "dry_run": {
+          "description": "simulated dry run of refresh_connector_token",
+          "details": {
+            "tier": 1
+          },
+          "ok": true
+        },
+        "execution_id": "ex-000638"
+      },
+      "gate": "single_approval",
+      "gate_decision": "allowed",
+      "rationale": "scripted",
+      "reversible": true,
+      "tier": 1
+    },
+    "review": null,
+    "run": {
+      "cost_usd": 0.0,
+      "input_tokens": 1700,
+      "latency_s": 0.0,
+      "output_tokens": 140,
+      "tool_calls": 1
+    },
+    "suspected_change": null
+  },
+  "ex-000744": {
+    "abstained": false,
+    "blast_radius": {
+      "executions_affected": 0,
+      "shared_dimension": ""
+    },
+    "budget_truncated": false,
+    "classification": "user",
+    "confidence": 0.6,
+    "duplicate_of": null,
+    "escalation_reason": "no deterministic cause and no safe action; a human should look",
+    "evidence": [
+      {
+        "finding": "billing-service execution is failed; failed step: Run tests",
+        "source": "toolu_ex-000744_0",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "signature exit_code_nonzero at step 'Run tests' (layer L4); deterministic match: False; Tier 0 rule: False",
+        "source": "toolu_ex-000744_1",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "9 fail-then-pass episodes for this fingerprint",
+        "source": "toolu_ex-000744_2",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "1 error blocks in step 'Run tests'",
+        "source": "toolu_ex-000744_3",
+        "supports": "hypothesis"
+      }
+    ],
+    "execution_id": "ex-000744",
+    "fingerprint": "eb49d8e3fedb3127",
+    "hypothesis": "exit_code_nonzero in step 'Run tests'",
+    "layer": "L4",
+    "prior_attempts": [],
+    "remediation": null,
+    "review": null,
+    "run": {
+      "cost_usd": 0.0,
+      "input_tokens": 7800,
+      "latency_s": 0.0,
+      "output_tokens": 560,
+      "tool_calls": 4
+    },
+    "suspected_change": null
+  },
+  "ex-000863": {
+    "abstained": false,
+    "blast_radius": {
+      "executions_affected": 0,
+      "shared_dimension": ""
+    },
+    "budget_truncated": false,
+    "classification": "user",
+    "confidence": 0.7,
+    "duplicate_of": null,
+    "escalation_reason": "",
+    "evidence": [
+      {
+        "finding": "infra-eks execution is failed; failed step: Terraform Init",
+        "source": "toolu_ex-000863_0",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "signature tf_provider_constraints at step 'Terraform Init' (layer L4); deterministic match: True; Tier 0 rule: False",
+        "source": "toolu_ex-000863_1",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "2 error blocks in step 'Terraform Init'",
+        "source": "toolu_ex-000863_2",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "signature tf_provider_constraints at step 'Terraform Init' (layer L4); deterministic match: True; Tier 0 rule: False",
+        "source": "toolu_ex-000863_r2_1",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "1 prior attempt(s); last: Tier 3 pin_provider_version, outcome failed, verified=False, recurred=None",
+        "source": "toolu_ex-000863_r2_2",
+        "supports": "hypothesis"
+      },
+      {
+        "finding": "read versions.tf at 382379b82b8dcb43a8c4c7f0a8372fe18c24fadb",
+        "source": "toolu_ex-000863_r2_3",
+        "supports": "hypothesis"
+      }
+    ],
+    "execution_id": "ex-000863",
+    "fingerprint": "57d234162e8d1dda",
+    "hypothesis": "Revised: the first hypothesis was wrong because the pin_provider_version attempt did not hold (verified=False, recurred=None); the cause is tf_provider_constraints in step 'Terraform Init'",
+    "layer": "L4",
+    "prior_attempts": [
+      {
+        "action": "pin_provider_version",
+        "attempt_id": "ex-000863:attempt-1",
+        "execution_id": "ex-000863",
+        "fingerprint": "57d234162e8d1dda",
+        "hypothesis": "tf_provider_constraints in step 'Terraform Init'",
+        "outcome": "failed",
+        "round": 1,
+        "tier": 3,
+        "verification": {
+          "description": "CI run on the PR branch is red",
+          "details": {
+            "branch": "driftgate/57d234162e8d1dda-pin_provider_version",
+            "ci": "red"
+          },
+          "recurred": null,
+          "rolled_back": false,
+          "verified": false
+        }
+      },
+      {
+        "action": "pin_provider_version",
+        "attempt_id": "ex-000863:attempt-2",
+        "execution_id": "ex-000863",
+        "fingerprint": "57d234162e8d1dda",
+        "outcome": "verified",
+        "round": 2,
+        "tier": 3,
+        "verification": {
+          "description": "CI run on the PR branch is green",
+          "details": {
+            "branch": "driftgate/57d234162e8d1dda-pin_provider_version",
+            "ci": "green"
+          },
+          "recurred": null,
+          "verified": true
+        }
+      }
+    ],
+    "remediation": {
+      "action": "pin_provider_version",
+      "dry_run": {
+        "branch": "driftgate/57d234162e8d1dda-pin_provider_version",
+        "ci": {
+          "note": "verified by CI",
+          "status": "green"
+        },
+        "diff": {
+          "added": 1,
+          "files": [
+            {
+              "added": 1,
+              "hunks": [
+                {
+                  "lines": [
+                    "   required_providers {",
+                    "     aws = {",
+                    "       source  = \"hashicorp/aws\"",
+                    "-      version = \">= 99.0.0\"",
+                    "+      version = \"~> 5.0\"",
+                    "     }",
+                    "   }",
+                    " }"
+                  ],
+                  "new_count": 7,
+                  "new_start": 3,
+                  "old_count": 7,
+                  "old_start": 3
+                }
+              ],
+              "new_path": "versions.tf",
+              "old_path": "versions.tf",
+              "path": "versions.tf",
+              "removed": 1
+            }
+          ],
+          "removed": 1
+        },
+        "diff_text": "--- a/versions.tf\n+++ b/versions.tf\n@@ -3,7 +3,7 @@\n   required_providers {\n     aws = {\n       source  = \"hashicorp/aws\"\n-      version = \">= 99.0.0\"\n+      version = \"~> 5.0\"\n     }\n   }\n }\n",
+        "execution_id": "ex-000863",
+        "paths": [
+          "versions.tf"
+        ],
+        "pull_request": {
+          "description": "## DriftGate proposed fix: pin_provider_version\n\nFailed execution: `ex-000863`  |  fingerprint `57d234162e8d1dda`  |  branch `driftgate/57d234162e8d1dda-pin_provider_version`\n\nThis pull request was opened by an automated agent. It has not been merged and will not be; a human reviews and merges it.\n\n### Hypothesis\nRevised: the first hypothesis was wrong because the pin_provider_version attempt did not hold (verified=False, recurred=None); the cause is tf_provider_constraints in step 'Terraform Init'\n\n### Proposed change\nthe first change missed the fault in versions.tf\n\n- `versions.tf`: +1 -1\n\n### Evidence bundle\n- `toolu_ex-000863_r2_1`: signature tf_provider_constraints at step 'Terraform Init' (layer L4); deterministic match: True; Tier 0 rule: False (supports: hypothesis)\n- `toolu_ex-000863_r2_2`: 1 prior attempt(s); last: Tier 3 pin_provider_version, outcome failed, verified=False, recurred=None (supports: hypothesis)\n- `toolu_ex-000863_r2_3`: read versions.tf at 382379b82b8dcb43a8c4c7f0a8372fe18c24fadb (supports: hypothesis)\n\n### Independent review\nVerdict: **approve**\n\nLooks reasonable.\n",
+          "merged": false,
+          "number": 2,
+          "url": "synthetic://pull/2"
+        },
+        "state": "pr_proposed"
+      },
+      "gate": "pull_request",
+      "gate_decision": "allowed",
+      "rationale": "the first change missed the fault in versions.tf",
+      "reversible": true,
+      "tier": 3
+    },
+    "review": {
+      "comments": "Looks reasonable.",
+      "verdict": "approve"
+    },
+    "run": {
+      "cost_usd": 0.0,
+      "input_tokens": 18000,
+      "latency_s": 0.0,
+      "output_tokens": 1380,
+      "tool_calls": 8
+    },
+    "suspected_change": null
+  }
+}

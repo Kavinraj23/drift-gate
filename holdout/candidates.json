@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "candidates": [
+    {
+      "repo": "grafana/grafana",
+      "run_id": 38303496768
+    },
+    {
+      "repo": "hashicorp/terraform-provider-aws",
+      "run_id": 38299873800
+    },
+    {
+      "repo": "mastodon/mastodon",
+      "run_id": 38248209100
+    },
+    {
+      "repo": "cli/cli",
+      "run_id": 37915254425
+    },
+    {
+      "repo": "huggingface/transformers",
+      "run_id": 38302891268
+    },
+    {
+      "repo": "facebook/docusaurus",
+      "run_id": 37991235685
+    },
+    {
+      "repo": "supabase/supabase",
+      "run_id": 38268636509
+    },
+    {
+      "repo": "electron/electron",
+      "run_id": 38249118359
+    },
+    {
+      "repo": "helm/helm",
+      "run_id": 38326113875
+    },
+    {
+      "repo": "langchain-ai/langchain",
+      "run_id": 38148644755
+    },
+    {
+      "repo": "nodejs/node",
+      "run_id": 38300564833
+    },
+    {
+      "repo": "rails/rails",
+      "run_id": 37919481101
+    },
+    {
+      "repo": "argoproj/argo-cd",
+      "run_id": 38224977336
+    },
+    {
+      "repo": "pydantic/pydantic",
+      "run_id": 38161828860
+    },
+    {
+      "repo": "apache/airflow",
+      "run_id": 38211705554
+    },
+    {
+      "repo": "astral-sh/ruff",
+      "run_id": 38246412614
+    },
+    {
+      "repo": "pypa/pip",
+      "run_id": 38203075276
+    },
+    {
+      "repo": "facebook/docusaurus",
+      "run_id": 37991289257
+    },
+    {
+      "repo": "hashicorp/terraform-provider-azurerm",
+      "run_id": 38307501830
+    },
+    {
+      "repo": "tailwindlabs/tailwindcss",
+      "run_id": 38272664961
+    },
+    {
+      "repo": "hashicorp/terraform",
+      "run_id": 38285481399
+    },
+    {
+      "repo": "mastodon/mastodon",
+      "run_id": 38111497622
+    },
+    {
+      "repo": "storybookjs/storybook",
+      "run_id": 38294365265
+    },
+    {
+      "repo": "goreleaser/goreleaser",
+      "run_id": 38289756200
+    },
+    {
+      "repo": "flutter/flutter",
+      "run_id": 38209747393
+    },
+    {
+      "repo": "python-poetry/poetry",
+      "run_id": 38057432062,
+      "job": "Ubuntu (Python 3.11) / pytest"
+    },
+    {
+      "repo": "kubernetes-sigs/kustomize",
+      "run_id": 38145310097
+    },
+    {
+      "repo": "python/cpython",
+      "run_id": 38326366941
+    },
+    {
+      "repo": "prisma/prisma",
+      "run_id": 38200033863
+    },
+    {
+      "repo": "dotnet/runtime",
+      "run_id": 38319956846
+    }
+  ]
+}

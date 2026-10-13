@@ -2,6 +2,8 @@
 
 **Status (2026-10-11): feature-complete, live-verified on the playground, and evaluated with a real model twice on all 33 scenarios (a recorded pass and an independent live pass).** Latest work is on branch `mvp1/m8b-live-playground`, ahead of `main` and fast-forwardable (pushing is the human's step; check `git status` for what has reached the remote); `main` has M0 to M8a plus the `e2e-live` code. Real API spend to date: $2.7995, which is $0.30 over the original $2.50 budget by the owner's explicit decision (live playground runs $0.6648; first `record` smoke test $0.0228; `record --all` about $0.88; an accidental duplicate run about $0.31; the `eval-live` pass $0.9219). Note: `tasks.py data` and `mvp-check` used to delete the spend ledger and the live audit log; fixed on 2026-10-11 and the ledger restored with a labelled carry-over row (see `PROGRESS.md`), but the live audit trail of the M8b runs is lost. No test or offline target makes a network call.
 
+**MVP 2 status (2026-10-12):** MVP 2 work lives on `mvp2/integration`, with the offline halves of N1 to N5 built and reviewed. The boxes are unticked pending real data (see `TASKS.md` and `docs/design/N1.md` to `N5.md`).
+
 ## Live verification (M8b, 2026-10-10 to 2026-10-11)
 
 `python tasks.py e2e-live --yes-live` was run one scenario at a time against `Kavinraj23/drift-gate-playground`. All six matched their expected outcome:
@@ -118,6 +120,8 @@ Headline offline results (dev set, n=24; held-out n=9 is too small to read as ra
 The three label-conflict cases (sc-05, sc-07, sc-13) are counted as misses in the first table and excluded in the second. Full table: `data/eval/report.md` (regenerate with `python tasks.py eval`).
 
 ## `mvp-check`
+
+> **Correction (2026-10-12).** After the real-model recordings, row M5 (`e2e` on replay fixtures) fails with 3 mismatches (sc-23, sc-25, sc-27), both on the frozen `v1.0-mvp` tag and on later branches. The table below predates the recordings.
 
 ```
 check                                               milestone  status

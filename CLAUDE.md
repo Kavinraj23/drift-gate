@@ -33,7 +33,7 @@ An agent that investigates failed CI pipeline executions like an on-call platfor
 
 ## Module layout
 
-`domain` (types, output contract) · `prefilter` · `tools/` (one module per agent tool, each a thin wrapper over a deterministic function) · `agents/investigator` · `agents/reviewer` · `llm/gateway` · `llm/fake` (scripted test double) · `gates` (SafetyGate, kill switch, abort ceiling, rate limit) · `audit` · `verify` · `adapters/synthetic` · `adapters/github_actions` · `baseline` · `eval/` · `generator/`. Schemas live in `contracts/`.
+`domain` (types, output contract) · `prefilter` · `tools/` (one module per agent tool, each a thin wrapper over a deterministic function; MVP 2 adds `tools/similar_history` and `tools/changes_in_window`) · `agents/investigator` · `agents/reviewer` · `llm/gateway` · `llm/fake` (scripted test double) · `gates` (SafetyGate, kill switch, abort ceiling, rate limit) · `audit` · `approvals` (persisted Tier 1/2 approvals) · `report` (static HTML trace report) · `verify` · `adapters/synthetic` · `adapters/github_actions` · `baseline` · `eval/` · `generator/`. Schemas live in `contracts/`. The real-log holdout (stored logs, versioned labels, dev/test split) lives in `holdout/` at the repo root, not under `data/`, because `tasks.py data` regenerates `data/`.
 
 ## Invariants
 
@@ -50,12 +50,15 @@ These are never weakened, bypassed, or "temporarily" disabled. Each has a test.
 9. **Error strings are never synthesized.** CI/tool error text in data, fixtures and tests is copied verbatim from real sources and stored with its source noted. (Scripted fake-model responses are test doubles, not error text, and are allowed.)
 10. **Only `llm/gateway` imports the Anthropic SDK.**
 11. **Credentials only in the gitignored `.env`.** Never read, print, log, or commit them.
-12. **Live GitHub work targets `drift-gate-playground` only.** The adapter refuses any other repo.
+12. **Live GitHub work targets `drift-gate-playground` only.** The adapter refuses any other repo. The one exception is `eval/holdout_fetch`, a separate human-run, GET-only reader of public repositories' run logs for the MVP 2 holdout. It has its own read-only token (`HOLDOUT_FETCH_TOKEN` in `.env`), shares no code or capability with the playground adapter, and refuses to run under `.autonomous`. Nothing writes to any repo except through the playground adapter.
 13. **Additive before subtractive** in any multi-step remediation.
+14. **Ground-truth and holdout labels are reachable only by `eval/`.** Nothing else imports or opens `data/ground_truth/` or `holdout/` labels.
+15. **The holdout test split is never inspected during development.** Only aggregate metrics are viewed; the dev split may be read.
+16. **The retrieval index never contains the case under investigation,** nor any incident that finished after it, nor any ground-truth or holdout label.
 
 ## LLM budget
 
-The project's total real-API budget is **$2.50**. The gateway enforces it; agents never work around it.
+The project's total real-API budget is **$2.50**. The gateway enforces it; agents never work around it. MVP 1 closed at $2.7995 (the $0.30 overrun was the owner's decision). For MVP 2 the owner allows **$2.00 more** (recorded 2026-10-12), less the PRD's $0.25 reserve, which puts the lifetime ceiling near $4.55. It is applied only by the owner through `DRIFTGATE_LIFETIME_CAP_USD` in `.env`; the code default stays $2.50 and agents never set or raise it.
 
 - **Models** (configurable via `.env`): investigator and reviewer default to `claude-haiku-4-5-20251001`. Use `claude-sonnet-5-5` only for a handful of demo cases, and only if the budget has room.
 - **Lifetime spend cap** of $2.50 and **daily cap** of $1.00, persisted in SQLite under `data/`. They are computed from each response's `usage`, using a price table in config. When a cap is hit, calls fail fast and cases escalate.

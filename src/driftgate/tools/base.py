@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any
 
 from driftgate.domain import ExecutionSource, SourceError
 
 from .attempts import AttemptStore
 from .signatures import GENERIC_EXIT_ID, UNKNOWN, Signature, match_all
+
+if TYPE_CHECKING:
+    from driftgate.retrieval import HistoryIndex
 
 RAW_LOG_CAP = 400_000  # characters read from the source before extraction; the budget applies after
 
@@ -85,16 +88,40 @@ class ToolResult:
         return {"source": self.source, "tool": self.tool, "ok": self.ok, "data": self.data, "error": self.error}
 
 
+@dataclass(frozen=True)
+class BoundCase:
+    """The case under investigation, fixed by code before the model runs: its id and its start time (epoch seconds).
+    `similar_history` takes both from here and never from the model (invariant 16)."""
+
+    execution_id: str
+    as_of: float
+
+
 @dataclass
 class ToolContext:
     """Everything a tool may touch, injected. Tools are read-only: there is no write path in here."""
 
     source: ExecutionSource
     attempts: AttemptStore = field(default_factory=AttemptStore)
+    history: HistoryIndex | None = None  # queried (never written) by similar_history, only when that tool is offered
+    bound_case: BoundCase | None = None  # set only by `bind_case`; an unbound context makes similar_history refuse
     analyzer: FailureAnalyzer = field(init=False)
 
     def __post_init__(self) -> None:
         self.analyzer = FailureAnalyzer(self.source)
+
+    def bind_case(self, execution_id: str) -> ToolContext:
+        """A copy bound to `execution_id`, its start time read from the source. Called by code (the investigator),
+        never from a tool argument. If the start time cannot be read the copy stays unbound and fails closed."""
+        from .similar_history import start_epoch  # local: that module imports this one
+
+        try:
+            bound = BoundCase(execution_id, start_epoch(self.source.get_execution(execution_id).started_at))
+        except (SourceError, ValueError):
+            return self
+        ctx = replace(self, bound_case=bound)
+        ctx.analyzer = self.analyzer
+        return ctx
 
 
 Handler = Callable[[ToolContext, dict[str, Any]], dict[str, Any]]

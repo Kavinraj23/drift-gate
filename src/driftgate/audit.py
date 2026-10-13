@@ -66,8 +66,10 @@ class AuditLog:
         return [e for e in entries if kind is None or e.kind == kind]
 
 
-def record_decision(audit: AuditLog, decision: GateDecision, fingerprint: str, execution_id: str) -> AuditEntry:
-    """Append a gate_decision entry for a SafetyGate result."""
+def record_decision(
+    audit: AuditLog, decision: GateDecision, fingerprint: str, execution_id: str, **extra: Any
+) -> AuditEntry:
+    """Append a gate_decision entry for a SafetyGate result. `extra` adds fields such as `stage`."""
     return audit.append(
         "gate_decision",
         fingerprint,
@@ -78,4 +80,5 @@ def record_decision(audit: AuditLog, decision: GateDecision, fingerprint: str, e
         proposed_tier=decision.proposed_tier,
         agent_confidence=decision.agent_confidence,
         abort_ceiling=decision.abort_ceiling,
+        **extra,
     )

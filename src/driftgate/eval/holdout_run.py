@@ -82,7 +82,7 @@ from driftgate.llm.config import GatewayConfig, InvestigationLimits
 from driftgate.llm.errors import FixtureMissing
 from driftgate.llm.fake import FakeModel
 from driftgate.llm.gateway import Gateway
-from driftgate.llm.replay import FixtureStore
+from driftgate.llm.replay import FixtureStore, load_manifest
 from driftgate.llm.types import ModelClient, ModelRequest, ModelResponse, ToolCall, Usage
 from driftgate.orchestrator import CLOSED, Orchestrator, Outcome
 from driftgate.policy import DEFAULT_POLICY_PATH, load_policy
@@ -364,18 +364,31 @@ def reason_code(reason: str) -> str:
 
 
 def _ceiling_was_the_only_blocker(gate: Any, facts: GateFacts | None) -> bool:
-    """True when the gate refused on the 100%-of-set ceiling AND every other deterministic Tier 0 condition (signature
-    match, known-transient rule or flake precedent, no prior failed retry, blast radius within the ceiling, at most
-    one shared resource) was met. Read from the gate's own inputs; nothing is re-decided or lifted."""
+    """True when the gate refused on the 100%-of-set ceiling AND every other deterministic condition of the proposal's
+    OWN tier was met, judged from the gate's own facts. Nothing is re-decided or lifted.
+    - Tier 0: deterministic signature match, a known-transient rule or flake precedent, no prior failed retry, blast
+      radius within the ceiling, at most one shared resource. (The kill switch is checked before the ceiling, so a
+      ceiling refusal already passed it.)
+    - Tier 1: its eligibility facts are not derivable from one stored log, so it is never called a ceiling-only case.
+    - Tier 2: lock holder provably dead, death proof, dry run ok, plus the common blast/shared checks. On a holdout
+      source these facts are unset, so this is false there.
+    - Tier 3: the gate does not apply the ceiling to a PR; never a ceiling case."""
     if facts is None or gate is None or gate.decision != "refused" or reason_code(gate.reason) != ABORT_CEILING_CODE:
         return False
-    return (
-        facts.signature_match
-        and (facts.flake_precedent or facts.known_transient_rule)
-        and not facts.prior_tier0_failed
-        and facts.blast_radius.executions_affected <= (gate.abort_ceiling or 0)
-        and len(set(facts.shared_resources)) <= 1
+    common = (
+        facts.blast_radius.executions_affected <= (gate.abort_ceiling or 0) and len(set(facts.shared_resources)) <= 1
     )
+    tier = getattr(gate, "proposed_tier", None)
+    if tier == 0:
+        return bool(
+            facts.signature_match
+            and (facts.flake_precedent or facts.known_transient_rule)
+            and not facts.prior_tier0_failed
+            and common
+        )
+    if tier == 2:
+        return bool(facts.lock_holder == "dead" and facts.holder_death_proof and facts.dry_run_ok and common)
+    return False  # tier 1, tier 3, or an unknown tier: fail closed
 
 
 def proposal_view(outcome: Outcome, facts: GateFacts | None) -> dict[str, Any]:
@@ -739,10 +752,24 @@ def print_tallies(tallies: dict[str, Tally], order: tuple[str, ...], out: TextIO
 # ---------------------------------------------------------------------------------------------------------------
 # CLI.
 # ---------------------------------------------------------------------------------------------------------------
+UNKNOWN_MODEL = "unknown"
+
+
+def fixture_model(manifest: dict[str, Any], case_id: str) -> str:
+    """The investigator model `record-holdout` wrote into the fixtures' manifest for this case, else `unknown`. Never
+    the default config's model: replay must not claim a model it cannot show was used."""
+    try:
+        model = manifest["scenarios"][case_id]["models"]["investigator"]
+    except (KeyError, TypeError):
+        return UNKNOWN_MODEL
+    return model if isinstance(model, str) and model.strip() else UNKNOWN_MODEL
+
+
 def make_chooser(mode: str, fixtures_dir: Path) -> tuple[Chooser, str]:
     """Per-case model choices for the offline modes, and a one-line description of the model source. Replay uses a
     gateway in replay mode (no network, no key, never the SDK)."""
     cfg = GatewayConfig()
+    manifest = load_manifest(fixtures_dir)
     gateway = Gateway(cfg, mode="replay", fixtures=FixtureStore(fixtures_dir, fingerprint=prompt_fingerprint()))
 
     def replay_factory(_eid: str, budget: InvestigationBudget) -> ModelClient:
@@ -752,7 +779,7 @@ def make_chooser(mode: str, fixtures_dir: Path) -> tuple[Chooser, str]:
         return plumbing_model(eid)
 
     def choose(case_id: str) -> list[Choice]:
-        replay = Choice(replay_factory, REPLAY, cfg.investigator_model, case_id)
+        replay = Choice(replay_factory, REPLAY, fixture_model(manifest, case_id), case_id)
         fake = Choice(fake_factory, FAKE, FAKE_MODEL_NAME, None)
         return {"fake": [fake], "replay": [replay], "auto": [replay, fake]}[mode]
 

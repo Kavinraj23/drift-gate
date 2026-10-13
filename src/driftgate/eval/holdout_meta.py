@@ -37,6 +37,14 @@ PROVENANCE_SCRIPTED = "scripted_double"
 SCRIPTED_MODES = frozenset({MODE_FAKE, "scripted"})
 
 
+#: Printed when a run record has no sidecar entry (for example a crash between the two writes). Free: no API call.
+RECOVERY_HINT = (
+    "To recover without paying: python tasks.py run-holdout --mode replay --rerun --write --cases <ids of the "
+    "affected cases> rewrites both files from the recorded fixtures (offline, no API key)."
+)
+MODEL_UNKNOWN = "unknown"
+
+
 def record_digest(record: dict[str, Any]) -> str:
     """Digest of one run record (canonical JSON). The sidecar pins the record it describes."""
     return hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -89,6 +97,7 @@ class Provenance:
             out.append(f"{self.scripted} run record(s) come from a fake/scripted double (never an agent result)")
         if self.missing:
             out.append(f"{self.missing} run record(s) have no provenance entry in {META_FILE} (unknown provenance)")
+            out.append(RECOVERY_HINT)
         if self.mismatched:
             out.append(
                 f"{self.mismatched} run record(s) do not match their {META_FILE} entry (changed or appended after "
@@ -98,8 +107,12 @@ class Provenance:
 
     def header(self) -> str:
         replay, live = self.modes.get(MODE_REPLAY, 0), self.modes.get(MODE_RECORD, 0)
+        shown = [
+            f"{MODEL_UNKNOWN} (the fixture manifest recorded no model)" if m == MODEL_UNKNOWN else m
+            for m in self.models
+        ]
         return (
-            f"Agent provenance: {PROVENANCE_REAL}; model {', '.join(self.models) or 'n/a'}; mode: {replay} case(s) "
+            f"Agent provenance: {PROVENANCE_REAL}; model {', '.join(shown) or 'n/a'}; mode: {replay} case(s) "
             f"replayed from recorded fixtures, {live} recorded live; tool set: {', '.join(self.tools) or 'n/a'} "
             f"(optional tools backing: {', '.join(self.tools_backing) or 'n/a'}); {self.records} run record(s)."
         )

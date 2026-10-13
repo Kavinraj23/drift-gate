@@ -221,6 +221,20 @@ def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, 
     return out
 
 
+STRUCTURAL_ZERO_NOTE = (
+    "Headline rerun recall can be 0 on single-job cases by construction: the abort ceiling refuses a Tier 0 rerun that "
+    'touches 100% of its resource set. See "Proposal before gates" for what the agent proposed.'
+)
+
+
+def _structural_zero_note(dev_m: SplitMetrics, test_m: SplitMetrics) -> list[str]:
+    """Shown when any case's proposal was refused by the ceiling alone, and also when we cannot tell (an agent run
+    without a recorded ungated proposal)."""
+    ceiling = dev_m.ceiling_only + test_m.ceiling_only
+    cannot_tell = (dev_m.agent_runs + test_m.agent_runs) > (dev_m.proposals_seen + test_m.proposals_seen)
+    return [STRUCTURAL_ZERO_NOTE, ""] if ceiling or cannot_tell else []
+
+
 def render(
     dev: list[tuple[HoldoutCase, Scored]],
     dev_m: SplitMetrics,
@@ -256,6 +270,7 @@ def render(
         "",
         _md_table(header, rows),
         "",
+        *_structural_zero_note(dev_m, test_m),
         "## Dev cases (per-case detail allowed)",
         "",
     ]

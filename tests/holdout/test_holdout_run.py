@@ -314,7 +314,7 @@ def test_replay_without_fixtures_runs_nothing_and_says_so(root: Path, tmp_path: 
     assert code == 0 and "without fixture 2" in text and "wrote 0 run record" in text
 
 
-def test_tier2_never_qualifies_and_no_history_means_only_the_transient_rule_reruns(root: Path) -> None:
+def test_a_signature_without_a_rule_escalates_and_a_lone_job_rerun_is_refused_by_the_ceiling(root: Path) -> None:
     inp = _inp(root, "hc-02")  # signature without a Tier 0 rule
     run = hr.run_case(inp, lambda eid, _b: hr.plumbing_model(eid))
     assert run.action == {"kind": "escalate"}
@@ -694,7 +694,9 @@ def test_a_lone_job_tier0_rerun_is_refused_by_the_ceiling_and_both_views_are_rec
 
 
 def test_a_ceiling_refusal_with_another_blocker_is_not_counted_as_ceiling_only() -> None:
-    gate = SimpleNamespace(decision="refused", reason="action would touch 100% of the resource set", abort_ceiling=5)
+    gate = SimpleNamespace(
+        decision="refused", reason="action would touch 100% of the resource set", abort_ceiling=5, proposed_tier=0
+    )
     base = {
         "signature_match": True,
         "flake_precedent": False,
@@ -712,8 +714,49 @@ def test_a_ceiling_refusal_with_another_blocker_is_not_counted_as_ceiling_only()
     assert only(prior_tier0_failed=True) is False
     assert only(blast_radius=SimpleNamespace(executions_affected=9)) is False
     assert only(shared_resources=("a", "b")) is False
-    allowed = SimpleNamespace(decision="allowed", reason="", abort_ceiling=5)
+    allowed = SimpleNamespace(decision="allowed", reason="", abort_ceiling=5, proposed_tier=0)
     assert hr._ceiling_was_the_only_blocker(allowed, SimpleNamespace(**base)) is False  # type: ignore[arg-type]
+
+
+def _ceiling_gate(tier: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        decision="refused", reason="action would touch 100% of the resource set", abort_ceiling=5, proposed_tier=tier
+    )
+
+
+def _facts(**change: object) -> SimpleNamespace:
+    base: dict[str, object] = {
+        "signature_match": False,
+        "flake_precedent": False,
+        "known_transient_rule": False,
+        "prior_tier0_failed": False,
+        "blast_radius": SimpleNamespace(executions_affected=0),
+        "shared_resources": (),
+        "lock_holder": None,
+        "holder_death_proof": False,
+        "dry_run_ok": False,
+    }
+    return SimpleNamespace(**{**base, **change})
+
+
+def test_ceiling_only_is_judged_by_the_proposals_own_tier() -> None:
+    def only(tier: int, **change: object) -> bool:
+        return hr._ceiling_was_the_only_blocker(_ceiling_gate(tier), _facts(**change))  # type: ignore[arg-type]
+
+    t0 = {"signature_match": True, "known_transient_rule": True}
+    assert only(0, **t0) is True
+    assert only(0, signature_match=True, flake_precedent=True) is True
+    assert only(0, signature_match=True) is False  # no known-transient rule and no flake precedent
+    # Tier 1: its facts are not derivable from one stored log, so it is never a ceiling-only case.
+    assert only(1, **t0) is False and only(1) is False
+    # Tier 2 on a holdout source (lock facts unset, as GateFacts leaves them) is never ceiling-only.
+    assert only(2) is False and only(2, **t0) is False
+    assert only(2, lock_holder="dead", holder_death_proof=True) is False  # dry run missing
+    assert only(2, lock_holder="dead", holder_death_proof=True, dry_run_ok=True) is True  # all its own checks met
+    assert only(2, lock_holder="running", holder_death_proof=True, dry_run_ok=True) is False
+    assert only(3, **t0) is False  # the gate does not apply the ceiling to a PR; never a ceiling case
+    unknown_tier = SimpleNamespace(**{**vars(_ceiling_gate(0)), "proposed_tier": None})
+    assert hr._ceiling_was_the_only_blocker(unknown_tier, _facts(**t0)) is False  # type: ignore[arg-type]
 
 
 def test_the_report_has_a_labelled_proposal_before_gates_block_with_counts(root: Path, tmp_path: Path) -> None:
@@ -727,6 +770,86 @@ def test_the_report_has_a_labelled_proposal_before_gates_block_with_counts(root:
     assert "hc-01" in block and "hc-02" in block  # per case for dev only
     assert "hc-11" not in text and "hc-12" not in text  # sealed
     assert "Agent provenance: recorded_real_model" in text
+
+
+def _rewrite_manifest_models(fx: Path, model: str | None) -> None:
+    path = fx / "manifest.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    for entry in doc["scenarios"].values():
+        if model is None:
+            entry.pop("models", None)
+        else:
+            entry["models"] = {"investigator": model}
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_replay_provenance_takes_the_model_from_the_fixture_manifest(root: Path, tmp_path: Path) -> None:
+    fx = _record_fixtures(root, tmp_path)
+    assert GatewayConfig().investigator_model != "claude-sonnet-5-5"
+    _rewrite_manifest_models(fx, "claude-sonnet-5-5")
+    _reset_runs(root)
+    assert _run(["--mode", "replay", "--fixtures", str(fx), "--write"], root)[0] == 0
+    assert {m["model"] for m in _meta(root)["runs"].values()} == {"claude-sonnet-5-5"}
+    text, _ = he.evaluate(root, NOW)
+    assert text is not None and "model claude-sonnet-5-5;" in text and GatewayConfig().investigator_model not in text
+
+
+def test_replay_with_no_manifest_model_records_unknown_and_the_report_says_so(root: Path, tmp_path: Path) -> None:
+    fx = _record_fixtures(root, tmp_path)
+    _rewrite_manifest_models(fx, None)
+    _reset_runs(root)
+    assert _run(["--mode", "replay", "--fixtures", str(fx), "--write"], root)[0] == 0
+    assert {m["model"] for m in _meta(root)["runs"].values()} == {"unknown"}
+    text, _ = he.evaluate(root, NOW)
+    assert text is not None and "model unknown (the fixture manifest recorded no model);" in text
+    assert GatewayConfig().investigator_model not in text
+
+
+def test_the_missing_sidecar_refusal_says_how_to_recover_for_free_and_names_no_case(
+    root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    real_records(root, tmp_path)
+    _edit_meta(root, lambda runs: runs.pop("hc-11"))
+    capsys.readouterr()
+    assert _eval(root) == 1
+    out = capsys.readouterr().out
+    assert "1 run record(s) have no provenance entry" in out
+    assert "python tasks.py run-holdout --mode replay --rerun --write --cases" in out and "hc-" not in out
+    # every flag in the message is accepted by the runner's own parser
+    ns = hr.parse_args(["--mode", "replay", "--rerun", "--write", "--cases", "x"])
+    assert (ns.mode, ns.rerun, ns.write, ns.cases) == ("replay", True, True, ["x"])
+
+
+def test_the_structural_zero_note_sits_under_the_headline_table_only_when_it_applies(
+    root: Path, tmp_path: Path
+) -> None:
+    real_records(root, tmp_path)  # lone-job reruns: refused by the ceiling alone
+    text, _ = he.evaluate(root, NOW)
+    assert text is not None and he.STRUCTURAL_ZERO_NOTE in text
+    table_end = text.index("| False remediation rate")
+    assert text.index(he.STRUCTURAL_ZERO_NOTE) > table_end
+    assert text.index(he.STRUCTURAL_ZERO_NOTE) < text.index("## Dev cases")
+
+    def no_ceiling(runs: dict) -> None:  # type: ignore[type-arg]
+        for m in runs.values():
+            m["proposal_before_gates"]["refused_by_abort_ceiling_only"] = False
+
+    _edit_meta(root, no_ceiling)
+    text, _ = he.evaluate(root, NOW)
+    assert text is not None and he.STRUCTURAL_ZERO_NOTE not in text
+
+    def no_proposals(runs: dict) -> None:  # type: ignore[type-arg]
+        for m in runs.values():
+            m.pop("proposal_before_gates")
+
+    _edit_meta(root, no_proposals)  # cannot tell -> shown
+    text, _ = he.evaluate(root, NOW)
+    assert text is not None and he.STRUCTURAL_ZERO_NOTE in text
+
+
+def test_no_agent_runs_means_no_structural_zero_note(root: Path) -> None:
+    text, _ = he.evaluate(root, NOW)
+    assert text is not None and he.STRUCTURAL_ZERO_NOTE not in text
 
 
 # -- provenance: eval-holdout builds the agent column only from recorded real-model runs ----------------------------

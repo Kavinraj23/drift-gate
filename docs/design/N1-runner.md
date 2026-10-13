@@ -63,9 +63,11 @@ Each case therefore records two things side by side:
    scored in the main table.
 2. `proposal_before_gates` (sidecar, `runs_meta.json`) is what the agent proposed (`rerun` / `pr_fix` / `escalate`, tier
    and action), plus the gate's decision, its reason text and a short reason code, and `refused_by_abort_ceiling_only`
-   (the gate refused on the 100%-of-set ceiling AND every other deterministic condition held: signature match, known
-   transient rule or flake precedent, no earlier failed retry, blast radius within the ceiling, at most one shared
-   resource; read from the gate's own inputs, nothing is re-decided). A thin `FactsRecordingOrchestrator` only remembers
+   (the gate refused on the 100%-of-set ceiling AND every other condition of the proposal's OWN tier held, read from the
+   gate's own inputs, nothing re-decided. Tier 0: signature match, known-transient rule or flake precedent, no earlier
+   failed retry, blast radius within the ceiling, at most one shared resource. Tier 1: never (its facts are not derivable
+   from one stored log). Tier 2: lock holder dead, death proof and dry run ok plus the common checks, which are unset on a
+   holdout source, so false there. Tier 3: never, the gate does not apply the ceiling to a PR). A thin `FactsRecordingOrchestrator` only remembers
    the facts it handed the gate.
 
 `eval-holdout` prints the headline table and, below it, a block "Proposal before gates (ungated; NOT the headline)" with
@@ -91,7 +93,17 @@ counts only, no case ids, no numbers) when a record comes from a fake/scripted d
 provenance), or does not match its entry (digest mismatch: changed or appended by hand after the run, or not marked as a
 recorded real-model run). So a later fake record cannot silently replace a real one: the latest record is the one
 checked, and it has to carry its own matching entry. The report header states the provenance: model, how many cases were
-replayed from fixtures versus recorded live, and the tool set.
+replayed from fixtures versus recorded live, and the tool set. For replayed records the model is taken from the
+fixtures' `manifest.json` entry for that case (written by `record-holdout`), never from the default config; a manifest
+with no model gives `model: unknown`, and the header says so plainly.
+
+Recovery when `eval-holdout` refuses because a run record has no sidecar entry (a crash between the two writes): no
+payment is needed. Run `python tasks.py run-holdout --mode replay --rerun --write --cases <ids>` for the affected cases;
+it rewrites both files from the recorded fixtures (offline, no key). The refusal message states this (counts only, no ids).
+
+The eval-holdout report puts a one-sentence caveat directly under the headline table (headline rerun recall can be 0 on
+single-job cases by construction) when any case was refused by the ceiling alone, or when it cannot tell (an agent run
+without a recorded ungated proposal).
 
 Limit: replay provenance rests on the fixtures having been written by `record-holdout`; a hand-made fixture directory is
 not detected (fixtures are keyed by the request hash and the prompt fingerprint, not signed).

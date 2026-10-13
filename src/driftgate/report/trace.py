@@ -73,7 +73,7 @@ OUTCOME_LABELS = {
     "pr_verified": "Pull request proposed, verified by CI (a human still reviews and merges)",
     "awaiting_approval": "Awaiting human approval",
     "approved": "Approved, awaiting execution",
-    "approval_cancelled": "Approval cancelled: gate refused at execution (not executed)",
+    "approval_cancelled": "Approval cancelled before execution (not executed)",
     "denied": "Denied by an approver",
     "expired": "Approval window expired: escalated to a human",
     "escalated": "Escalated to a human",
@@ -247,9 +247,15 @@ def cancels_request(e: AuditEntry) -> bool:
     return (e.kind, stage_of(e)) in CANCEL_RECORDING and e.payload.get("status") == "cancelled"
 
 
+def request_id_of(e: AuditEntry) -> object:
+    rid = e.payload.get("request_id")
+    return None if isinstance(rid, bool) else rid
+
+
 def changes_outcome(e: AuditEntry) -> bool:
     """True for a (kind, stage) the table lists as terminal, or an entry whose payload records a cancellation.
-    Unknown stages are informational."""
+    Unknown stages are informational. (Whether a cancellation applies to the case's current request is decided in
+    `derive_outcome`, which knows which request that is.)"""
     return STAGE_EFFECT.get((e.kind, stage_of(e)), INFORMATIONAL) == TERMINAL or cancels_request(e)
 
 
@@ -258,13 +264,23 @@ def derive_outcome(trace: Trace) -> OutcomeView:
     wins, which is right for the two-round case where a failed first attempt is followed by a second one. Only
     entries `STAGE_EFFECT` lists as terminal count; refused, no-op, duplicate and unknown entries never change it."""
     kind, detail = "unknown", ""
+    current: object = None  # request id of the latest `approval_requested`; a cancellation only counts for that one
+    dry_run_failed: set[object] = set()  # request ids with a recorded `failed`/`dry_run` entry so far
     for e in trace.entries:
+        if e.kind == "proposal" and stage_of(e) == "approval_requested":
+            current = request_id_of(e)
+        elif e.kind == "failed" and stage_of(e) == "dry_run" and request_id_of(e) is not None:
+            dry_run_failed.add(request_id_of(e))
         if not changes_outcome(e):
             continue
         st, p = stage_of(e), e.payload
         reason = str(p.get("reason", p.get("description", "")))
         if cancels_request(e):
-            kind, detail = "approval_cancelled", f"request {p.get('request_id', '?')}: {reason}"
+            rid = request_id_of(e)
+            if current is not None and rid != current:
+                continue  # a late refusal on an older request says nothing about the request now open
+            why = "target dry run failed" if rid is not None and rid in dry_run_failed else "refused at execution"
+            kind, detail = "approval_cancelled", f"request {rid if rid is not None else '?'}: {why}: {reason}"
         elif e.kind == "rejected":
             if st == "prefilter":
                 kind, detail = "closed", reason

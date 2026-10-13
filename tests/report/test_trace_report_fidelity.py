@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import ast
 import json
-import re
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from report_helpers import SAMPLE, inspect
 
-from driftgate.audit import AuditEntry
+from driftgate.audit import KINDS, AuditEntry
 from driftgate.report import build_pages, group_traces, render_trace
 from driftgate.report.__main__ import main
 from driftgate.report.render import CAVEAT, MARKER, file_name
@@ -117,14 +117,87 @@ def test_refusals_and_no_ops_are_classified_informational() -> None:
         assert STAGE_EFFECT[key] == INFORMATIONAL, key
 
 
-def test_every_stage_the_code_base_writes_is_classified() -> None:
-    """A new audit stage must be classified on purpose: scan the writers for `stage="..."` literals."""
-    stages: set[str] = set()
-    for name in ("orchestrator.py", "approval_flow.py", "verify.py"):
-        stages |= set(re.findall(r'stage="([a-z0-9_]+)"', (ROOT / "src" / "driftgate" / name).read_text("utf-8")))
-    stages |= {"reinvestigation", "facts", "validation", "gate", "review", "diff_check", "agent"}  # _escalate(..., s)
-    classified = {stage for _, stage in STAGE_EFFECT}
-    assert stages <= classified, sorted(stages - classified)
+def _call_name(node: ast.Call) -> str:
+    f = node.func
+    return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
+
+
+def _const_str(node: ast.expr | None) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def written_kind_stage_pairs(source: str) -> set[tuple[str, str]]:
+    """(kind, stage) pairs the module writes, read from the syntax tree. Handled call shapes:
+    `x.append("kind", ..., stage="s")` (kind = first positional string, stage = keyword `stage`; no `stage` keyword and
+    no `**` splat means stage ""), `x._escalate(out, fp, reason, "s")` and `x._evaluate(o, a, r, clock, "s")` (stage
+    positional or keyword; kinds `rejected` and `gate_decision`), and `record_decision(..., stage="s")` (kind
+    `gate_decision`, stage "" when absent). Only string literals count."""
+    pairs: set[tuple[str, str]] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node)
+        kw = {k.arg: k.value for k in node.keywords if k.arg}
+        splat = any(k.arg is None for k in node.keywords)
+        pos = node.args
+        if name == "append" and pos and (kind := _const_str(pos[0])) in KINDS:
+            stage = _const_str(kw.get("stage"))
+            if stage is not None:
+                pairs.add((kind, stage))
+            elif "stage" not in kw and not splat:
+                pairs.add((kind, ""))
+        elif name == "_escalate":
+            stage = _const_str(kw["stage"] if "stage" in kw else pos[3] if len(pos) > 3 else None)
+            if stage is not None:  # None (the literal) means "write nothing"
+                pairs.add(("rejected", stage))
+        elif name == "_evaluate":
+            stage = _const_str(kw["stage"] if "stage" in kw else pos[4] if len(pos) > 4 else None)
+            if stage is not None:
+                pairs.add(("gate_decision", stage))
+        elif name == "record_decision":
+            stage = _const_str(kw.get("stage")) if "stage" in kw else ("" if not splat else None)
+            if stage is not None:
+                pairs.add(("gate_decision", stage))
+    return pairs
+
+
+def test_every_kind_and_stage_the_code_base_writes_is_classified() -> None:
+    """Parses every module under src/driftgate with `ast` and collects (kind, stage) pairs from the audit writer calls
+    (`append`, `_escalate`, `_evaluate`, `record_decision`), from keyword AND positional arguments. Fails if any pair
+    is missing from STAGE_EFFECT, so a new stage must be classified on purpose. It does NOT guard: stages or kinds
+    that are not string literals at the call (a variable, an f-string, a value passed through another wrapper), calls
+    reached only through helpers not named above, whether a pair is classified as terminal or informational
+    correctly (that is covered by the behaviour tests), or what `derive_outcome` does with a terminal pair's payload."""
+    found: set[tuple[str, str]] = set()
+    for path in sorted((ROOT / "src" / "driftgate").rglob("*.py")):
+        if path.parts[-3:-1] == ("driftgate", "report"):
+            continue  # the reader, not a writer
+        found |= written_kind_stage_pairs(path.read_text("utf-8"))
+    assert len(found) > 20  # the scan is not vacuous
+    assert {("rejected", "reinvestigation"), ("gate_decision", "approval_recheck")} <= found  # positional shapes seen
+    assert found <= set(STAGE_EFFECT), sorted(found - set(STAGE_EFFECT))
+
+
+def test_the_stage_scan_sees_keyword_and_positional_shapes() -> None:
+    src = (
+        'a.append("failed", fp, eid, stage="k")\n'
+        'self._escalate(out, fp, r, "p")\n'
+        "self._escalate(out, fp, r, None)\n"
+        'self._escalate(out, fp, r, stage="q")\n'
+        '_evaluate(o, a, r, c, "e", gate_factory=f)\n'
+        'record_decision(a, d, fp, eid, stage="rd")\n'
+        "record_decision(a, d, fp, eid)\n"
+        'a.append("proposal", fp, eid, stage=s)\n'
+        'lst.append("not a kind")\n'
+    )
+    assert written_kind_stage_pairs(src) == {
+        ("failed", "k"),
+        ("rejected", "p"),
+        ("rejected", "q"),
+        ("gate_decision", "e"),
+        ("gate_decision", "rd"),
+        ("gate_decision", ""),
+    }
 
 
 # -- 2: a Tier 3 PR whose CI failed is not "executed" ----------
@@ -254,7 +327,7 @@ def test_the_sample_is_pinned_to_lf_endings() -> None:
 
 
 # -- 3: a refusal that CANCELLED the request is a state change; one that left it alone is not -----------------------
-CANCELLED_LABEL = "Approval cancelled: gate refused at execution (not executed)"
+CANCELLED_LABEL = "Approval cancelled before execution (not executed)"
 
 
 def test_a_refusal_that_cancelled_an_approved_request_is_terminal_not_awaiting_execution(make: Make) -> None:
@@ -287,7 +360,41 @@ def test_a_dry_run_failure_then_cancel_reads_as_cancelled(make: Make) -> None:
         make("failed", "dry_run", request_id=1, description="boom"),
         refused_execute(make, "cancelled"),
     ]
-    assert outcome_of(entries) == "approval_cancelled"
+    out = derive_outcome(group_traces(entries)[0])
+    assert out.kind == "approval_cancelled" and out.label == CANCELLED_LABEL
+    assert "target dry run failed" in out.detail and "boom" not in out.label
+
+
+def test_a_gate_refusal_detail_says_refused_at_execution(make: Make) -> None:
+    out = derive_outcome(group_traces([requested(make), approved(make), refused_execute(make, "cancelled")])[0])
+    assert "request 1: refused at execution" in out.detail and "dry run" not in out.detail
+
+
+def _second_request(make: Make) -> AuditEntry:
+    return make("proposal", "approval_requested", request_id=2, requested_by="alice", expires_at=1_700_009_000.0)
+
+
+def _old_cancel(make: Make) -> AuditEntry:
+    return make("rejected", "approval_execute_refused", request_id=1, status="cancelled", reason="late")
+
+
+def test_a_late_cancellation_of_an_old_request_does_not_flip_a_case_with_a_newer_request(make: Make) -> None:
+    entries = [requested(make), approved(make), _second_request(make), _old_cancel(make)]
+    assert outcome_of(entries) == "awaiting_approval"
+
+
+def test_a_cancellation_of_the_latest_request_still_applies(make: Make) -> None:
+    # entries are created in the order they are logged (the fixture numbers them as it goes)
+    first, first_cancel = requested(make), _old_cancel(make)
+    second = _second_request(make)
+    assert outcome_of([first, first_cancel, second]) == "awaiting_approval"
+    second_cancel = make("rejected", "approval_execute_refused", request_id=2, status="cancelled", reason="y")
+    assert outcome_of([first, first_cancel, second, second_cancel]) == "approval_cancelled"
+
+
+def test_a_cancellation_without_a_request_id_does_not_apply_once_a_request_is_known(make: Make) -> None:
+    anonymous = make("rejected", "approval_execute_refused", status="cancelled", reason="x")
+    assert outcome_of([requested(make), approved(make), anonymous]) == "approved"
 
 
 def test_the_index_and_the_page_show_the_cancelled_label(make: Make) -> None:

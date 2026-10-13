@@ -16,7 +16,7 @@ from driftgate.report import build_pages, group_traces
 from driftgate.report.trace import derive_outcome
 
 MakeWorld = Callable[..., World]
-CANCELLED_LABEL = "Approval cancelled: gate refused at execution (not executed)"
+CANCELLED_LABEL = "Approval cancelled before execution (not executed)"
 
 
 def outcome_of(world: World) -> Any:
@@ -33,6 +33,7 @@ def test_kill_switch_flipped_after_approval(make_world: MakeWorld, tier1_label: 
     run_execute(w)
     assert w.store.get(w.request_id).status == "cancelled"  # type: ignore[arg-type]
     assert outcome_of(w).label == CANCELLED_LABEL
+    assert "refused at execution" in outcome_of(w).detail and "dry run" not in outcome_of(w).detail
     run_execute(w)  # a duplicate execute on the cancelled request changes nothing
     assert outcome_of(w).label == CANCELLED_LABEL
 
@@ -56,6 +57,7 @@ def test_dry_run_failure(make_world: MakeWorld, tier1_label: FailureLabel) -> No
         target=FailingDryRun(w.orch.target),  # type: ignore[arg-type]
     )
     assert outcome_of(w).label == CANCELLED_LABEL
+    assert "target dry run failed" in outcome_of(w).detail
 
 
 def test_execute_on_a_still_pending_request_stays_awaiting_approval(

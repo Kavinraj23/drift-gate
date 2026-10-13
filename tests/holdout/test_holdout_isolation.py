@@ -81,6 +81,9 @@ def test_task_runner_and_scripts_only_pass_the_holdout_path_and_module_name_to_a
         "holdout",
         "driftgate.eval.holdout_eval",
         "driftgate.eval.holdout_fetch",
+        "driftgate.eval.holdout_run",  # N1 runner module name, handed to a subprocess like holdout_eval
+        "run-holdout",
+        "record-holdout",
         "holdout-fetch",
         "holdout-validate",
         "eval-holdout",

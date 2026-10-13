@@ -31,4 +31,6 @@ These spend real API budget (cap $2.50 total) and touch the GitHub playground re
 
 - `python tasks.py holdout-fetch`: MVP 2 real-log holdout. Prints a plan from `holdout/candidates.json` and makes no request; `python tasks.py holdout-fetch --yes-fetch` then fetches the failed step's log of each listed PUBLIC run with a separate read-only token (`HOLDOUT_FETCH_TOKEN` in `.env`, GET only; the playground token is not used). It never writes labels; `--skeleton` prints a labels skeleton offline.
 
+- `python tasks.py record-holdout --estimate`, then `--yes-spend`: MVP 2 N1. Runs the agent on the stored real holdout logs against the real API under the gateway's lifetime and daily caps (test split first, aggregates only for it), saves replay fixtures to `fixtures/replay-holdout/` and appends run records to `holdout/runs.json` (+ `runs_meta.json`). Nothing is executed on any target. `python tasks.py run-holdout` is the offline counterpart (replay fixtures or the plumbing double, no key).
+
 Until these are run there are no real-model numbers.

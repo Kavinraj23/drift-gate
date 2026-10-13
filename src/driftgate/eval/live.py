@@ -14,6 +14,8 @@ the tests and every default never reach it. Nothing is read from the environment
     python tasks.py e2e-live                     # plan only: no network, no key
     python tasks.py e2e-live --yes-live          # all six playground scenarios, real GitHub + real API
     python tasks.py e2e-live --yes-live --scenario flaky
+    python tasks.py record-holdout --estimate    # N1: real-log holdout, test split first; see holdout_record.py
+    python tasks.py record-holdout --yes-spend --cap-usd 1.25
 
 Safeguards: nothing calls the API without `--yes-spend`; `--estimate` builds no gateway and never touches the key
 (only the model names are taken from `.env`); `record` stops at a cumulative `--cap-usd`, checked before each
@@ -30,13 +32,14 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
 from driftgate.adapters.github_live import Playground, connect_playground
 from driftgate.agents import reviewer as reviewer_agent
 from driftgate.agents.fingerprint import prompt_fingerprint
-from driftgate.eval import e2e
+from driftgate.eval import e2e, holdout_eval, holdout_record, holdout_run
 from driftgate.eval.e2e import ScenarioResult
 from driftgate.eval.ground_truth import FailureLabel, GroundTruth, load_ground_truth
 from driftgate.eval.report import LiveInfo, build_report_from_results, render_markdown, write_report
@@ -602,6 +605,123 @@ def run_e2e_live(
     return 0 if matched == len(selected) else 1
 
 
+# -- record-holdout: real-log holdout cases against the real model (N1) -------------------------------------------
+def run_record_holdout(
+    argv: list[str],
+    *,
+    root: Path,
+    out: TextIO,
+    models_loader: Callable[[Path], GatewayConfig],
+    config_loader: Callable[[Path], GatewayConfig],
+    gateway_factory: GatewayFactory,
+    clock: Clock,
+    git_status: holdout_eval.GitStatus | None = None,
+) -> int:
+    """`python tasks.py record-holdout [--estimate | --yes-spend]`. The logic lives in `eval/holdout_record.py`; this
+    function only loads the config, builds the record-mode gateway and hands both over. Nothing is executed on any
+    target (the runner uses a proposal-only target); the only spend is model calls, under the same caps as `record`."""
+    ap = argparse.ArgumentParser(prog="python tasks.py record-holdout", description=holdout_record.__doc__)
+    ap.add_argument("--estimate", action="store_true", help="print the cost estimate and exit (no network, no key)")
+    ap.add_argument("--yes-spend", action="store_true", help="actually call the API and spend money")
+    ap.add_argument("--dir", type=Path, default=root / "holdout")
+    ap.add_argument("--fixtures", type=Path, default=root / "fixtures" / "replay-holdout")
+    ap.add_argument("--cap-usd", type=float, default=holdout_record.DEFAULT_CAP_USD, help="cumulative spend cap")
+    ap.add_argument("--margin", type=float, default=holdout_record.DEFAULT_MARGIN)
+    ap.add_argument("--tools", choices=sorted(holdout_run.TOOL_SETS), default="none")
+    ap.add_argument("--cases", nargs="*", default=None, help="run only these case ids")
+    ap.add_argument("--rerun", action="store_true", help="run cases that already have a run record")
+    args = ap.parse_args(argv)
+    if args.tools != "none":
+        print(holdout_run.TOOLS_REFUSAL.format(tools=args.tools), file=out)
+        return 2
+    now = datetime.fromtimestamp(clock.time(), UTC)
+    try:
+        holdout = holdout_run.preflight(args.dir, now, git_status or holdout_eval.git_labels_status)
+    except holdout_run.RunRefused as exc:
+        print("record-holdout: REFUSED", file=out)
+        for reason in exc.reasons:
+            print(f"  {reason}", file=out)
+        return 1
+    ctx = holdout_run.RunContext(
+        root=args.dir,
+        now=now,
+        tools=args.tools,
+        wanted=frozenset(args.cases) if args.cases is not None else None,
+        rerun=args.rerun,
+    )
+    try:
+        est_config = models_loader(root)
+        estimates = holdout_record.Estimates()
+        summary = estimates.compute(holdout, ctx, est_config, args.margin)
+    except UnknownModel as exc:
+        print(
+            f"cannot estimate: {exc}. Add a price entry in llm/config.py (verified against the pricing page).", file=out
+        )
+        return 2
+    status = ledger_status(est_config, clock)
+    if args.estimate:
+        print(
+            holdout_record.format_estimate(
+                summary,
+                est_config,
+                lifetime_remaining=status.lifetime_remaining,
+                daily_remaining=status.daily_remaining,
+                lifetime_cap=status.lifetime_cap,
+            ),
+            file=out,
+        )
+        return 0
+    if not args.yes_spend:
+        pending = summary.pending_dev + summary.pending_test
+        print(
+            f"not spending: pass --yes-spend to call the API ({pending} case(s) pending). Run with --estimate first.",
+            file=out,
+        )
+        return 2
+    try:
+        config = config_loader(root)
+        if gateway_factory is default_gateway_factory and not config.api_key:
+            print("no ANTHROPIC_API_KEY found in the environment or .env (nothing was called)", file=out)
+            return 2
+        fingerprint = prompt_fingerprint()
+        gateway = gateway_factory(config, "record", FixtureStore(args.fixtures, fingerprint=fingerprint))
+        print(
+            f"recording {summary.pending_test} test + {summary.pending_dev} dev case(s) with "
+            f"{config.investigator_model}; test first; fixtures -> {args.fixtures}; cap ${args.cap_usd:.2f}",
+            file=out,
+        )
+        status = ledger_status(config, clock)
+        session, spend = holdout_record.run_record(
+            holdout,
+            ctx,
+            gateway=gateway,
+            config=config,
+            estimates=estimates,
+            cap_usd=args.cap_usd,
+            life_left=status.lifetime_remaining,
+            day_left=status.daily_remaining,
+            reserve=MIN_RESERVE_USD,
+            fixtures_dir=args.fixtures,
+            out=out,
+        )
+    except UnknownModel as exc:
+        print(f"refusing: {exc}", file=out)
+        return 2
+    holdout_run.append_records(args.dir, session.records, session.meta)
+    after = ledger_status(config, clock)
+    print(f"wrote {len(session.records)} run record(s) (+ runs_meta.json); spent ${spend.cumulative_usd:.4f}", file=out)
+    print(
+        f"ledger: lifetime ${after.lifetime_spent:.4f} of ${after.lifetime_cap:.2f}; "
+        f"today ${after.daily_spent:.4f} of ${after.daily_cap:.2f}",
+        file=out,
+    )
+    if session.stopped:
+        print(session.stopped, file=out)
+        return 3
+    print("done. Replay them with `python tasks.py run-holdout --mode replay` (no key needed).", file=out)
+    return 0
+
+
 # -- command line ------------------------------------------------------------------------------------------------
 def _parser(prog: str, root: Path) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog=f"python tasks.py {prog}", description=__doc__)
@@ -632,18 +752,31 @@ def main(
     config_loader: Callable[[Path], GatewayConfig] = full_config,
     gateway_factory: GatewayFactory = default_gateway_factory,
     clock: Clock | None = None,
+    git_status: holdout_eval.GitStatus | None = None,
 ) -> int:
-    """`argv[0]` is `record` or `eval-live`. All collaborators are injectable so tests use a stub SDK client."""
+    """`argv[0]` is `record`, `eval-live`, `e2e-live` or `record-holdout`. All collaborators are injectable so tests
+    use a stub SDK client."""
     out = out or sys.stdout
     root = root or Path.cwd()
     clock = clock or SystemClock()
-    if not argv or argv[0] not in ("record", "eval-live", "e2e-live"):
-        print("usage: python -m driftgate.eval.live (record|eval-live|e2e-live) [options]", file=out)
+    if not argv or argv[0] not in ("record", "eval-live", "e2e-live", "record-holdout"):
+        print("usage: python -m driftgate.eval.live (record|eval-live|e2e-live|record-holdout) [options]", file=out)
         return 2
     prog = argv[0]
     if (root / ".autonomous").exists():
         print(f"refusing: '{prog}' is human-only and .autonomous exists", file=out)
         return 1
+    if prog == "record-holdout":
+        return run_record_holdout(
+            argv[1:],
+            root=root,
+            out=out,
+            models_loader=models_loader,
+            config_loader=config_loader,
+            gateway_factory=gateway_factory,
+            clock=clock,
+            git_status=git_status,
+        )
     if prog == "e2e-live":
         return run_e2e_live(argv[1:], root=root, out=out, config_loader=config_loader, gateway_factory=gateway_factory)
     args = _parser(prog, root).parse_args(argv[1:])

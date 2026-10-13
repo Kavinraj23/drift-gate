@@ -22,6 +22,11 @@ ARG_TARGETS = {"approvals", "trace-report"}
 #: only other target that does, and it is human-only (read-only GET-only fetch of public logs; plan mode by default).
 FETCH_TARGETS = {"holdout-fetch"}
 HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset", "holdout-fetch"}
+# N1 holdout runner. `run-holdout` is offline; `record-holdout` is human-only (real API under the gateway's caps,
+# implemented in driftgate.eval.live). Both take options, validated by their own argparse. LIVE_TARGETS and ARG_TARGETS
+# are left exactly as they were (existing tests pin them), as with holdout-fetch.
+RUNNER_TARGETS = {"run-holdout", "record-holdout"}
+HUMAN_ONLY |= {"record-holdout"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
 IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8a", "M9a"}
@@ -197,6 +202,8 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "holdout-validate": holdout_validate,
     "eval-holdout": eval_holdout,
     "holdout-fetch": lambda: holdout_fetch([]),
+    "run-holdout": lambda: holdout_runner("run-holdout", []),
+    "record-holdout": lambda: holdout_runner("record-holdout", []),
     "eval-retrieval": eval_retrieval,
     "eval-tier12": eval_tier12,
     "mvp-check": mvp_check,
@@ -210,12 +217,23 @@ def _live(target: str, extra: list[str]) -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
 
 
+def run_holdout(extra: list[str]) -> int:
+    """Offline: run the agent on the stored real-log holdout (replay fixtures or the deterministic double); no key."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.holdout_run", "--dir", str(ROOT / "holdout"), *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def holdout_runner(target: str, extra: list[str]) -> int:
+    return _live(target, extra) if target == "record-holdout" else run_holdout(extra)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print("usage: python tasks.py <target> [options]")
         return 2
     target = argv[1]
-    if len(argv) > 2 and target not in LIVE_TARGETS | ARG_TARGETS | FETCH_TARGETS:
+    if len(argv) > 2 and target not in LIVE_TARGETS | ARG_TARGETS | FETCH_TARGETS | RUNNER_TARGETS:
         print("usage: python tasks.py <target>")
         return 2
     if target in HUMAN_ONLY and (ROOT / ".autonomous").exists():
@@ -225,6 +243,8 @@ def main(argv: list[str]) -> int:
         return _live(target, argv[2:])
     if target in FETCH_TARGETS:
         return holdout_fetch(argv[2:])
+    if target in RUNNER_TARGETS:
+        return run_holdout(argv[2:])
     if target == "approvals":
         return approvals(argv[2:])
     if target == "trace-report":

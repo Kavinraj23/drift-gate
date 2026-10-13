@@ -19,7 +19,7 @@ def test_trace_report_is_implemented_offline_and_not_human_only() -> None:
 
 def test_argument_exceptions_are_exactly_approvals_and_trace_report() -> None:
     assert tasks.ARG_TARGETS == {"approvals", "trace-report"}
-    assert tasks.HUMAN_ONLY == {"record", "eval-live", "e2e-live", "playground-reset", "holdout-fetch"}
+    assert tasks.HUMAN_ONLY == {"record", "eval-live", "e2e-live", "playground-reset", "holdout-fetch", "record-holdout"}
     assert tasks.FETCH_TARGETS == {"holdout-fetch"}
     assert tasks.LIVE_TARGETS == {"record", "eval-live", "e2e-live"}
 

@@ -52,10 +52,10 @@ name, before the generic branches:
 
 ## Gates and what is scored (round 2: no lift)
 
-Gate inputs are exactly what the production derivation produces; nothing is invented. A lone stored job is 100% of its
-resource set (`proposed_set_size == resource_set_total == 1`), so the abort ceiling refuses a Tier 0 re-run. That is the
-honest gate outcome, and it may make `rerun` unreachable on single-job holdout cases (logged in BLOCKERS.md for a human
-decision about a different modelling). The earlier `assume_other_jobs` lift is REMOVED, with its code, flag and text.
+Gate inputs are exactly what the production derivation produces; nothing is invented. A SINGLE-JOB run is 100% of its
+resource set (`proposed_set_size == resource_set_total == 1`), so the abort ceiling refuses a Tier 0 re-run there. That
+is the honest gate outcome. A run with several jobs is judged on its real job count (next section) and is no longer
+refused by the ceiling alone. The earlier `assume_other_jobs` lift is REMOVED, with its code, flag and text.
 
 Each case therefore records two things side by side:
 
@@ -101,9 +101,11 @@ Recovery when `eval-holdout` refuses because a run record has no sidecar entry (
 payment is needed. Run `python tasks.py run-holdout --mode replay --rerun --write --cases <ids>` for the affected cases;
 it rewrites both files from the recorded fixtures (offline, no key). The refusal message states this (counts only, no ids).
 
-The eval-holdout report puts a one-sentence caveat directly under the headline table (headline rerun recall can be 0 on
-single-job cases by construction) when any case was refused by the ceiling alone, or when it cannot tell (an agent run
-without a recorded ungated proposal).
+The eval-holdout report puts a caveat directly under the headline table (headline rerun recall is 0 by construction on
+single-job runs; a run with several jobs is not refused by the ceiling alone) when any case was refused by the ceiling
+alone, when any case is a known single-job run, or when it cannot tell (an agent run without a recorded ungated
+proposal). Dev lines show `jobs in run` per case; the test split gets counts only ("k of n test cases are single-job
+runs", plus how many have no stored job count).
 
 Limit: replay provenance rests on the fixtures having been written by `record-holdout`; a hand-made fixture directory is
 not detected (fixtures are keyed by the request hash and the prompt fingerprint, not signed).
@@ -169,13 +171,14 @@ gateway (a stand-in for the SDK), not from the fake double.
 
 ## Open doubts
 
-1. The abort ceiling may make `rerun` unreachable on single-job holdout cases, so the headline `rerun` recall could be
-   zero regardless of the agent. The ungated block shows the agent's proposals. A human may later decide a different
-   modelling (for example the real job count of the run, which would need storing it at fetch time); nothing here
-   anticipates that.
+1. A single-job run is still refused by the ceiling, so headline `rerun` recall on single-job cases stays 0 by
+   construction (correct and honest: re-running the only job is 100% of the set). Multi-job runs are judged on the real
+   job count. If many chosen runs are single-job workflows the headline rerun recall will be low whatever the agent
+   does; the ungated block and the single-job counts say so. See "Real job counts" below.
 2. Fetched logs without timestamps: the execution start time falls back to the fetch date at 00:00:00Z, flagged
    `refs.time_basis = fetch_date`. It only matters for time windows, which are empty here anyway.
-3. The step name comes from `holdout/fetched/<id>.json` when present, else the job name.
+3. The step name and the job counts come from `holdout/fetched/<id>.json` (schema version 3) when present; with no
+   record the step name is the job name and the job count is unknown (the source is then a lone job, as before).
 4. `fixtures/replay-holdout/` is keyed by the request hash; changing the prompts or tools makes fixtures stale and those
    cases are reported "without fixture" until re-recorded (spend again).
 5. Tier 3 `pr_fix` is scored on the proposal only; no diff is checked against real repository content.
@@ -184,3 +187,35 @@ gateway (a stand-in for the SDK), not from the fake double.
 7. `holdout_meta` ties a record to its sidecar entry by digest, but a person with write access to both files can forge
    both; the guarantee is against accidents and silent replacement, not against a malicious editor. Git history is the
    real audit trail.
+
+## Real job counts (follow-up)
+
+- **Source.** `holdout-fetch` stores `jobs` (counts of the run's latest attempt, from the jobs list it already downloads;
+  docs/design/N1-fetch.md). `holdout_jobs.load_fetched_facts` reads them strictly (schema version 3 only);
+  `inputs_for` passes them to `HoldoutInput.job_counts`; preflight refuses unreadable, invalid or version 2 records
+  (counts only in the message).
+- **How the real total reaches the gate, with no override.** `Orchestrator._gate_facts` (read only here) sets, for Tier 0,
+  `proposed_set_size = len(source.get_failed_leaf_nodes(...))` and `resource_set_total` = the number of leaves of
+  `source.get_execution(...).root`. So `HoldoutSource` builds a truthful tree: when the run had more than one job the
+  root is `run` with the stored job (`job` -> failed leaf step `step-1`) plus `jobs.total - 1` sibling LEAF nodes. Gate
+  facts are then 1 of `jobs.total`, produced by the unmodified derivation. Nothing edits `gates.py`, `orchestrator.py`
+  or the facts (a test pins that the runner source contains no `resource_set_total=`, `proposed_set_size=` or
+  `replace(facts`). The proposal sidecar records the set sizes the gate saw (`proposed_set_size`, `resource_set_total`).
+- **Siblings are real metadata only.** Names and ids are `sibling-2` ... (no job names), the status is the real
+  conclusion (`failed`, `cancelled`, `skipped`, `success`, `other`), listed in that fixed order so nothing says which
+  real job is which. No logs, no error summary, no refs, no label fields.
+- **Siblings are not executions.** `list_executions` still returns only the stored case, so `fleet_correlate` finds no
+  peers: a successful sibling is never fleet evidence, and failed siblings of the same run are not the same failure in
+  other executions (the fleet tool counts executions that share a join key with the same signature; a sibling job has
+  neither a log nor a join key). So `blast_radius` stays 0 and the fleet-wide escalation is not tripped by the run's own
+  jobs; it would trip only if real fleet data existed, which one stored log does not have. `flake_history` is likewise
+  empty. Both are tested with a run that has five failed jobs.
+- **Limit that remains.** `proposed_set_size` is 1 even when siblings also failed: the stored failed leaf is the one job
+  the case describes, and sibling logs are not stored. A real "re-run failed jobs" would touch every failed job, so with
+  several failures the gate sees 1 of N where the truth is k of N; the ceiling check (`proposed >= total`) is then a
+  little more permissive than the truth only when every job failed. Single-job runs (total 1) are STILL refused by the
+  ceiling.
+- **Tests** (`tests/holdout/test_holdout_jobcount.py`): sibling counts and conclusions, no label or join-key fields,
+  tool honesty (fleet, flake, get_execution), gate facts 1 of 6 and the re-run allowed, 1 of 2 allowed, 1 of 1 and an
+  unknown count refused by the ceiling alone, five failed siblings do not trip the blast radius, the v3 loader, and the
+  report text.

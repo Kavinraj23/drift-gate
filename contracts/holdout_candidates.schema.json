@@ -73,11 +73,51 @@
         "other_failed_steps",
         "extraction",
         "log_sha256",
-        "log_bytes"
+        "log_bytes",
+        "jobs"
       ],
       "properties": {
         "schema_version": {
-          "const": 2
+          "const": 3
+        },
+        "jobs": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Counts of the jobs of the attempt that was fetched, from the same jobs list the fetcher downloads (a truncated list is refused, never counted). Counts only: no job names, no logs. Cross-field rules enforced by the loader: total >= 1, total == success + failure + cancelled + skipped + other, and failure >= 1 (the fetched job is a counted failure). `other` is every conclusion not named here, including a missing one.",
+          "required": [
+            "total",
+            "success",
+            "failure",
+            "cancelled",
+            "skipped",
+            "other"
+          ],
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "success": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failure": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "cancelled": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skipped": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "other": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         },
         "case_id": {
           "type": "string",

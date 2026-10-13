@@ -111,10 +111,10 @@ header/boundary forms from it, adds tests that read that file, and may replace t
 `tests/holdout/fetch_helpers.py`. No agent creates this file. One sample containing a `Post` step and the final cleanup
 lines is the most useful.
 
-Fetched record (`holdout/fetched/<id>.json`, schema version 2, no log text): source block, `job_id`, `run_attempt`,
+Fetched record (`holdout/fetched/<id>.json`, schema version 3, no log text): source block, `job_id`, `run_attempt`,
 `step` {name, number, started_at, completed_at}, `other_failed_steps` [{name, number}], `extraction` {method,
 `job_log_lines`, `start_line`, `end_line` (1-based, counting newline characters only), `error_line`, `error_timestamp`,
-`inner_group_lines`, `stored_lines`}, `log_sha256`, `log_bytes`. The loader (`holdout_steplog.extraction_inconsistency`,
+`inner_group_lines`, `stored_lines`}, `log_sha256`, `log_bytes`, `jobs` (see below). The loader (`holdout_steplog.extraction_inconsistency`,
 used when a record is written and by `--skeleton`) enforces what JSON Schema cannot: `start_line <= error_line <=
 end_line <= job_log_lines` and `stored_lines == end_line - start_line + 1`. The start header's title and timestamp are
 NOT recorded (that would put log text in the record); its line number is `start_line`. The stdout line per case prints the same numbers, so a
@@ -198,3 +198,36 @@ missing file still means nothing is labelled).
   second-resolution; consistently wrong API timestamps would not be detected. (e) Un-timestamped continuation lines
   between start and error are kept as received. (f) The line numbers help a human verify the cut; they do not prove it.
 - A present but unreadable `labels.json` stops `--skeleton` (exit 2) so no possibly test-split log is hashed.
+
+## Job counts and `--limit` (follow-up, schema version 3)
+
+- **Why.** The abort ceiling refuses an action that touches 100% of its resource set. For a Tier 0 re-run of one failed
+  job that set is the jobs of the run, and a "re-run failed jobs" action touches EVERY failed job. So the runner needs
+  the REAL number of jobs the run had (the denominator, `jobs.total`) and the REAL number that failed (the numerator,
+  `jobs.failure`). The jobs list the fetcher already downloads (latest attempt, `filter=latest`) says both. A run with
+  k failed jobs of N is refused by the ceiling exactly when k == N. Nothing is invented and no gate is changed
+  (docs/design/N1-runner.md, "Real job counts"). Accepted cost: headline rerun recall is lower on runs where every job
+  failed, because the honest gate refuses them.
+- **What is stored.** `jobs`: `{total, success, failure, cancelled, skipped, other}`, counts only. No job names (beyond
+  the already-recorded failed job) and no log text. `other` is every conclusion not in the four named values, including
+  a missing one (in progress, `neutral`, `timed_out`, `action_required` ...). The contract is
+  `contracts/holdout_candidates.schema.json` (`fetched_record`, `schema_version` const 3, `jobs` required).
+- **Pagination and truncation.** The client pages up to 500 jobs. It refuses the case (nothing written) when the list is
+  over that cap OR when a short page leaves fewer jobs than `total_count` says. A partial count is never stored.
+- **Cross-field check** (`holdout_jobs.jobs_inconsistency`, run when a record is written and by `--skeleton`):
+  `total >= 1`, `total == success + failure + cancelled + skipped + other`, and `failure >= 1` (the fetched job is a
+  counted failure).
+- **Version 2 is refused**, not upgraded: `holdout_jobs.load_fetched_facts` and `--skeleton` say "schema version 2 is no
+  longer accepted (it has no job counts); re-fetch ...", and `run-holdout` preflight refuses with a counts-only message
+  (the test split is sealed). No version 2 record exists yet.
+- **`--limit N`** processes only the first N not-yet-fetched candidates in input order. N must be a positive whole
+  number (argparse rejects 0, negatives, text). Case ids are allocated before the cut, so a limited run and a later one
+  agree. Plan mode lists exactly the selected candidates plus a line saying how many were left out. A candidate that
+  names its `job` and is already fetched is shown as REFUSED and does not use up the limit. An UNNAMED candidate cannot
+  be recognised as fetched until its failed job is known at fetch time; if it turns out to be fetched already it is
+  refused then and does not use up the limit either (so the plan can show it as one of the N, and one more candidate may
+  then be taken; the plan says so).
+- **Tests** (`tests/holdout/test_holdout_jobcount.py`): all-success siblings, mixed and unknown conclusions, no sibling
+  names stored, pagination, truncated list refused with nothing written, page cap, contract v3, cross-field rules,
+  version 2 refused (loader, skeleton, preflight), `--limit` (order, plan, named and unnamed already-fetched, larger than
+  the list, invalid values).

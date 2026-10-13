@@ -14,7 +14,10 @@ Default is a PLAN: it validates the file, lists what would be fetched and how ma
 Real network needs `--yes-fetch`. For each new candidate it stores, and nothing else:
 - `holdout/logs/<case_id>.log`: the failed step's section (see `holdout_steplog` for the exact transformations);
 - `holdout/fetched/<case_id>.json`: source metadata (repo, run id, job, commit SHA, URL, fetch date) and the SHA-256 of
-  the stored bytes, plus job id, run attempt, step name/number and the number of other failed steps.
+  the stored bytes, plus job id, run attempt, step name/number and the number of other failed steps, and the REAL job
+  counts of the attempt (`jobs`: total and per-conclusion counts, from the jobs list; counts only, no names). The
+  runner uses them to give the abort ceiling an honest resource-set total (docs/design/N1-runner.md).
+`--limit N` processes only the first N not-yet-fetched candidates in input order (ids are allocated before the cut).
 It never writes `labels.json`, never assigns layer/classification/action/rationale/split/`labeled_at`, and never
 overwrites anything. Labelling is the human's job and must happen before the agent runs (`holdout/README.md`).
 
@@ -47,6 +50,7 @@ from driftgate.eval.holdout_gh import (
     split_repo,
     valid_id,
 )
+from driftgate.eval.holdout_jobs import count_jobs, jobs_inconsistency
 from driftgate.eval.holdout_steplog import (
     StepLogError,
     count_lines,
@@ -207,7 +211,34 @@ def make_plan(candidates: list[Candidate], store: Store) -> list[PlanRow]:
     return rows
 
 
-def format_plan(rows: list[PlanRow], candidates_name: str) -> str:
+def limit_plan(rows: list[PlanRow], limit: int | None) -> tuple[list[PlanRow], int]:
+    """Keep the first `limit` not-yet-fetched rows, in input order, plus every already-fetched row (shown as REFUSED,
+    never requested). Case ids were allocated before the cut, so a limited run and a later run agree on them. Returns
+    (rows, number of not-yet-fetched candidates left for a later run)."""
+    if limit is None:
+        return rows, 0
+    kept: list[PlanRow] = []
+    new = 0
+    for r in rows:
+        if r.skipped_as is None:
+            if new >= limit:
+                continue
+            new += 1
+        kept.append(r)
+    return kept, sum(1 for r in rows if r.skipped_as is None) - new
+
+
+def positive_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive whole number (1 or more)")
+    return value
+
+
+def format_plan(rows: list[PlanRow], candidates_name: str, left_out: int = 0) -> str:
     new = [r for r in rows if r.skipped_as is None]
     lines = [f"holdout-fetch plan for {candidates_name} (nothing was requested):"]
     for r in rows:
@@ -218,6 +249,11 @@ def format_plan(rows: list[PlanRow], candidates_name: str) -> str:
             )
         else:
             lines.append(f"  {r.case_id}    {r.candidate.repo} run {r.candidate.run_id} job {job}")
+    if left_out:
+        lines.append(
+            f"  --limit: {left_out} further not-yet-fetched candidate(s) are left for a later run (an unnamed "
+            "candidate that turns out to be fetched already does not use up the limit)"
+        )
     lines.append(
         f"{len(new)} run(s) to fetch, {len(new) * REQUESTS_PER_RUN} request(s): per run 3 GitHub API calls "
         "(run, jobs, job log) plus 1 log download; GET only; read-only token."
@@ -268,7 +304,9 @@ def fetch_one(
     expected = f"https://github.com/{cand.repo}/actions/runs/{cand.run_id}"
     if not isinstance(url, str) or url.lower() != expected.lower():
         raise FetchError("run metadata html_url does not match the requested repo and run")
-    job = _pick_job(gh.list_jobs(cand.repo, cand.run_id), cand.job)
+    all_jobs = gh.list_jobs(cand.repo, cand.run_id)  # refused by the client when truncated: counts are never partial
+    job = _pick_job(all_jobs, cand.job)
+    job_counts = count_jobs(all_jobs)
     job_name, job_id = str(job.get("name")), valid_id(job.get("id"), "job id")
     existing = known.get((cand.repo.lower(), cand.run_id, job_name))
     if existing:
@@ -282,7 +320,7 @@ def fetch_one(
     ext = extract_step_section(decode_log(raw), step)
     data = prepare_for_storage(ext.text, token).encode("utf-8")
     record = {
-        "schema_version": 2,
+        "schema_version": 3,
         "case_id": case_id,
         "source": {
             "repo": cand.repo,
@@ -313,8 +351,9 @@ def fetch_one(
         },
         "log_sha256": sha256_bytes(data),
         "log_bytes": len(data),
+        "jobs": job_counts.as_record(),
     }
-    bad = extraction_inconsistency(record)
+    bad = extraction_inconsistency(record) or jobs_inconsistency(record)
     if bad:  # a bug in the extractor, not in the data: nothing is written
         raise StepLogError(f"internal inconsistency ({bad})")
     store.write_new(store.logs / f"{case_id}.log", data)
@@ -413,6 +452,13 @@ def run_fetch(
     ap.add_argument(
         "--skeleton", action="store_true", help="offline: print a labels skeleton for unlabelled fetched cases"
     )
+    ap.add_argument(
+        "--limit",
+        type=positive_int,
+        default=None,
+        metavar="N",
+        help="process only the first N not-yet-fetched candidates, in input order (default: all)",
+    )
     ap.add_argument("--candidates", type=Path, default=None, help="default: holdout/candidates.json")
     args = ap.parse_args(argv)
     store = Store(root)
@@ -434,7 +480,8 @@ def run_fetch(
                 file=out,
             )
         return 2
-    print(format_plan(rows, cpath.name), file=out)
+    shown, left_out = limit_plan(rows, args.limit)
+    print(format_plan(shown, cpath.name, left_out), file=out)
     if not args.yes_fetch:
         print("\nnot fetching: pass --yes-fetch (human-run; uses the read-only token HOLDOUT_FETCH_TOKEN).", file=out)
         return 2
@@ -463,13 +510,17 @@ def run_fetch(
     _, known = store.scan()
     failures = 0
     print("", file=out)
+    attempts = 0
     for row in rows:
         c = row.candidate
         label = f"{c.repo} run {c.run_id}"
         if row.skipped_as:
             say(f"  REFUSED  {label}: already fetched as {row.skipped_as}; nothing written")
             continue
+        if args.limit is not None and attempts >= args.limit:
+            break  # --limit: the rest wait for a later run (their ids are not used up)
         assert row.case_id is not None
+        attempts += 1
         try:
             record, existing = fetch_one(c, row.case_id, gh, store, today, known, token)
         except RateLimited as exc:
@@ -488,7 +539,8 @@ def run_fetch(
             failures += 1
             say(f"  FAILED   {label}: unexpected {type(exc).__name__}")
             continue
-        if existing:
+        if existing:  # an unnamed candidate that turned out to be fetched already does not use up the limit
+            attempts -= 1
             say(f"  REFUSED  {label}: the failed job is already fetched as {existing}; nothing written")
             continue
         src = record["source"]
@@ -497,11 +549,14 @@ def run_fetch(
         others = ", ".join(repr(o["name"]) for o in record["other_failed_steps"])
         extra = f"; other failed step(s) not stored: {others}" if others else ""
         nested = f"; {ex['inner_group_lines']} inner ##[group] line(s) kept" if ex["inner_group_lines"] else ""
+        jc = record["jobs"]
         say(
             f"  {record['case_id']}  stored  {c.repo} run {c.run_id} job {src['job']!r} "
             f"step {record['step']['name']!r} (#{record['step']['number']}, attempt {record['run_attempt']})"
             f"\n      job log {ex['job_log_lines']} lines; stored lines {ex['start_line']}-{ex['end_line']} "
-            f"({ex['stored_lines']} lines, {record['log_bytes']} bytes); error at line {ex['error_line']} "
+            f"({ex['stored_lines']} lines, {record['log_bytes']} bytes); run had {jc['total']} job(s) "
+            f"({jc['failure']} failed, {jc['success']} succeeded, {jc['cancelled']} cancelled, {jc['skipped']} "
+            f"skipped, {jc['other']} other); error at line {ex['error_line']} "
             f"{ex['error_timestamp']}; step window {record['step']['started_at']}..{record['step']['completed_at']}; "
             f"method {ex['method']}{nested}{extra}"
         )

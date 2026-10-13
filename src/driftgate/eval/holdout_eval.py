@@ -38,6 +38,7 @@ from driftgate.eval.holdout import (
     ValidationReport,
     validate,
 )
+from driftgate.eval.holdout_jobs import FetchedRecordError, load_fetched_facts
 from driftgate.eval.holdout_meta import Provenance, check_provenance, load_meta
 from driftgate.eval.report import SMALL_N, CaseResult, Metrics, compute_metrics, fmt
 from driftgate.tools.signatures import GENERIC_EXIT_ID, UNKNOWN, match_all
@@ -112,14 +113,25 @@ class Scored:
     baseline: CaseResult
     agent: CaseResult | None
     proposal: dict[str, Any] | None = None  # the agent's ungated proposal (sidecar), if it has one
+    jobs_total: int | None = None  # the run's real job count from the fetch record; None when there is no record
+    jobs_failed: int | None = None  # of those, how many concluded failure (the re-run touches all of them)
 
 
-def score_case(case: HoldoutCase, log: str, run: RunRecord | None, meta: dict[str, Any] | None = None) -> Scored:
+def score_case(
+    case: HoldoutCase,
+    log: str,
+    run: RunRecord | None,
+    meta: dict[str, Any] | None = None,
+    jobs_total: int | None = None,
+    jobs_failed: int | None = None,
+) -> Scored:
     proposal = (meta or {}).get("proposal_before_gates") if run else None
     return Scored(
         baseline_on_log(case, log),
         agent_from_run(case, run) if run else None,
         proposal if isinstance(proposal, dict) else None,
+        jobs_total,
+        jobs_failed,
     )
 
 
@@ -132,6 +144,13 @@ class SplitMetrics:
     proposals: Counter[str] = field(default_factory=Counter)  # ungated proposal kind -> count
     proposals_seen: int = 0  # cases that have a recorded ungated proposal
     ceiling_only: int = 0  # proposals refused by the abort ceiling and nothing else
+    jobs_known: int = 0  # cases whose fetch record gives the run's real job count
+    single_job: int = 0  # of those, runs with exactly one job
+    all_failed: int = 0  # of those, runs with more than one job where every job failed
+
+
+def _all_failed(s: Scored) -> bool:
+    return s.jobs_total is not None and s.jobs_failed is not None and s.jobs_failed >= s.jobs_total
 
 
 def aggregate(scores: list[Scored]) -> SplitMetrics:
@@ -144,6 +163,9 @@ def aggregate(scores: list[Scored]) -> SplitMetrics:
         proposals=Counter(str(s.proposal.get("kind")) for s in scores if s.proposal is not None),
         proposals_seen=sum(1 for s in scores if s.proposal is not None),
         ceiling_only=sum(1 for s in scores if s.proposal and s.proposal.get("refused_by_abort_ceiling_only")),
+        jobs_known=sum(1 for s in scores if s.jobs_total is not None),
+        single_job=sum(1 for s in scores if s.jobs_total == 1),
+        all_failed=sum(1 for s in scores if _all_failed(s) and s.jobs_total != 1),
     )
 
 
@@ -175,6 +197,21 @@ def _cell(m: Metrics | None, attr: str) -> str:
     return "not run" if m is None else fmt(getattr(m, attr))
 
 
+def _single_job_lines(dev_m: SplitMetrics, test_m: SplitMetrics) -> list[str]:
+    """Counts only, so it is safe for the sealed test split."""
+
+    def one(name: str, m: SplitMetrics) -> str:
+        unknown = m.n - m.jobs_known
+        extra = f"; {unknown} with no stored job count" if unknown else ""
+        structural = m.single_job + m.all_failed
+        return (
+            f"{structural} of {m.n} {name} cases have every job failed or are single-job runs "
+            f"({m.single_job} single-job runs, {m.all_failed} all-jobs-failed runs){extra}."
+        )
+
+    return [one("dev", dev_m), one("test", test_m)]
+
+
 def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, test_m: SplitMetrics) -> list[str]:
     """Counts of what the agent PROPOSED before the gates. Clearly not the headline; per case for dev only."""
 
@@ -185,10 +222,15 @@ def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, 
     out = [
         "## Proposal before gates (ungated; NOT the headline)",
         "",
-        "What the agent proposed before SafetyGate saw it. A lone stored job is 100% of its resource set, so the abort "
-        "ceiling can refuse a Tier 0 re-run that the agent proposed correctly: `refused by the abort ceiling only` "
-        "counts those. This block is for understanding the agent; the table above (action after the gates) is the "
-        "result. Aggregate only for the test split.",
+        "What the agent proposed before SafetyGate saw it. The resource set of a re-run is the run's jobs, taken from "
+        "the real job counts stored at fetch time: the failed jobs (all of which a re-run touches) out of all jobs. A "
+        "run in which every job failed (including a single-job run) is 100% of its set, so the abort ceiling refuses a "
+        "Tier 0 re-run there however good the proposal: `refused by the abort ceiling only` counts those. A run with "
+        "at least one job that did not fail is not refused by the ceiling. This block is for understanding the agent; "
+        "the table above "
+        "(action after the gates) is the result. Aggregate only for the test split.",
+        "",
+        *_single_job_lines(dev_m, test_m),
         "",
         _md_table(
             ["split", "cases", "rerun", "pr_fix", "escalate", "refused by the abort ceiling only"],
@@ -205,6 +247,7 @@ def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, 
         lines.append(
             [
                 case.id,
+                _jobs_cell(s.jobs_total, s.jobs_failed),
                 f"{p.get('kind')}{fix}",
                 str(p.get("gate_decision")),
                 str(p.get("gate_reason_code")),
@@ -215,24 +258,36 @@ def _proposal_block(dev: list[tuple[HoldoutCase, Scored]], dev_m: SplitMetrics, 
         out += [
             "Dev cases:",
             "",
-            _md_table(["case", "proposed", "gate decision", "gate reason code", "ceiling only"], lines),
+            _md_table(
+                ["case", "jobs in run (failed/total)", "proposed", "gate decision", "gate reason code", "ceiling only"],
+                lines,
+            ),
             "",
         ]
     return out
 
 
 STRUCTURAL_ZERO_NOTE = (
-    "Headline rerun recall can be 0 on single-job cases by construction: the abort ceiling refuses a Tier 0 rerun that "
-    'touches 100% of its resource set. See "Proposal before gates" for what the agent proposed.'
+    "Headline rerun recall is 0 by construction on runs where every job failed (including single-job runs): a rerun "
+    "of the failed jobs touches 100% of the run's jobs and the abort ceiling refuses it. A run with k failed jobs of "
+    'N is refused exactly when k = N. See "Proposal before gates" for what the agent proposed.'
 )
+
+
+def _jobs_cell(total: int | None, failed: int | None = None) -> str:
+    if total is None:
+        return "?"
+    return f"{failed}/{total} failed" if failed is not None else str(total)
 
 
 def _structural_zero_note(dev_m: SplitMetrics, test_m: SplitMetrics) -> list[str]:
     """Shown when any case's proposal was refused by the ceiling alone, and also when we cannot tell (an agent run
     without a recorded ungated proposal)."""
     ceiling = dev_m.ceiling_only + test_m.ceiling_only
-    cannot_tell = (dev_m.agent_runs + test_m.agent_runs) > (dev_m.proposals_seen + test_m.proposals_seen)
-    return [STRUCTURAL_ZERO_NOTE, ""] if ceiling or cannot_tell else []
+    runs = dev_m.agent_runs + test_m.agent_runs
+    cannot_tell = runs > (dev_m.proposals_seen + test_m.proposals_seen)
+    single = (dev_m.single_job + test_m.single_job + dev_m.all_failed + test_m.all_failed) > 0 and runs > 0
+    return [STRUCTURAL_ZERO_NOTE, ""] if ceiling or cannot_tell or single else []
 
 
 def render(
@@ -285,11 +340,20 @@ def render(
                 f"{s.baseline.layer}/{s.baseline.classification}",
                 s.baseline.action or "escalate",
                 agent,
+                _jobs_cell(s.jobs_total, s.jobs_failed),
             ]
         )
     out.append(
         _md_table(
-            ["case", "label layer/class", "label action", "baseline layer/class", "baseline action", "agent action"],
+            [
+                "case",
+                "label layer/class",
+                "label action",
+                "baseline layer/class",
+                "baseline action",
+                "agent action",
+                "jobs in run (failed/total)",
+            ],
             detail,
         )
         if detail
@@ -314,6 +378,16 @@ class ProvenanceRefused(Exception):
         self.problems = problems
 
 
+def _jobs_counts(root: Path, case_id: str) -> tuple[int | None, int | None]:
+    """The run's real (total, failed) job counts from the fetch record, or (None, None) when there is no valid
+    version 3 record."""
+    try:
+        facts = load_fetched_facts(root, case_id)
+    except FetchedRecordError:
+        return None, None
+    return (facts.jobs.total, facts.jobs.failure) if facts else (None, None)
+
+
 def evaluate(root: Path, now: datetime) -> tuple[str | None, ValidationReport]:
     """The rendered report, or None when there is nothing to evaluate. Raises `ProvenanceRefused` when any latest run
     record is a fake/scripted run, has no provenance entry, or does not match its entry."""
@@ -327,7 +401,8 @@ def evaluate(root: Path, now: datetime) -> tuple[str | None, ValidationReport]:
     meta = load_meta(root)
 
     def score(case: HoldoutCase, log: str, run: RunRecord | None) -> Scored:
-        return score_case(case, log, run, meta.get(case.id))
+        total, failed = _jobs_counts(root, case.id)
+        return score_case(case, log, run, meta.get(case.id), total, failed)
 
     dev = holdout.dev_details(score)
     dev_m = aggregate([s for _, s in dev])

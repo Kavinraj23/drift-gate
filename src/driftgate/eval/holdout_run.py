@@ -8,10 +8,13 @@ What this is
   is imported, and nothing here can reach GitHub (invariants 1, 4, 12).
 - The gate runs on deterministic facts EXACTLY as the production derivation produces them (no invented resource set
   total). With no history, Tier 0 can qualify only through a Tier 0 known-transient rule (plus a deterministic
-  signature match); Tier 2 never qualifies on confidence. A lone stored job is 100% of its resource set, so the abort
-  ceiling may refuse a Tier 0 re-run: that is the honest gate outcome. To keep the agent's behaviour visible, each case
-  records TWO views: `action_after_gates` (the headline; goes into runs.json) and `proposal_before_gates` (what the
-  agent proposed, plus the gate's decision and reason code; sidecar only, and NOT a result).
+  signature match); Tier 2 never qualifies on confidence. The resource set of a re-run is the run's jobs: the source
+  exposes the run's REAL job counts (from the fetch record) as sibling leaves: the failed jobs (all of which a re-run
+  touches) out of all jobs. A run with k failed jobs of N is refused by the ceiling exactly when k == N (a single-job
+  run, or every job failed): the honest gate outcome. To keep the
+  agent's behaviour visible, each case records TWO views: `action_after_gates` (the headline; goes into runs.json)
+  and `proposal_before_gates` (what the agent proposed, plus the gate's decision and reason code; sidecar only, and
+  NOT a result).
 - Tier 3 is scored on the proposal: the PR path with `allow_unreviewed_tier3` (no repository content is stored, so
   there is nothing to diff-check or review against). A Tier 3 proposal counts as `pr_fix` only if it carries a
   non-empty diff and paths; the diff itself is never judged. This is stated in every report.
@@ -66,6 +69,7 @@ from driftgate.eval.holdout import (
     validate,
 )
 from driftgate.eval.holdout_eval import GitStatus, git_labels_status
+from driftgate.eval.holdout_jobs import FetchedRecordError, fetched_problems, load_fetched_facts
 from driftgate.eval.holdout_meta import (
     META_FILE,
     META_VERSION,
@@ -115,9 +119,10 @@ RERUN_ACTIONS = ("rerun_failed_job", "rerun_workflow")
 FAKE_MODEL_NAME = "fake:deterministic-plumbing-double"
 TARGET_DESCRIPTION = "proposal-only: execute, verify and rollback raise; nothing is executed"
 GATE_NOTE = (
-    "gate inputs are the production derivation, unmodified; a lone stored job is 100% of its resource set, so the "
-    "abort ceiling may refuse a Tier 0 re-run (honest gate outcome). The headline is the action AFTER the gates; the "
-    "proposal BEFORE the gates is a separate, ungated view"
+    "gate inputs are the production derivation, unmodified, over the run's REAL job counts from the fetch record; a "
+    "run with k failed jobs of N is refused by the abort ceiling exactly when k = N (a re-run touches every failed "
+    "job), including a single-job run (honest gate outcome). "
+    "The headline is the action AFTER the gates; the proposal BEFORE the gates is a separate, ungated view"
 )
 SEALED_NOTE = (
     "note: holdout/runs_meta.json and fixtures/replay-holdout/ hold per-case data for test-split cases (cost, "
@@ -263,16 +268,6 @@ def _log_times(log: str) -> tuple[str, str] | None:
     return (stamps[0] + "Z", stamps[-1] + "Z") if stamps else None
 
 
-def _fetched_step_name(root: Path, case_id: str) -> str | None:
-    """The failed step's name from `fetched/<id>.json` (written by holdout-fetch; metadata only, no label). Optional."""
-    path = root / "fetched" / f"{case_id}.json"
-    try:
-        name = json.loads(path.read_text(encoding="utf-8"))["step"]["name"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    return name if isinstance(name, str) and name else None
-
-
 def inputs_for(case: HoldoutCase, log: str, root: Path) -> HoldoutInput:
     """Project a case onto the agent-visible fields. This function reads `case.id` and `case.raw["source"]` and
     nothing else from the case: not the layer, classification, action, rationale or split."""
@@ -283,17 +278,22 @@ def inputs_for(case: HoldoutCase, log: str, root: Path) -> HoldoutInput:
     else:
         started = finished = f"{src['fetch_date']}T00:00:00Z"
         basis = TIME_BASIS_FETCH
+    try:
+        fetched = load_fetched_facts(root, case.id)  # step name + REAL job counts; metadata only, no label
+    except FetchedRecordError as exc:  # preflight refuses these first; this keeps a direct caller from guessing
+        raise RunRefused([str(exc)]) from None
     return HoldoutInput(
         case_id=case.id,
         log_text=log,
         repo=src["repo"],
         run_id=int(src["run_id"]),
         job=src["job"],
-        step_name=_fetched_step_name(root, case.id) or src["job"],
+        step_name=fetched.step_name if fetched else src["job"],
         commit_sha=src["commit_sha"],
         started_at=started,
         finished_at=finished,
         time_basis=basis,
+        job_counts=fetched.jobs if fetched else None,
     )
 
 
@@ -406,6 +406,8 @@ def proposal_view(outcome: Outcome, facts: GateFacts | None) -> dict[str, Any]:
             proposal = inv.proposal if inv is not None else None
             if proposal is not None and proposal.diff.strip() and proposal.paths:
                 view["kind"], view["fix"] = "pr_fix", rem.action
+    if facts is not None:  # the set sizes the gate was given (production derivation from the source's tree)
+        view["proposed_set_size"], view["resource_set_total"] = facts.proposed_set_size, facts.resource_set_total
     view["gate_decision"] = gate.decision if gate is not None else "none"
     view["gate_reason"] = gate.reason if gate is not None else ""
     view["gate_reason_code"] = reason_code(gate.reason) if gate is not None else "none"
@@ -493,6 +495,8 @@ def preflight(root: Path, now: datetime, git_status: GitStatus) -> Holdout:
     report = validate(root, now=now)
     if report.problems:
         raise RunRefused(list(report.problems))
+    if fetched := fetched_problems(root):
+        raise RunRefused(fetched)
     if report.counts["total"] == 0:
         raise RunRefused(["no holdout cases are stored"])
     status = git_status(root)

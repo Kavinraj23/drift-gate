@@ -255,7 +255,11 @@ class ReadOnlyGitHub:
                 raise FetchError("unexpected jobs list shape")
             jobs += batch
             total = data.get("total_count")
-            if len(batch) < JOBS_PER_PAGE or (isinstance(total, int) and len(jobs) >= total):
+            if isinstance(total, int) and len(jobs) >= total:
+                return jobs
+            if len(batch) < JOBS_PER_PAGE:
+                if isinstance(total, int):  # a short page that still leaves jobs unaccounted for: the list is cut off
+                    raise FetchError(f"the jobs list is truncated ({len(jobs)} of {total} jobs); not counted")
                 return jobs
         raise FetchError(f"run has more than {MAX_JOB_PAGES * JOBS_PER_PAGE} jobs; not supported")
 

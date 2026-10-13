@@ -14,6 +14,23 @@ What it does NOT have, and says so rather than inventing it (invariant 9, and "n
 - No repository content: `read_file` raises `SourceError`, so the agent must escalate when a fix needs a file.
 - No change timeline: `list_changes` returns an empty list.
 - No join keys (connector, template, runner pool, infra definition): `refs` carries only the source's own identifiers.
+
+What it HAS beyond the one stored job: the run's real job counts (`HoldoutInput.job_counts`, recorded by `holdout-fetch`
+from the jobs list). When the run had more than one job, the execution tree shows the other jobs as sibling leaf nodes
+with only that real metadata: their number and their conclusions. Their names are generic (`sibling-2`, ...), they have
+no logs, no error summary, no join keys, and they are listed in a fixed conclusion order, so nothing here says which
+real job is which. This is what makes the production gate
+derivation (`Orchestrator._gate_facts`: failed leaves out of all leaves of the tree) produce the real set sizes:
+proposed = the number of jobs that really failed (`jobs.failure`), total = `jobs.total`. A re-run of the failed jobs
+re-runs EVERY failed job, so a run in which all jobs failed is 100% of its set and the ceiling refuses it; the failed
+leaves are therefore the stored job's `step-1` first, then one leaf per failed sibling, and the tree and the failed-leaf
+list agree exactly. Cancelled, skipped, success and other siblings keep their own status and are not failed leaves.
+Sibling leaves have no log and no error summary (reading one raises `SourceError`; the analyzers already treat that as
+empty text), so the classification the agent sees still comes from `step-1`'s real text only. Siblings are the SAME
+run, so they are
+deliberately NOT executions: `list_executions` still returns only this one, which keeps `fleet_correlate` and
+`flake_history` honest (a green or red sibling job is not a peer failure and is never fleet evidence). With no counts
+(a case whose fetch record has none) the source is a lone job, as before.
 """
 
 from __future__ import annotations
@@ -30,9 +47,21 @@ from driftgate.domain import (
     Node,
     SourceError,
 )
+from driftgate.eval.holdout_jobs import JobCounts
 
 ROOT_NODE_ID = "job"
+RUN_NODE_ID = "run"
 STEP_NODE_ID = "step-1"
+SIBLING_PREFIX = "sibling-"
+#: Conclusion -> node status, in the fixed order siblings are listed. `other` is any conclusion that was not one of the
+#: four named values (including a missing one); it is reported as such, not guessed.
+_SIBLING_ORDER: tuple[tuple[str, str], ...] = (
+    ("failure", "failed"),
+    ("cancelled", "cancelled"),
+    ("skipped", "skipped"),
+    ("success", "success"),
+    ("other", "other"),
+)
 #: Where the execution's start time came from. The run's real start is not stored with a holdout case.
 TIME_BASIS_LOG = "log_timestamp"
 TIME_BASIS_FETCH = "fetch_date"
@@ -53,6 +82,7 @@ class HoldoutInput:
     started_at: str  # ISO 8601 UTC, from the first timestamp in the log, else the fetch date at 00:00:00
     finished_at: str  # same, from the last timestamp
     time_basis: str  # TIME_BASIS_LOG | TIME_BASIS_FETCH
+    job_counts: JobCounts | None = None  # the run's real job counts from the fetch record; None when unknown
 
 
 def _parse(value: str) -> datetime:
@@ -79,9 +109,35 @@ class HoldoutSource:
         if execution_id != self._case.case_id:
             raise SourceError(f"unknown execution: {execution_id}")
 
-    def _tree(self) -> Node:
+    def _job_node(self, parent_id: str | None) -> Node:
         leaf = Node(node_id=STEP_NODE_ID, name=self._case.step_name, status="failed", parent_id=ROOT_NODE_ID)
-        return Node(node_id=ROOT_NODE_ID, name=self._case.job, status="failed", children=[leaf])
+        return Node(node_id=ROOT_NODE_ID, name=self._case.job, status="failed", parent_id=parent_id, children=[leaf])
+
+    def _siblings(self) -> list[Node]:
+        """The run's other jobs, from the real counts only. The stored job is one of the failures."""
+        counts = self._case.job_counts
+        if counts is None or counts.total <= 1:
+            return []
+        have = {**counts.as_record(), "failure": counts.failure - 1}  # the stored job is not its own sibling
+        nodes: list[Node] = []
+        for key, status in _SIBLING_ORDER:
+            for _ in range(have[key]):
+                n = len(nodes) + 2
+                nodes.append(
+                    Node(
+                        node_id=f"{SIBLING_PREFIX}{n}",
+                        name=f"{SIBLING_PREFIX}{n}",
+                        status=status,
+                        parent_id=RUN_NODE_ID,
+                    )
+                )
+        return nodes
+
+    def _tree(self) -> Node:
+        siblings = self._siblings()
+        if not siblings:
+            return self._job_node(None)
+        return Node(node_id=RUN_NODE_ID, name="run", status="failed", children=[self._job_node(RUN_NODE_ID), *siblings])
 
     def get_execution(self, execution_id: str) -> Execution:
         self._check(execution_id)
@@ -98,7 +154,8 @@ class HoldoutSource:
 
     def get_failed_leaf_nodes(self, execution_id: str) -> list[Node]:
         self._check(execution_id)
-        return [self._tree().children[0]]
+        failed = [n for n in self._siblings() if n.status == "failed"]
+        return [*self._job_node(None).children, *failed]
 
     def get_step_logs(self, execution_id: str, node_id: str, budget: int) -> LogChunk:
         self._check(execution_id)

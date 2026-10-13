@@ -13,15 +13,15 @@ _VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
 PY = str(_VENV_PY) if _VENV_PY.exists() else sys.executable
 
 # Targets whose implementation arrives in a later milestone: name -> milestone.
-NOT_IMPLEMENTED: dict[str, str] = {
-    # MVP 2 stubs (see TASKS.md). `holdout-fetch` is human-only (network); add it to HUMAN_ONLY when it is implemented.
-    "holdout-fetch": "N1",
-}
+NOT_IMPLEMENTED: dict[str, str] = {}
 LIVE_TARGETS = {"record", "eval-live", "e2e-live"}  # implemented in driftgate.eval.live; human-only
 #: The only offline targets that take extra arguments: `approvals` (a sub-command and its options) and `trace-report`
 #: (`--audit`, `--reports`, `--out`; argparse rejects anything else). Every other target still takes none.
 ARG_TARGETS = {"approvals", "trace-report"}
-HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset"}
+#: `holdout-fetch` also takes arguments (`--yes-fetch`, `--skeleton`, ...), validated by its own argparse; it is the
+#: only other target that does, and it is human-only (read-only GET-only fetch of public logs; plan mode by default).
+FETCH_TARGETS = {"holdout-fetch"}
+HUMAN_ONLY = {"record", "eval-live", "e2e-live", "playground-reset", "holdout-fetch"}
 
 # Milestones whose targets exist; mvp-check treats every other milestone as pending.
 IMPLEMENTED_MILESTONES: set[str] = {"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8a", "M9a"}
@@ -159,6 +159,13 @@ def eval_holdout() -> int:
     return _holdout("eval")
 
 
+def holdout_fetch(extra: list[str]) -> int:
+    """Human-only: store the failed step's log of the runs in holdout/candidates.json. Plan mode unless --yes-fetch."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    cmd = [PY, "-m", "driftgate.eval.holdout_fetch", *extra]
+    return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
 def playground_reset() -> int:
     """Human-only: force scenario branches back to their baseline tags (see scripts/playground.py)."""
     return run([PY, "scripts/playground.py", "reset", "--yes"])
@@ -189,6 +196,7 @@ HANDLERS: dict[str, Callable[[], int]] = {
     "eval": eval_,
     "holdout-validate": holdout_validate,
     "eval-holdout": eval_holdout,
+    "holdout-fetch": lambda: holdout_fetch([]),
     "eval-retrieval": eval_retrieval,
     "eval-tier12": eval_tier12,
     "mvp-check": mvp_check,
@@ -207,7 +215,7 @@ def main(argv: list[str]) -> int:
         print("usage: python tasks.py <target> [options]")
         return 2
     target = argv[1]
-    if len(argv) > 2 and target not in LIVE_TARGETS and target not in ARG_TARGETS:
+    if len(argv) > 2 and target not in LIVE_TARGETS | ARG_TARGETS | FETCH_TARGETS:
         print("usage: python tasks.py <target>")
         return 2
     if target in HUMAN_ONLY and (ROOT / ".autonomous").exists():
@@ -215,6 +223,8 @@ def main(argv: list[str]) -> int:
         return 1
     if target in LIVE_TARGETS:
         return _live(target, argv[2:])
+    if target in FETCH_TARGETS:
+        return holdout_fetch(argv[2:])
     if target == "approvals":
         return approvals(argv[2:])
     if target == "trace-report":

@@ -80,6 +80,7 @@ def test_task_runner_and_scripts_only_pass_the_holdout_path_and_module_name_to_a
     allowed_strings = {
         "holdout",
         "driftgate.eval.holdout_eval",
+        "driftgate.eval.holdout_fetch",
         "holdout-fetch",
         "holdout-validate",
         "eval-holdout",
@@ -153,10 +154,10 @@ def test_holdout_modules_do_not_read_the_environment() -> None:
         assert "dotenv" not in src, name
 
 
-def test_targets_are_implemented_and_fetch_stays_a_stub() -> None:
+def test_targets_are_implemented_and_fetch_is_human_only() -> None:
     assert {"holdout-validate", "eval-holdout"} <= set(tasks.HANDLERS)
     assert not {"holdout-validate", "eval-holdout"} & set(tasks.NOT_IMPLEMENTED)
-    assert tasks.NOT_IMPLEMENTED["holdout-fetch"] == "N1"
+    assert "holdout-fetch" not in tasks.NOT_IMPLEMENTED and "holdout-fetch" in tasks.HUMAN_ONLY
     assert not {"holdout-validate", "eval-holdout"} & tasks.HUMAN_ONLY
 
 

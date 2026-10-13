@@ -19,7 +19,8 @@ def test_trace_report_is_implemented_offline_and_not_human_only() -> None:
 
 def test_argument_exceptions_are_exactly_approvals_and_trace_report() -> None:
     assert tasks.ARG_TARGETS == {"approvals", "trace-report"}
-    assert tasks.HUMAN_ONLY == {"record", "eval-live", "e2e-live", "playground-reset"}
+    assert tasks.HUMAN_ONLY == {"record", "eval-live", "e2e-live", "playground-reset", "holdout-fetch"}
+    assert tasks.FETCH_TARGETS == {"holdout-fetch"}
     assert tasks.LIVE_TARGETS == {"record", "eval-live", "e2e-live"}
 
 
@@ -43,6 +44,6 @@ def test_trace_report_runs_the_report_module_with_no_injected_arguments(monkeypa
     assert calls[0][-2:] == ["-m", "driftgate.report"]
 
 
-@pytest.mark.parametrize("target", ["lint", "test", "data", "e2e", "eval", "mvp-check", "holdout-fetch"])
+@pytest.mark.parametrize("target", ["lint", "test", "data", "e2e", "eval", "mvp-check"])
 def test_other_targets_still_reject_arguments(target: str, capsys: pytest.CaptureFixture[str]) -> None:
     assert tasks.main(["tasks.py", target, "--out", "x"]) == 2

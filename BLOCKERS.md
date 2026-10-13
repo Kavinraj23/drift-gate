@@ -109,3 +109,7 @@ Left out of `src/driftgate/generator/error_catalog.json` per invariant 9. Please
 ### N1 fetch half round 2 - Needs human
 - The extraction rules (docs/design/N1-fetch.md, "Extraction") are built from the framing seen in this repo's sourced samples, not from a live log. Fetch ONE candidate first; if it is refused, the printed reason says which rule failed, and any loosening is a rule change a human reviews. Refused cases must be cut by hand.
 - Under a git worktree `.autonomous` is looked up at the worktree root and at the main checkout; confirm that matches how the orchestrator creates it.
+
+### N1 fetch half round 3 - Needs human
+- The log framing (timestamp prefix, `##[group]Run/Post`, runner-phase headers, a timestamped `##[error]` ending a failed step) is ASSUMED, not sourced. To make the extractor trustworthy, supply ONE redacted real job log under `tests/github/fixtures/real/` with a `.source.txt` (URL, date, redactions; framing untouched), ideally with a `Post` step and the final cleanup lines. See docs/design/N1-fetch.md, 'Supplying a real sample'.
+- A job with several failed steps now needs `"step"` in candidates.json (name or number), by human decision; unnamed ones are refused.

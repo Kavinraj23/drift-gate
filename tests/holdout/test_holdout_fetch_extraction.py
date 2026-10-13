@@ -48,13 +48,13 @@ def job_of(*steps: dict) -> dict:  # type: ignore[type-arg]
     return {"id": JOB_ID, "name": "build", "conclusion": "failure", "steps": list(steps)}
 
 
-def extract(log: str, job: dict) -> sl.Extraction:  # type: ignore[type-arg]
-    return sl.extract_step_section(log, sl.first_failed_step(job))
+def extract(log: str, job: dict, step: str | int | None = None) -> sl.Extraction:  # type: ignore[type-arg]
+    return sl.extract_step_section(log, sl.first_failed_step(job, step))
 
 
-def refused(log: str, job: dict, match: str) -> None:  # type: ignore[type-arg]
+def refused(log: str, job: dict, match: str, step: str | int | None = None) -> None:  # type: ignore[type-arg]
     with pytest.raises(sl.StepLogError, match=match):
-        extract(log, job)
+        extract(log, job, step)
 
 
 G = "##[group]"
@@ -118,21 +118,21 @@ def test_a_following_step_that_also_errors_in_the_window_is_refused() -> None:
 def test_two_adjacent_failing_steps_are_refused() -> None:
     job = job_of(step("One", 1, "failure", 4, 6), step("Two", 2, "failure", 6, 7))
     log = L(4, G + "Run one") + L(6.2, RUNNER_ERROR) + L(6.5, G + "Run two") + L(6.9, RUNNER_ERROR)
-    refused(log, job, "step headers|another step header")
+    refused(log, job, "step headers|another step header", step="One")
 
 
 def test_two_failing_steps_far_apart_store_the_first_and_name_the_other() -> None:
     job = job_of(step("One", 1, "failure", 4, 5), step("Cleanup", 2, "failure", 8, 9))
     log = L(4, G + "Run one") + L(5.1, RUNNER_ERROR) + L(8, G + "Run cleanup") + L(8.5, RUNNER_ERROR)
-    ext = extract(log, job)
+    ext = extract(log, job, "One")
     assert ext.text.count("##[error]") == 1 and "cleanup" not in ext.text
-    assert [o.name for o in sl.first_failed_step(job).other_failed] == ["Cleanup"]
+    assert [o.name for o in sl.first_failed_step(job, "One").other_failed] == ["Cleanup"]
 
 
 def test_another_failed_step_whose_window_contains_the_error_is_refused() -> None:
     job = job_of(step("One", 1, "failure", 4, 5), step("Other", 2, "failure", 5, 6))
     log = L(4, G + "Run one") + L(5.3, RUNNER_ERROR)
-    refused(log, job, "also contains the error line")
+    refused(log, job, "also contains the error line", step="One")
 
 
 @pytest.mark.parametrize("name", ["Set up job", "Initialize containers", "Complete job", "Stop containers"])
@@ -250,6 +250,10 @@ def test_the_record_carries_everything_needed_to_verify_the_cut_and_no_log_text(
     job = failed_job()
     job["steps"].append(step("Always cleanup", 6, "failure", 9, 10))
     log = log_text() + L(9, G + "Run cleanup") + L(9.5, RUNNER_ERROR)
+    (root / "candidates.json").write_text(
+        json.dumps({"schema_version": 1, "candidates": [{"repo": REPO, "run_id": RUN_ID, "step": "Pull image"}]}),
+        encoding="utf-8",
+    )
     code, out = fetch(root, FakeTransport(routes_for(jobs=[job], log=log.encode())), "--yes-fetch")
     assert code == 0
     rec = json.loads((root / "fetched" / "hc-01.json").read_text(encoding="utf-8"))

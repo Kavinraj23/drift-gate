@@ -43,6 +43,20 @@
           "minLength": 1,
           "maxLength": 200,
           "description": "Exact job name. Optional when exactly one job of the run failed."
+        },
+        "step": {
+          "description": "The failed step to store: its exact name (string) or its number (integer). Required when more than one step of the job concluded failure (the first failed step may be a continue-on-error step). Must name a step that failed; its error line is still required.",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
         }
       }
     },
@@ -189,7 +203,7 @@
             "inner_group_lines",
             "stored_lines"
           ],
-          "description": "Where the stored section sits in the job log (1-based, \n-counted lines) so a human can check the cut. No log text.",
+          "description": "Cross-field rules enforced by the loader, not by this schema: start_line <= error_line <= end_line <= job_log_lines and stored_lines == end_line - start_line + 1. Where the stored section sits in the job log (1-based, counting newline characters only) so a human can check the cut. No log text.",
           "properties": {
             "method": {
               "enum": [

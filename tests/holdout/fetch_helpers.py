@@ -1,10 +1,19 @@
 """Shared stubs for the holdout-fetch tests: a GET-only fake transport and a job-log fixture.
 
-Error text: the only tool error text in the fixture log is read at test time from the verified (`captured-verbatim`)
-entry `docker_pull_rate_limit` of `generator/error_catalog.json` (source recorded there), and the runner line
-`##[error]Process completed with exit code 1.` is the runner's own wording as in tests/github/fixtures/job_9001.log.
-The rest is STRUCTURAL SCAFFOLDING, not error text: timestamps, `##[group]` / `##[endgroup]` framing, and the `Run ...`
-header titles. Repo names, ids and SHAs are placeholders.
+SOURCED (invariant 9): the tool error text in the fixture log is read at test time from the verified
+(`captured-verbatim`) entry `docker_pull_rate_limit` of `generator/error_catalog.json` (source recorded there), and the
+runner wording `##[error]Process completed with exit code 1.` (as in tests/github/fixtures/job_9001.log, itself a
+documented stand-in for a recorded log).
+
+INVENTED STRUCTURAL SCAFFOLDING, NOT CAPTURED FROM ANY REAL LOG, and the real framing may differ:
+- the `YYYY-MM-DDTHH:MM:SS.fffffffZ ` timestamp prefix on every line;
+- `##[group]Run <title>` step headers and the `##[endgroup]` lines after them;
+- `##[group]Set up job`, `##[group]Complete job` (and in the extractor's pattern also `Initialize containers`,
+  `Stop containers`) and `##[group]Post Run <title>` header forms. Real post steps may instead begin with a plain
+  `Post job cleanup.` line, and a real log may end with `Cleaning up orphan processes`; the extractor refuses those
+  forms rather than guessing (see test_holdout_fetch_hardening.py);
+- the header titles themselves (`Run docker pull example`). Repo names, ids and SHAs are placeholders.
+The first live fetch of ONE candidate is the real test of this framing (docs/design/N1-fetch.md).
 """
 
 from __future__ import annotations

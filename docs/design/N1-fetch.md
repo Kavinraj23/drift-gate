@@ -47,6 +47,11 @@ them (existing "no `eval` import" tests plus `tests/holdout/test_holdout_fetch_a
   read line by line; each line is matched against one anchored pattern for that key and dropped, only the matching
   value is kept (no `dotenv` parsing, no `${VAR}` interpolation, nothing exported; a test shows other keys never land in
   anything the module holds). The OS still reads the whole file; the code just does not parse or keep it.
+  **Duplicates:** the environment variable wins over the file. In the file `HOLDOUT_FETCH_TOKEN` may appear at most once:
+  python-dotenv takes the LAST occurrence, a first-match reader the FIRST, so a duplicate is ambiguous and is an explicit
+  error (`could not read the token: ... appears N times`; the values are never printed). A file that is not valid
+  UTF-8 (or unreadable) gives `could not read the token` with exit 2 and no traceback. A leading BOM is ignored so the
+  first key still matches.
   Used only in the `Authorization` header. Every exception message is built from fixed text plus a status code or host;
   unexpected exceptions print their type name only; the CLI masks the token in anything it prints, and the exact token
   string is also replaced by `[REDACTED]` in the log text before storage (on top of the pattern redaction). `eval/holdout_fetch.py` was added to the architecture test's `ENV_READERS` for this.
@@ -54,13 +59,16 @@ them (existing "no `eval` import" tests plus `tests/holdout/test_holdout_fetch_a
 ### Behaviour
 - **`.autonomous`**: `tasks.py` refuses the target, AND `holdout_fetch` itself refuses any `--yes-fetch` (exit 1, before the
   token is looked up or a transport is built) when `.autonomous` exists at the repo root (or at the main checkout when
-  run from a git worktree), so `python -m driftgate.eval.holdout_fetch --yes-fetch` is covered too.
+  run from a git worktree: found from the worktree's `.git` FILE (`gitdir: <main>/.git/worktrees/<name>`, read as a file,
+  with no `git` subprocess that could hang or be hijacked) or from the `<main>/.claude/worktrees/<name>` layout;
+  presence is `os.path.lexists`, so a dangling symlink named `.autonomous` counts. Limit: a worktree with an unusual
+  `.git` file outside `.claude/worktrees/` is checked at its own root only), so `python -m driftgate.eval.holdout_fetch --yes-fetch` is covered too.
 - **Plan by default** (no token needed, zero requests): validates `holdout/candidates.json` against the schema and
   strict repo/id checks, prints the ids it would allocate and the request count (4 per run), exits 2 like `e2e-live`.
   `--yes-fetch` is the only way to touch the network.
 - **Per run**: run metadata (must be `completed`/`failure`; `head_sha` is 40 hex; `html_url` must equal the requested
   repo/run), jobs list, pick the job (named, or the single failed one; several failed and none named is refused, naming
-  them), first step with conclusion `failure`, job log, extract, store.
+  them), the failed step (the only one that concluded `failure`, or the one the candidate names with `step`), job log, extract, store.
 - **Ids**: `hc-NN`, max used + 1 over `labels.json` ids, `logs/*.log` and `fetched/*.json`, in input order; gaps are never
   refilled. Files are created with `xb`; identical bytes are tolerated, different bytes are refused.
 - **Duplicates**: the same repo (case-insensitive) + run + job as an existing label or fetched record is REFUSED with the
@@ -86,12 +94,30 @@ fallback to a raw time window. Each rule refuses the case rather than guessing; 
 6. End = the last window error (+ one directly following `##[endgroup]`). After it there must be the end of the log or a
    step-opening header; other output means the step continues -> refuse.
 7. A job whose `run_attempt` differs from the run's is refused.
+8. Several failed steps and no `step` in the candidate -> refuse (see Multi-failure).
+9. A step-opening header WITHOUT a timestamp anywhere in the region before the chosen start header (walking back until a
+   line stamped before the window) -> refuse: the step's own header may be the untimestamped one, and the chosen
+   header an inner one, which would store a truncated section.
+10. The first non-blank thing after the error being `Post job cleanup` or `Cleaning up orphan processes` -> refuse with
+   the "unrecognised runner framing" message instead of the generic "output continues" one. Nothing new is accepted.
 Ordinary `##[group]TITLE` lines inside the step are kept and counted (`inner_group_lines`).
+
+### Supplying a real sample (how to replace the assumptions)
+Because the header and timestamp framing is assumed, the extractor can only be made trustworthy from a real log. The
+human can supply one: open a failed run's job page, download the raw log, REDACT it by hand (secrets, tokens, internal
+names), and put it under `tests/github/fixtures/real/<name>.log` with a sibling `<name>.source.txt` recording the run
+URL, the date, what was redacted and that the framing lines were not altered. The implementer then derives the
+header/boundary forms from it, adds tests that read that file, and may replace the scaffolding in
+`tests/holdout/fetch_helpers.py`. No agent creates this file. One sample containing a `Post` step and the final cleanup
+lines is the most useful.
 
 Fetched record (`holdout/fetched/<id>.json`, schema version 2, no log text): source block, `job_id`, `run_attempt`,
 `step` {name, number, started_at, completed_at}, `other_failed_steps` [{name, number}], `extraction` {method,
 `job_log_lines`, `start_line`, `end_line` (1-based, counting newline characters only), `error_line`, `error_timestamp`,
-`inner_group_lines`, `stored_lines`}, `log_sha256`, `log_bytes`. The stdout line per case prints the same numbers, so a
+`inner_group_lines`, `stored_lines`}, `log_sha256`, `log_bytes`. The loader (`holdout_steplog.extraction_inconsistency`,
+used when a record is written and by `--skeleton`) enforces what JSON Schema cannot: `start_line <= error_line <=
+end_line <= job_log_lines` and `stored_lines == end_line - start_line + 1`. The start header's title and timestamp are
+NOT recorded (that would put log text in the record); its line number is `start_line`. The stdout line per case prints the same numbers, so a
 human can open the run page and check lines `start_line`..`end_line` against the job log without trusting the tool.
 
 ## Exactly what is verbatim and what is transformed
@@ -117,8 +143,15 @@ needs no token; `--yes-fetch` required and unknown options rejected; skeleton pr
 `.autonomous`; architecture (no import from agents/tools/llm, no adapters/targets, no write verbs, env only in the CLI).
 
 Log text in tests is the verified `docker_pull_rate_limit` catalog entry plus the runner's own
-`##[error]Process completed with exit code 1.` line; timestamps and `##[group]` framing are marked as structural
-scaffolding in `tests/holdout/fetch_helpers.py` (invariant 9).
+`##[error]Process completed with exit code 1.` line. Everything else (timestamps, `##[group]` / `##[endgroup]`,
+`Set up job`, `Post Run`, `Complete job`, `Post job cleanup.`) is INVENTED structural scaffolding, listed as such in
+`tests/holdout/fetch_helpers.py` (invariant 9).
+
+Round 3 tests (`tests/holdout/test_holdout_fetch_hardening.py`): step selection (two failed steps refused with the list,
+name and number select, early continue-on-error scenario, passing/unknown step refused, schema validation of `step`),
+untimestamped own header, `Post job cleanup` / orphan-line refusal, CRLF / lone CR / BOM / 1 MB line layouts, a passing
+neighbour echoing an error in the same second, `.env` duplicates / non-UTF-8 / BOM, `.autonomous` via lexists and the
+worktree `.git` file, cross-field record consistency.
 
 Round 2 tests (`tests/holdout/test_holdout_fetch_extraction.py`): adversarial layouts (neighbour with its own header in
 the same second before the step, neighbour after, adjacent and distant failing steps, failed `Set up job` and other
@@ -132,12 +165,22 @@ missing file still means nothing is labelled).
 - **Never exercised against real GitHub.** The job-log format, the `steps[]` timestamps and the redirect hosts are from
   documentation and memory. The first `--yes-fetch` should be a single candidate; read the stored log against the run
   page before fetching 30. The redirect allow-list may need a host added (the refusal says which host).
-- **Step extraction is anchored, but still unverified against real logs.** See "Extraction" below. The framing it relies
-  on (`##[group]Run`/`Post`, a timestamped `##[error]` as the last line of a failing step, a following step header) is
-  what the sourced samples in this repo show (`tests/github/fixtures/job_9001.log`, `data/logs`, the catalog lines),
-  not something checked on a live log. Expect refusals in the first real run; each one is safe (nothing stored).
-- **Multi-failure.** Only the first `failure` step is stored; `other_failed_steps` lists the names and numbers of the others. A
-  matrix run with several failed jobs must name the job; one case per job needs one candidate per job.
+- **Step extraction is anchored, but its log framing is ASSUMED.** See "Extraction" above. What is SOURCED: the error
+  text in the tests (verified catalog entries, source recorded in `generator/error_catalog.json`) and the runner wording
+  `##[error]Process completed with exit code N.`. What is ASSUMED and has never been checked against a live log: the
+  `YYYY-MM-DDTHH:MM:SS.fffffffZ ` timestamp prefix, the `##[group]Run ` / `##[group]Post ` header forms, the runner-phase
+  headers (`Set up job`, `Initialize containers`, `Stop containers`, `Complete job`), and that a failing step ends with
+  a timestamped `##[error]`. `tests/github/fixtures/job_9001.log` is itself documented as a stand-in, not a capture, so
+  it is not evidence for any of this. Real post steps may start with a plain `Post job cleanup.` line and logs may end
+  with `Cleaning up orphan processes`; the extractor does NOT accept those forms (nothing sourced), it REFUSES with
+  "unrecognised runner framing: paste a sample so the extractor can be built from a real log". The first live fetch of
+  ONE candidate is the real test; expect refusals and read the stored log against the run page. Each refusal is safe.
+- **Multi-failure (human decision, round 3).** If more than one step of the job concluded `failure` the case is REFUSED
+  (nothing stored) unless the candidate names the step with the optional `step` field (name or number). The first failed
+  step is not necessarily the one that failed the job (an early `continue-on-error` step also concludes `failure`).
+  The refusal lists the failed steps by number and name. A named step must be one of the failed steps (a passing,
+  absent or ambiguous name is refused) and still needs its own `##[error]` anchor. `other_failed_steps` lists the
+  rest. A matrix run with several failed jobs must name the job; one case per job needs one candidate per job.
 - **Re-runs.** The jobs list is `filter=latest`: the latest attempt. A run that failed then passed on re-run is refused
   (run conclusion). `run_attempt` is recorded.
 - **Logs expire after 90 days**, so `fetch_date` is the only proof the log existed then; a refetch later returns 410.

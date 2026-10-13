@@ -116,7 +116,7 @@ def test_a_private_key_block_refuses_the_case_instead_of_cutting_lines_out() -> 
 def test_first_failed_step_edge_cases() -> None:
     twice = failed_job()
     twice["steps"].append(step("Always cleanup", 6, "failure", 7, 8))
-    got = sl.first_failed_step(twice)
+    got = sl.first_failed_step(twice, "Pull image")
     assert got.number == 3 and [o.name for o in got.other_failed] == ["Always cleanup"]
     cancelled = {"steps": [step("a", 1, "cancelled", 0, 1)]}
     with pytest.raises(sl.StepLogError, match="no step"):
@@ -128,7 +128,7 @@ def test_first_failed_step_edge_cases() -> None:
 
 
 def test_a_window_with_no_log_lines_is_an_error() -> None:
-    far = sl.FailedStep("x", 1, datetime(2030, 1, 1, tzinfo=UTC), datetime(2030, 1, 1, 0, 0, 5, tzinfo=UTC), 0)
+    far = sl.FailedStep("x", 1, datetime(2030, 1, 1, tzinfo=UTC), datetime(2030, 1, 1, 0, 0, 5, tzinfo=UTC), ())
     with pytest.raises(sl.StepLogError, match="window"):
         sl.extract_step_section(log_text(), far)
 

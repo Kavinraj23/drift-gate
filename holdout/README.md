@@ -29,7 +29,8 @@ enforces it). Status: no cases yet. The data must be chosen, fetched and labelle
 1. Put a separate read-only token in the gitignored `.env` as `HOLDOUT_FETCH_TOKEN` (never the playground token).
 2. Write `holdout/candidates.json` by hand (`contracts/holdout_candidates.schema.json`):
    `{"schema_version": 1, "candidates": [{"repo": "owner/name", "run_id": 123, "job": "optional exact job name"}]}`.
-   Public repositories only. A run with several failed jobs needs `job`.
+   Public repositories only. A run with several failed jobs needs `job`. A job with several failed steps needs `"step"` (name or
+   number) naming the one that failed the job; otherwise the case is refused and nothing is stored.
 3. `python tasks.py holdout-fetch` prints the plan and makes no request. `python tasks.py holdout-fetch --yes-fetch` fetches.
    It writes `logs/<id>.log` and `fetched/<id>.json` (source metadata and the log's SHA-256) and never touches
    `labels.json`. Logs expire on GitHub after 90 days; fetch promptly and commit the result.

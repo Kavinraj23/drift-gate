@@ -19,6 +19,7 @@ from typing import Any, TextIO
 from jsonschema import Draft202012Validator
 
 from driftgate.eval.holdout import sha256_bytes
+from driftgate.eval.holdout_steplog import extraction_inconsistency
 
 PLACEHOLDER = "FILL_ME"  # not a member of any enum, not a timestamp, so validation rejects it
 
@@ -66,6 +67,10 @@ def build_skeleton(root: Path) -> tuple[list[dict[str, Any]], list[str], list[st
             continue
         if next(validator.iter_errors(rec), None) is not None or rec["case_id"] != path.stem:
             problems.append(f"{path.name}: not a valid fetched record")
+            continue
+        bad = extraction_inconsistency(rec)
+        if bad:
+            problems.append(f"{path.name}: not a valid fetched record ({bad})")
             continue
         cid = rec["case_id"]
         if cid in done:

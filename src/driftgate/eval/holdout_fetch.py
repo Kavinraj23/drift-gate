@@ -6,7 +6,9 @@ gitignored `.env`). It lives in `eval/` because only `eval/` may touch `holdout/
 `agents/`, `tools/`, `llm/` may import it.
 
 Input: `holdout/candidates.json` (human-written; `contracts/holdout_candidates.schema.json`):
-`{"schema_version": 1, "candidates": [{"repo": "owner/name", "run_id": 123, "job": "optional exact job name"}]}`.
+`{"schema_version": 1, "candidates": [{"repo": "owner/name", "run_id": 123, "job": "optional exact job name",
+"step": "optional failed step name or number"}]}`. `step` is REQUIRED when more than one step of the job concluded
+`failure` (the first one may be a `continue-on-error` step); otherwise the case is refused and nothing is stored.
 
 Default is a PLAN: it validates the file, lists what would be fetched and how many requests that is, and makes none.
 Real network needs `--yes-fetch`. For each new candidate it stores, and nothing else:
@@ -50,6 +52,7 @@ from driftgate.eval.holdout_steplog import (
     count_lines,
     decode_log,
     extract_step_section,
+    extraction_inconsistency,
     first_failed_step,
     prepare_for_storage,
 )
@@ -79,6 +82,7 @@ class Candidate:
     repo: str
     run_id: int
     job: str | None
+    step: str | int | None = None  # which failed step to store; required when several steps failed
 
 
 @dataclass(frozen=True)
@@ -115,7 +119,7 @@ def load_candidates(path: Path) -> list[Candidate]:
             run_id = valid_id(raw["run_id"], "run id")
         except FetchError as exc:
             raise CandidateError(f"{path.name}: {exc}") from None
-        cand = Candidate(f"{owner}/{name}", run_id, raw.get("job"))
+        cand = Candidate(f"{owner}/{name}", run_id, raw.get("job"), raw.get("step"))
         key = (cand.repo.lower(), cand.run_id, cand.job)
         if key in seen:
             raise CandidateError(f"{path.name}: the same repo/run/job is listed twice (run {run_id})")
@@ -273,7 +277,7 @@ def fetch_one(
     job_attempt = job.get("run_attempt")
     if job_attempt is not None and job_attempt != attempt:
         raise FetchError("the job's run_attempt differs from the run's; not the latest attempt, fetch by hand")
-    step = first_failed_step(job)
+    step = first_failed_step(job, cand.step)
     raw = gh.get_job_log(cand.repo, job_id)
     ext = extract_step_section(decode_log(raw), step)
     data = prepare_for_storage(ext.text, token).encode("utf-8")
@@ -310,6 +314,9 @@ def fetch_one(
         "log_sha256": sha256_bytes(data),
         "log_bytes": len(data),
     }
+    bad = extraction_inconsistency(record)
+    if bad:  # a bug in the extractor, not in the data: nothing is written
+        raise StepLogError(f"internal inconsistency ({bad})")
     store.write_new(store.logs / f"{case_id}.log", data)
     store.write_new(store.fetched / f"{case_id}.json", (json.dumps(record, indent=2) + "\n").encode("utf-8"))
     return record, None
@@ -321,21 +328,34 @@ _ENV_LINE = re.compile(rf"^\s*(?:export\s+)?{TOKEN_ENV}\s*=\s*(.*?)\s*$", re.ASC
 def env_token() -> str | None:
     """`HOLDOUT_FETCH_TOKEN` from the environment, else from the gitignored env file.
 
-    The file is read line by line; every line is dropped as soon as it is examined and only the value of the one
-    matching line is kept (no other key is parsed, retained or exported, and there is no `${VAR}` interpolation).
-    A value may be wrapped in one pair of single or double quotes; a trailing ` # comment` is not stripped."""
+    The environment wins over the file. In the file the key must appear AT MOST ONCE: this is deliberately stricter
+    than python-dotenv (last wins) and than a first-match reader (first wins); a duplicate is ambiguous, so it is an
+    error rather than a guess. The file is read line by line (a leading BOM is ignored); every line is dropped as soon
+    as it is examined and only the matching value is kept (no other key is parsed, retained or exported, and there is
+    no `${VAR}` interpolation). A value may be wrapped in one pair of single or double quotes; a trailing ` # comment`
+    is not stripped. A file that is not valid UTF-8, or unreadable, raises `FetchError` with a fixed message (no
+    content); so does a duplicate key."""
     value = os.environ.get(TOKEN_ENV)
     if value:
         return value
     if not ENV_FILE.is_file():
         return None
     found: str | None = None
-    with open(ENV_FILE, encoding="utf-8") as fh:
-        for line in fh:
-            m = _ENV_LINE.match(line)
-            if m:
-                found = m.group(1)
-                break
+    count = 0
+    try:
+        with open(ENV_FILE, encoding="utf-8-sig") as fh:
+            for line in fh:
+                m = _ENV_LINE.match(line)
+                if m:
+                    count += 1
+                    if count == 1:
+                        found = m.group(1)
+    except UnicodeDecodeError:
+        raise FetchError(f"could not read the token: the env file is not valid UTF-8 ({TOKEN_ENV})") from None
+    except OSError:
+        raise FetchError(f"could not read the token: the env file is unreadable ({TOKEN_ENV})") from None
+    if count > 1:
+        raise FetchError(f"could not read the token: {TOKEN_ENV} appears {count} times in the env file (ambiguous)")
     if found and len(found) >= 2 and found[0] == found[-1] and found[0] in "\"'":
         found = found[1:-1]
     return found or None
@@ -345,13 +365,34 @@ def default_clock() -> datetime:
     return datetime.now(UTC)
 
 
+def _worktree_main_checkout(root: Path) -> Path | None:
+    """The main checkout of a git worktree, read from the `.git` FILE (`gitdir: <main>/.git/worktrees/<name>`).
+    Only a file is read; no subprocess (nothing to hang or hijack). None when `root` is not such a worktree."""
+    try:
+        text = (root / ".git").read_text(encoding="utf-8", errors="replace")[:4096]
+    except OSError:
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    gitdir = Path(text[len("gitdir:") :].strip().splitlines()[0] if text[len("gitdir:") :].strip() else "")
+    if gitdir.parent.name == "worktrees" and gitdir.parent.parent.name == ".git":
+        return gitdir.parent.parent.parent
+    return None
+
+
 def autonomous_present() -> bool:
-    """True when `.autonomous` exists at the repo root (same root as tasks.py), or at the main checkout when this
-    code runs from a git worktree under `<main>/.claude/worktrees/<name>`."""
+    """True when `.autonomous` is present at the repo root (same root as tasks.py) or at the main checkout when this
+    code runs from a git worktree: found from the `.git` file of the worktree, or from the layout
+    `<main>/.claude/worktrees/<name>`. "Present" is `os.path.lexists`, so a broken symlink or an odd entry counts.
+    Limit: a worktree whose `.git` file is missing or unusual AND which lives outside `.claude/worktrees/` is only
+    checked at its own root (no `git` subprocess is run to find more)."""
     roots = [ROOT]
     if ROOT.parent.name == "worktrees" and ROOT.parent.parent.name == ".claude":
         roots.append(ROOT.parent.parent.parent)
-    return any((r / ".autonomous").exists() for r in roots)
+    main = _worktree_main_checkout(ROOT)
+    if main is not None:
+        roots.append(main)
+    return any(os.path.lexists(r / ".autonomous") for r in roots)
 
 
 def run_fetch(
@@ -401,7 +442,11 @@ def run_fetch(
     if autonomous():
         print("refusing: holdout-fetch makes network requests and is human-only, and .autonomous exists.", file=out)
         return 1
-    token = token_provider()
+    try:
+        token = token_provider()
+    except FetchError as exc:
+        print(f"{exc}; nothing was requested.", file=out)
+        return 2
     if not token:
         print(f"{TOKEN_ENV} is not set (environment or the gitignored env file); nothing was requested.", file=out)
         return 2
